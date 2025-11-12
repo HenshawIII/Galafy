@@ -22,9 +22,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
-    "postinstall": "prisma generate",
     "prebuild": "prisma generate",
-    "db:migrate": "prisma migrate deploy && prisma generate"
+    "db:migrate": "prisma migrate deploy && prisma generate",
+    "start:render": "prisma migrate deploy && npm run start:prod"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

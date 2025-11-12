@@ -1,0 +1,217 @@
+// schema.prisma
+datasource db { provider = "postgresql"; url = env("DATABASE_URL") }
+generator client { provider = "prisma-client-js" }
+
+enum EventVisibility { PUBLIC PRIVATE }
+enum EventRole { CELEBRANT PERFORMER ATTENDEE }
+enum KycTier { T1 T2 T3 }
+enum LedgerEntryType { DEBIT CREDIT }
+enum MoneyOp { FUNDING SPRAY FEE WITHDRAWAL REFUND ADJUSTMENT }
+
+model User {
+  id            String   @id @default(cuid())
+  email         String?  @unique
+  phone         String?  @unique
+  passwordHash  String?
+  displayName   String
+  kycTier       KycTier  @default(T1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  wallet        Wallet?
+  authProviders AuthProvider[]
+  sessions      Session[]
+  participations EventParticipation[]
+  invitations    EventInvitation[] @relation("InvitedUser")
+  spraysSent     Spray[]            @relation("Sender")
+  notifications  Notification[]
+}
+
+model AuthProvider {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider  String   // "google", "password"
+  subject   String   // provider user id
+  createdAt DateTime @default(now())
+
+  @@unique([provider, subject])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique
+  userAgent    String?
+  ip           String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+}
+
+model Wallet {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // running balance as snapshot; source of truth is LedgerEntry
+  balanceMinor  BigInt   @default(0) // store in kobo
+  currency      String   @default("NGN")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  ledgerEntries LedgerEntry[]
+}
+
+model LedgerEntry {
+  id            String          @id @default(cuid())
+  walletId      String
+  wallet        Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  entryType     LedgerEntryType
+  amountMinor   BigInt          // positive integer
+  moneyOp       MoneyOp
+  // tie to a Transfer/Spray for grouping
+  transferId    String?
+  transfer      Transfer?       @relation(fields: [transferId], references: [id], onDelete: SetNull)
+  // idempotency and ordering
+  postedAt      DateTime        @default(now())
+  createdAt     DateTime        @default(now())
+  metadata      Json?
+  // Balance snapshot optional if you want fast statements:
+  balanceAfterMinor BigInt?
+
+  @@index([walletId, postedAt])
+}
+
+model Transfer {
+  id           String   @id @default(cuid())
+  // business key for idempotency (e.g. from client or PSP)
+  idempotencyKey String @unique
+  op            MoneyOp
+  amountMinor   BigInt
+  feeMinor      BigInt   @default(0)
+  currency      String   @default("NGN")
+
+  // parties
+  fromWalletId  String?
+  fromWallet    Wallet?  @relation("FromWallet", fields: [fromWalletId], references: [id])
+  toWalletId    String?
+  toWallet      Wallet?  @relation("ToWallet", fields: [toWalletId], references: [id])
+
+  // linking to event/spray when applicable
+  eventId       String?
+  event         Event?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  sprayId       String?
+  spray         Spray?   @relation(fields: [sprayId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime @default(now())
+  completedAt   DateTime?
+  status        String   @default("COMPLETED") // or PENDING/FAILED if you integrate PSP
+
+  ledgerEntries LedgerEntry[]
+
+  @@index([eventId])
+}
+
+model Event {
+  id           String   @id @default(cuid())
+  title        String
+  description  String?
+  coverImage   String?
+  visibility   EventVisibility @default(PUBLIC)
+  startsAt     DateTime
+  endsAt       DateTime?
+  location     String?
+  createdById  String
+  createdBy    User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  participations EventParticipation[]
+  invitations    EventInvitation[] @relation("EventInvitations")
+  sprays         Spray[]
+}
+
+model EventParticipation {
+  id        String   @id @default(cuid())
+  eventId   String
+  userId    String
+  role      EventRole
+  // optional display/config per event (stage name for performers, etc.)
+  alias     String?
+  createdAt DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId]) // one row per event per user; role can change by update
+  @@index([eventId, role])
+}
+
+model EventInvitation {
+  id         String   @id @default(cuid())
+  eventId    String
+  invitedId  String?  // if user already exists
+  invited    User?    @relation("InvitedUser", fields: [invitedId], references: [id], onDelete: SetNull)
+  emailPhone String?  // for non-users
+  role       EventRole @default(ATTENDEE)
+  token      String    @unique
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  event      Event    @relation("EventInvitations", fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model Spray {
+  id           String   @id @default(cuid())
+  eventId      String
+  senderId     String   // user spraying
+  celebrantId  String   // user receiving (for that event’s celebrant role)
+  amountMinor  BigInt
+  message      String?
+  createdAt    DateTime @default(now())
+
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sender       User     @relation("Sender", fields: [senderId], references: [id], onDelete: Restrict)
+  celebrant    User     @relation(fields: [celebrantId], references: [id], onDelete: Restrict)
+  transfer     Transfer?
+
+  @@index([eventId, createdAt])
+  @@index([eventId, senderId])
+  @@index([eventId, celebrantId])
+}
+
+model LeaderboardSnapshot {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  topJson     Json     // [{userId, totalMinor}] precomputed
+  updatedAt   DateTime @default(now())
+
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // "SPRAY_RECEIVED", etc.
+  payload   Json
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String   // "TRANSFER_CREATE", etc.
+  entity    String   // "Transfer:xyz"
+  changes   Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
