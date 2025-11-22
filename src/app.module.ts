@@ -6,13 +6,14 @@ import { DatabaseModule } from './database/database.module.js';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import {APP_GUARD} from '@nestjs/core';
 import { AuthModule } from './auth/auth.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 
 @Module({
   imports: [UsersModule, DatabaseModule, ThrottlerModule.forRoot([{
     name: 'short',
     ttl: 60000,
     limit: 5,
-  }]), AuthModule],
+  }]), AuthModule, NotificationsModule],
   controllers: [AppController],
   providers: [AppService, {
     provide: APP_GUARD,

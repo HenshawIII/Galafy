@@ -28,6 +28,24 @@ model User {
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
   
+  notificationDevices NotificationDevice[]
+}
+
+model NotificationDevice {
+  id        String   @id @default(uuid())
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+
+  deviceToken String  @unique
+  deviceType  String  // 'web', 'android', 'ios', etc.
+  appVersion  String?
+
+  isActive   Boolean  @default(true)
+  lastSeenAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum kycTier {
