@@ -3,6 +3,7 @@ import { UsersService } from '../users/users.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { google } from 'googleapis';
 import { config } from 'dotenv';
+import { KycTier } from '../users/dto/create-user-dto.js';
 config();
 
 @Injectable()
@@ -38,11 +39,17 @@ export class AuthService {
         }
         let dbUser = await this.usersService.findByEmail(user.email);
         if (!dbUser) {
+          // Split name into firstName and lastName
+          const nameParts = (user.name || user.email.split('@')[0]).split(' ');
+          const firstName = nameParts[0] || user.email.split('@')[0];
+          const lastName = nameParts.slice(1).join(' ') || '';
+
            dbUser = await this.usersService.create({
-            username: user.name || user.email.split('@')[0],
+            firstName,
+            lastName,
             email: user.email,
             // No password for Google OAuth users
-            kycTier: 'T1',
+            kycTier: KycTier.Tier_0,
             isVerified: true,
            }) as any;
         }

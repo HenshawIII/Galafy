@@ -7,13 +7,19 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import {APP_GUARD} from '@nestjs/core';
 import { AuthModule } from './auth/auth.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
+import { CustomerKycModule } from './customer-kyc/customer-kyc.module.js';
+import { WalletmoduleModule } from './walletmodule/walletmodule.module.js';
+import { PaymentsModule } from './payments/payments.module.js';
+import { ProviderModule } from './provider/provider.module.js';
+import { AdminModule } from './admin/admin.module.js';
+import { EventsModule } from './events/events.module.js';
 
 @Module({
   imports: [UsersModule, DatabaseModule, ThrottlerModule.forRoot([{
     name: 'short',
     ttl: 60000,
     limit: 5,
-  }]), AuthModule, NotificationsModule],
+  }]), AuthModule, NotificationsModule, CustomerKycModule, WalletmoduleModule, PaymentsModule, ProviderModule, AdminModule, EventsModule],
   controllers: [AppController],
   providers: [AppService, {
     provide: APP_GUARD,

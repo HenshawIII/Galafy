@@ -104,7 +104,8 @@ export class NotificationsService {
         user: {
           select: {
             id: true,
-            username: true,
+            firstName: true,
+            lastName: true,
             email: true,
           },
         },
@@ -396,7 +397,8 @@ export class NotificationsService {
         user: {
           select: {
             id: true,
-            username: true,
+            firstName: true,
+            lastName: true,
             email: true,
           },
         },

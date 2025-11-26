@@ -1,13 +1,19 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto } from './dto/create-user-dto.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 
+@ApiTags('users')
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post('signup')
+  @ApiOperation({ summary: 'User signup' })
+  @ApiBody({ type: SignupDto })
+  @ApiResponse({ status: 201, description: 'User created successfully' })
+  @ApiResponse({ status: 400, description: 'User already exists or validation failed' })
   signup(@Body(ValidationPipe) signupDto: SignupDto) {
     return this.usersService.signup(signupDto);
   }
@@ -23,6 +29,10 @@ export class UsersController {
   }
 
   @Post('login')
+  @ApiOperation({ summary: 'User login' })
+  @ApiBody({ type: LoginDto })
+  @ApiResponse({ status: 200, description: 'Login successful, returns JWT token' })
+  @ApiResponse({ status: 401, description: 'Invalid credentials' })
   login(@Body(ValidationPipe) loginDto: LoginDto) {
     return this.usersService.login(loginDto);
   }

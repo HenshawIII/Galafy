@@ -17,25 +17,128 @@ datasource db {
 
 
 
+// =====================
+// ENUMS
+// =====================
+
+enum KycTier {
+  Tier_0
+  Tier_1
+  Tier_2
+  Tier_3
+}
+
+enum TransactionType {
+  FUNDING
+  SPRAY
+  PAYOUT
+  REFUND
+  ADJUSTMENT
+}
+
+enum TransactionDirection {
+  CREDIT
+  DEBIT
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+enum FundingChannel {
+  BANK_TRANSFER
+  CARD
+  USSD
+  MANUAL_ADJUSTMENT
+}
+
+enum FundingStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REJECTED
+  REVERSED
+}
+
+enum EventStatus {
+  DRAFT
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+enum WebhookProcessingStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+
+// Only these three as requested
+enum EventRole {
+  ATTENDEE
+  PERFORMER
+  CELEBRANT
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATIONS
+  COMPLIANCE
+  SUPPORT
+  VIEW_ONLY
+}
+
+enum KycRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// =====================
+// CORE USER / AUTH
+// =====================
+
 model User {
-  id                      String      @id @default(uuid())
-  username                String     
-  email                   String      @unique
-  password                String?
-  kycTier                 kycTier     @default(T1)
-  isVerified              Boolean     @default(false)
-  verificationCode        String?
-  createdAt               DateTime    @default(now())
-  updatedAt               DateTime    @updatedAt
-  
+  id                String               @id @default(uuid())
+  firstName         String
+  lastName          String
+  email             String               @unique
+  password          String?
+  phone             String?              @unique
+  kycTier           KycTier              @default(Tier_0)
+  isVerified        Boolean              @default(false)
+  verificationCode  String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  customer          Customer?
   notificationDevices NotificationDevice[]
+
+  // Events user participates in
+  eventParticipants EventParticipant[]
+  // Events this user hosts
+  hostedEvents      Event[]              @relation("UserHostedEvents")
 }
 
 model NotificationDevice {
   id        String   @id @default(uuid())
 
-  user   User   @relation(fields: [userId], references: [id])
-  userId String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
 
   deviceToken String  @unique
   deviceType  String  // 'web', 'android', 'ios', etc.
@@ -44,12 +147,420 @@ model NotificationDevice {
   isActive   Boolean  @default(true)
   lastSeenAt DateTime @default(now())
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
-enum kycTier {
-  T1
-  T2
-  T3
+// =====================
+// CUSTOMER & KYC
+// =====================
+
+model Customer {
+  id                 String   @id @default(uuid())
+
+  // Link to your app user
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id])
+
+  // Provider-side identifiers
+  providerCustomerId String?  @unique
+  organizationId     String?
+  customerTypeId     String?
+  countryId          String?
+
+  // Tier management
+  tier               KycTier  @default(Tier_0)
+  providerTierCode   Int      @default(0)
+
+  // Personal data
+  firstName          String
+  lastName           String
+  middleName         String?
+  dob                DateTime?
+  city               String?
+  address            String?
+  mobileNumber       String?
+  emailAddress       String?
+  isCorporateVerified Boolean?
+  providerDateCreated DateTime?
+
+  // KYC verification relations
+  ninVerification     NinVerification?
+  bvnVerification     BvnVerification?
+  addressVerification AddressVerification?
+
+  // Wallets
+  wallets             Wallet[]
+
+  // Bank accounts
+  bankAccounts        BankAccount[]
+
+  // KYC workflow requests
+  kycRequests         KycRequest[]
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+// --------------------
+// NIN Verification
+// --------------------
+
+model NinVerification {
+  id                 Int      @id @default(autoincrement())
+  customerId         String   @unique
+  customer           Customer @relation(fields: [customerId], references: [id])
+
+  providerCheckId    Int?
+
+  state              String?
+  status             String?
+
+  ninCheckStatus     String?
+  firstnameMatch     Boolean?
+  lastnameMatch      Boolean?
+
+  ninBirthdate       DateTime?
+  ninGender          String?
+  ninPhone           String?
+  lgaOfResidence     String?
+  stateOfResidence   String?
+  photoUrl           String?
+  vNin               String?
+
+  rawResponse        Json
+
+  verifiedAt         DateTime @default(now())
+  createdAt          DateTime @default(now())
+}
+
+// --------------------
+// BVN Verification
+// --------------------
+
+model BvnVerification {
+  id                 Int      @id @default(autoincrement())
+  customerId         String   @unique
+  customer           Customer @relation(fields: [customerId], references: [id])
+
+  kycCompleted       Boolean?
+  providerCheckId    Int?
+
+  state              String?
+  status             String?
+
+  bvnCheckStatus     String?
+  firstnameMatch     Boolean?
+  lastnameMatch      Boolean?
+
+  birthdate          DateTime?
+  gender             String?
+  phone              String?
+  email              String?
+  firstname          String?
+  lastname           String?
+  middlename         String?
+  lgaOfResidence     String?
+  maritalStatus      String?
+  nationality        String?
+  residentialAddress String?
+  stateOfResidence   String?
+  enrollmentBank     String?
+  watchListed        String?
+  photoUrl           String?
+
+  rawResponse        Json
+
+  verifiedAt         DateTime @default(now())
+  createdAt          DateTime @default(now())
+}
+
+// --------------------
+// Address Verification
+// --------------------
+
+model AddressVerification {
+  id                 Int      @id @default(autoincrement())
+  customerId         String   @unique
+  customer           Customer @relation(fields: [customerId], references: [id])
+
+  verified           Boolean
+  houseAddress       String?
+  houseOwner         String?
+  confidenceLevel    Int?
+  discoCode          String?
+
+  providerStatus     String?
+  providerMessage    String?
+  providerTimestamp  DateTime?
+
+  rawResponse        Json
+
+  verifiedAt         DateTime @default(now())
+  createdAt          DateTime @default(now())
+}
+
+// =====================
+// WALLET & TRANSACTIONS
+// =====================
+
+model Wallet {
+  id                     String   @id @default(uuid())
+  customerId             String
+  customer               Customer @relation(fields: [customerId], references: [id])
+
+  providerWalletId       String?  @unique
+
+  walletGroupId          String?
+  walletRestrictionId    String?
+  walletClassificationId String?
+  currencyId             String   // provider's currency UUID
+
+  availableBalance       Decimal  @default(0)
+  ledgerBalance          Decimal  @default(0)
+  overdraft              Decimal? @default(0)
+
+  isInternal             Boolean  @default(false)
+  isDefault              Boolean  @default(false)
+
+  name                   String?
+  mobNum                 String?
+
+  virtualAccountNumber   String?
+  virtualBankCode        String?
+  virtualBankName        String?
+
+  // Relations
+  transactions           Transaction[]
+  spraysAsSprayer        Spray[]  @relation("SpraySprayerWallet")
+  spraysAsReceiver       Spray[]  @relation("SprayReceiverWallet")
+  fundings               FundingTransaction[]
+  payouts                PayoutTransaction[]
+  eventParticipants      EventParticipant[]
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model Transaction {
+  id          String               @id @default(uuid())
+
+  walletId    String
+  wallet      Wallet               @relation(fields: [walletId], references: [id])
+
+  type        TransactionType
+  direction   TransactionDirection
+  status      TransactionStatus    @default(PENDING)
+
+  amount      Decimal
+  currencyId  String               // same as wallet.currencyId
+
+  groupReference      String?
+  reference           String        @unique  // your internal reference
+  externalReference   String?                 // generic provider reference if needed
+
+  narration   String?
+  metadata    Json?
+
+  // One-to-one links to domain-specific transactions
+  fundingTransaction FundingTransaction? @relation("FundingTransactionOnTransaction")
+  payoutTransaction  PayoutTransaction?  @relation("PayoutTransactionOnTransaction")
+
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+}
+
+// =====================
+// EVENTS & SPRAYS
+// =====================
+
+model Event {
+  id          String        @id @default(uuid())
+  code        String        @unique
+  name        String
+  description String?
+
+  hostUserId  String
+  hostUser    User          @relation("UserHostedEvents", fields: [hostUserId], references: [id])
+
+  status      EventStatus   @default(DRAFT)
+  startsAt    DateTime?
+  endsAt      DateTime?
+
+  participants EventParticipant[]
+  sprays       Spray[]
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model EventParticipant {
+  id         String   @id @default(uuid())
+
+  eventId    String
+  event      Event    @relation(fields: [eventId], references: [id])
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+
+  walletId   String?
+  wallet     Wallet?  @relation(fields: [walletId], references: [id])
+
+  role       EventRole @default(ATTENDEE)
+  joinedAt   DateTime  @default(now())
+}
+
+model Spray {
+  id          String   @id @default(uuid())
+
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id])
+
+  sprayerWalletId  String
+  sprayerWallet    Wallet   @relation("SpraySprayerWallet", fields: [sprayerWalletId], references: [id])
+
+  receiverWalletId String
+  receiverWallet   Wallet   @relation("SprayReceiverWallet", fields: [receiverWalletId], references: [id])
+
+  transactionGroupReference String? @unique
+
+  totalAmount  Decimal
+  note         String?
+  metadata     Json?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// =====================
+// BANK ACCOUNTS & PAYMENTS
+// =====================
+
+model BankAccount {
+  id                    String      @id @default(uuid())
+
+  customerId            String
+  customer              Customer    @relation(fields: [customerId], references: [id])
+
+  accountName           String
+  accountNumber         String
+  bankCode              String      // e.g. "058"
+  bankName              String
+
+  isDefault             Boolean     @default(false)
+  isVerified            Boolean     @default(false)
+  providerRecipientCode String?
+
+  payouts               PayoutTransaction[]
+
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+}
+
+model FundingTransaction {
+  id            String          @id @default(uuid())
+
+  walletId      String
+  wallet        Wallet          @relation(fields: [walletId], references: [id])
+
+  amount        Decimal
+  fee           Decimal         @default(0)
+
+  channel       FundingChannel
+  status        FundingStatus   @default(PENDING)
+
+  // Link to ledger
+  transactionId String          @unique
+  transaction   Transaction     @relation("FundingTransactionOnTransaction", fields: [transactionId], references: [id])
+
+  providerReference String?     @unique
+  providerPayload   Json?
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model PayoutTransaction {
+  id            String        @id @default(uuid())
+
+  walletId      String
+  wallet        Wallet        @relation(fields: [walletId], references: [id])
+
+  bankAccountId String
+  bankAccount   BankAccount   @relation(fields: [bankAccountId], references: [id])
+
+  amount        Decimal
+  fee           Decimal        @default(0)
+
+  status        PayoutStatus   @default(PENDING)
+
+  // Link to ledger
+  transactionId String         @unique
+  transaction   Transaction    @relation("PayoutTransactionOnTransaction", fields: [transactionId], references: [id])
+
+  // Provider transactionRef
+  providerTransactionRef String? @unique
+
+  providerPayload   Json?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([providerTransactionRef])
+}
+
+// =====================
+// WEBHOOKS
+// =====================
+
+model ProviderWebhookEvent {
+  id               String                   @id @default(uuid())
+
+  event            String                   // e.g. "payout"
+  paymentReference String?
+  payload          Json
+
+  processingStatus WebhookProcessingStatus  @default(PENDING)
+  errorMessage     String?
+
+  createdAt        DateTime                 @default(now())
+  processedAt      DateTime?
+}
+
+// =====================
+// ADMIN & KYC WORKFLOW
+// =====================
+
+model Admin {
+  id        String    @id @default(uuid())
+
+  userId    String    @unique
+ 
+
+  role      AdminRole
+  isActive  Boolean   @default(true)
+
+  kycRequests KycRequest[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now())
+}
+
+model KycRequest {
+  id            String           @id @default(uuid())
+
+  customerId    String
+  customer      Customer         @relation(fields: [customerId], references: [id])
+
+  requestedTier KycTier
+  status        KycRequestStatus @default(PENDING)
+
+  adminId       String?
+  admin         Admin?           @relation(fields: [adminId], references: [id])
+
+  reason        String?
+  decidedAt     DateTime?
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 }

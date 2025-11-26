@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
-import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto } from './dto/create-user-dto.js';
+import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, KycTier } from './dto/create-user-dto.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
@@ -33,10 +33,12 @@ export class UsersService {
     // Create user with unverified status
     const user = await this.databaseService.user.create({
       data: {
-        username: signupDto.username,
+        firstName: signupDto.firstName,
+        lastName: signupDto.lastName,
         email: signupDto.email,
         password: hashedPassword,
-        kycTier: signupDto.kycTier,
+        phone: signupDto.phone,
+        kycTier: signupDto.kycTier ?? KycTier.Tier_0, // Default to Tier_0 for new signups
         isVerified: false,
         verificationCode,
       },
@@ -160,7 +162,8 @@ export class UsersService {
     const token = this.jwtService.sign({
       sub: user.id,
       email: user.email,
-      username: user.username,
+      firstName: user.firstName,
+      lastName: user.lastName,
     });
 
     // Remove password from response
@@ -241,9 +244,11 @@ export class UsersService {
   async create(createUserDto: CreateUserDto) {
     // Hash password if provided
     const data: any = {
-      username: createUserDto.username,
+      firstName: createUserDto.firstName,
+      lastName: createUserDto.lastName,
       email: createUserDto.email,
-      kycTier: createUserDto.kycTier,
+      phone: createUserDto.phone,
+      kycTier: createUserDto.kycTier ?? KycTier.Tier_0,
       isVerified: createUserDto.isVerified ?? false,
     };
 

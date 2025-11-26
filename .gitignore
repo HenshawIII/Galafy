@@ -3,6 +3,10 @@
 /node_modules
 /build
 
+
+API_DOCUMENTATION.md
+DEPLOYMENT.md
+
 # Logs
 logs
 *.log
