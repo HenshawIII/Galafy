@@ -9,14 +9,49 @@ export class EmailService {
 
   constructor() {
     this.transporter = nodemailer.createTransport({
-     host:"mail.privateemail.com",
-     port:465,
-     secure: true,
+      host: process.env.SMTP_HOST || "mail.privateemail.com",
+      port: parseInt(process.env.SMTP_PORT || '465', 10),
+      secure: true, // true for 465, false for other ports
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASSWORD,
       },
-     
+      connectionTimeout: 10000, // 10 seconds
+      greetingTimeout: 10000,
+      socketTimeout: 10000,
+      tls: {
+        rejectUnauthorized: false, // Allow self-signed certificates
+      },
+    });
+
+    // Verify SMTP connection on startup
+    this.transporter.verify((error, success) => {
+      if (error) {
+        const err = error as any; // nodemailer error has additional properties
+        console.error('SMTP verify error:', error.message);
+        console.error('Error code:', err.code);
+        console.error('Error command:', err.command);
+        console.error('Error response:', err.response);
+        
+        // Diagnose the issue
+        if (err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+          console.error('❌ CONNECTION ERROR: Render cannot reach the SMTP server');
+          console.error('This is a platform/network issue - Render blocks outbound SMTP connections');
+          console.error('Solution: Use a cloud email service like SendGrid that works with Render');
+        } else if (err.code === 'EAUTH' || err.responseCode === 535) {
+          console.error('✅ CONNECTION WORKS! But authentication failed');
+          console.error('This means Render CAN reach the server, but credentials are wrong');
+          console.error('Check your SMTP_USER and SMTP_PASSWORD environment variables');
+        } else if (err.code === 'ETLS' || err.code === 'ESOCKET') {
+          console.error('⚠️  TLS/SSL Error: Connection works but TLS handshake failed');
+          console.error('Try setting SMTP_PORT=587 and secure=false');
+        } else {
+          console.error('Unknown error type:', err.code);
+        }
+      } else {
+        console.log('✅ SMTP is ready to send messages');
+        console.log('Connected to:', process.env.SMTP_HOST || "mail.privateemail.com");
+      }
     });
   }
 
@@ -40,9 +75,21 @@ export class EmailService {
 
     try {
       await this.transporter.sendMail(mailOptions);
-    } catch (error) {
-      console.error('Error sending verification email:', error);
-      throw new Error('Failed to send verification email');
+      console.log(`✅ Verification email sent to ${email}`);
+    } catch (error: any) {
+      console.error('❌ Error sending verification email:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Error command:', error.command);
+      console.error('Error response:', error.response);
+      
+      // Provide specific error message based on error type
+      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED') {
+        throw new Error(`SMTP connection timeout - Render cannot reach ${process.env.SMTP_HOST || 'mail.privateemail.com'}. This is a platform network restriction.`);
+      } else if (error.code === 'EAUTH') {
+        throw new Error('SMTP authentication failed - check your SMTP_USER and SMTP_PASSWORD');
+      } else {
+        throw new Error(`Failed to send verification email: ${error.message}`);
+      }
     }
   }
 
@@ -68,9 +115,21 @@ export class EmailService {
 
     try {
       await this.transporter.sendMail(mailOptions);
-    } catch (error) {
-      console.error('Error sending password reset email:', error);
-      throw new Error('Failed to send password reset email');
+      console.log(`✅ Password reset email sent to ${email}`);
+    } catch (error: any) {
+      console.error('❌ Error sending password reset email:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Error command:', error.command);
+      console.error('Error response:', error.response);
+      
+      // Provide specific error message based on error type
+      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED') {
+        throw new Error(`SMTP connection timeout - Render cannot reach ${process.env.SMTP_HOST || 'mail.privateemail.com'}. This is a platform network restriction.`);
+      } else if (error.code === 'EAUTH') {
+        throw new Error('SMTP authentication failed - check your SMTP_USER and SMTP_PASSWORD');
+      } else {
+        throw new Error(`Failed to send password reset email: ${error.message}`);
+      }
     }
   }
 }
