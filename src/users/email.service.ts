@@ -1,65 +1,32 @@
-import { Injectable } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
+import { Injectable, Logger } from '@nestjs/common';
+import  sgMail from '@sendgrid/mail';
 import { config } from 'dotenv';
 config();
 
 @Injectable()
 export class EmailService {
-  private transporter: nodemailer.Transporter;
+  private readonly logger = new Logger(EmailService.name);
 
   constructor() {
-    this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || "mail.privateemail.com",
-      port: parseInt(process.env.SMTP_PORT || '465', 10),
-      secure: true, // true for 465, false for other ports
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASSWORD,
-      },
-      connectionTimeout: 10000, // 10 seconds
-      greetingTimeout: 10000,
-      socketTimeout: 10000,
-      tls: {
-        rejectUnauthorized: false, // Allow self-signed certificates
-      },
-    });
+    // Set SendGrid API key
+    const apiKey = process.env.SENDGRID_API_KEY;
+    if (!apiKey) {
+      this.logger.warn('SENDGRID_API_KEY not found in environment variables');
+    } else {
+      sgMail.setApiKey(apiKey);
+      this.logger.log('SendGrid API initialized successfully');
+    }
 
-    // Verify SMTP connection on startup
-    this.transporter.verify((error, success) => {
-      if (error) {
-        const err = error as any; // nodemailer error has additional properties
-        console.error('SMTP verify error:', error.message);
-        console.error('Error code:', err.code);
-        console.error('Error command:', err.command);
-        console.error('Error response:', err.response);
-        
-        // Diagnose the issue
-        if (err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
-          console.error('❌ CONNECTION ERROR: Render cannot reach the SMTP server');
-          console.error('This is a platform/network issue - Render blocks outbound SMTP connections');
-          console.error('Solution: Use a cloud email service like SendGrid that works with Render');
-        } else if (err.code === 'EAUTH' || err.responseCode === 535) {
-          console.error('✅ CONNECTION WORKS! But authentication failed');
-          console.error('This means Render CAN reach the server, but credentials are wrong');
-          console.error('Check your SMTP_USER and SMTP_PASSWORD environment variables');
-        } else if (err.code === 'ETLS' || err.code === 'ESOCKET') {
-          console.error('⚠️  TLS/SSL Error: Connection works but TLS handshake failed');
-          console.error('Try setting SMTP_PORT=587 and secure=false');
-        } else {
-          console.error('Unknown error type:', err.code);
-        }
-      } else {
-        console.log('✅ SMTP is ready to send messages');
-        console.log('Connected to:', process.env.SMTP_HOST || "mail.privateemail.com");
-      }
-    });
+    // Optional: Set data residency for EU (uncomment if needed)
+    // sgMail.setDataResidency('eu');
   }
 
   async sendVerificationCode(email: string, code: string): Promise<void> {
-    const mailOptions = {
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    const msg = {
       to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
       subject: 'Verify Your Account',
+      text: `Your verification code is: ${code}. This code will expire in 15 minutes.`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Welcome! Verify Your Account</h2>
@@ -74,30 +41,23 @@ export class EmailService {
     };
 
     try {
-      await this.transporter.sendMail(mailOptions);
-      console.log(`✅ Verification email sent to ${email}`);
+      await sgMail.send(msg);
+      this.logger.log(`Verification email sent to ${email}`);
     } catch (error: any) {
-      console.error('❌ Error sending verification email:', error.message);
-      console.error('Error code:', error.code);
-      console.error('Error command:', error.command);
-      console.error('Error response:', error.response);
-      
-      // Provide specific error message based on error type
-      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED') {
-        throw new Error(`SMTP connection timeout - Render cannot reach ${process.env.SMTP_HOST || 'mail.privateemail.com'}. This is a platform network restriction.`);
-      } else if (error.code === 'EAUTH') {
-        throw new Error('SMTP authentication failed - check your SMTP_USER and SMTP_PASSWORD');
-      } else {
-        throw new Error(`Failed to send verification email: ${error.message}`);
+      this.logger.error(`Error sending verification email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
       }
+      throw new Error(`Failed to send verification email: ${error.message}`);
     }
   }
 
   async sendPasswordResetLink(email: string, resetLink: string): Promise<void> {
-    const mailOptions = {
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    const msg = {
       to: email,
+      from: process.env.SMTP_FROM || process.env.SENDGRID_FROM || 'noreply@example.com',
       subject: 'Password Reset Request',
+      text: `You have requested to reset your password. Click the link below or copy and paste it into your browser: ${resetLink}. This link will expire in 1 hour.`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Password Reset Request</h2>
@@ -114,22 +74,14 @@ export class EmailService {
     };
 
     try {
-      await this.transporter.sendMail(mailOptions);
-      console.log(`✅ Password reset email sent to ${email}`);
+      await sgMail.send(msg);
+      this.logger.log(`Password reset email sent to ${email}`);
     } catch (error: any) {
-      console.error('❌ Error sending password reset email:', error.message);
-      console.error('Error code:', error.code);
-      console.error('Error command:', error.command);
-      console.error('Error response:', error.response);
-      
-      // Provide specific error message based on error type
-      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED') {
-        throw new Error(`SMTP connection timeout - Render cannot reach ${process.env.SMTP_HOST || 'mail.privateemail.com'}. This is a platform network restriction.`);
-      } else if (error.code === 'EAUTH') {
-        throw new Error('SMTP authentication failed - check your SMTP_USER and SMTP_PASSWORD');
-      } else {
-        throw new Error(`Failed to send password reset email: ${error.message}`);
+      this.logger.error(`Error sending password reset email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
       }
+      throw new Error(`Failed to send password reset email: ${error.message}`);
     }
   }
 }
