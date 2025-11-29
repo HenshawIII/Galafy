@@ -19,11 +19,20 @@ export class UsersController {
   }
 
   @Post('verify')
+  @ApiOperation({ summary: 'Verify account after signup' })
+  @ApiBody({ type: VerifyAccountDto })
+  @ApiResponse({ status: 200, description: 'Account verified successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid verification code' })
+  @ApiResponse({ status: 401, description: 'Account already verified' })
   verifyAccount(@Body(ValidationPipe) verifyAccountDto: VerifyAccountDto) {
     return this.usersService.verifyAccount(verifyAccountDto);
   }
 
   @Post('resend-verification')
+  @ApiOperation({ summary: 'Resend verification code' })
+  @ApiBody({ type: ResendVerificationDto })
+  @ApiResponse({ status: 200, description: 'Verification code resent successfully' })
+  @ApiResponse({ status: 400, description: 'Account already verified' })
   resendVerificationCode(@Body(ValidationPipe) resendVerificationDto: ResendVerificationDto) {
     return this.usersService.resendVerificationCode(resendVerificationDto);
   }
@@ -38,11 +47,20 @@ export class UsersController {
   }
 
   @Post('forgot-password')
+  @ApiOperation({ summary: 'Forgot password' })
+  @ApiBody({ type: ForgotPasswordDto })
+  @ApiResponse({ status: 200, description: 'Password reset link sent successfully' })
+  @ApiResponse({ status: 400, description: 'Email not found' })
   forgotPassword(@Body(ValidationPipe) forgotPasswordDto: ForgotPasswordDto) {
     return this.usersService.forgotPassword(forgotPasswordDto);
   }
 
   @Post('reset-password')
+  @ApiOperation({ summary: 'Reset password' })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({ status: 200, description: 'Password reset successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid token' })
+  @ApiResponse({ status: 401, description: 'Invalid token type' })
   resetPassword(@Body(ValidationPipe) resetPasswordDto: ResetPasswordDto) {
     return this.usersService.resetPassword(resetPasswordDto);
   }
