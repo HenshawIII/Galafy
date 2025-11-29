@@ -44,8 +44,13 @@ export class UsersService {
       },
     });
 
-    // Send verification code via email
-    await this.emailService.sendVerificationCode(user.email, verificationCode);
+    // Send verification code via email (don't fail signup if email fails)
+    try {
+      await this.emailService.sendVerificationCode(user.email, verificationCode);
+    } catch (emailError) {
+      // Log error but don't fail signup - user can request resend later
+      console.error('Failed to send verification email (signup still succeeded):', emailError.message);
+    }
 
     // Remove sensitive data from response
     const { password, verificationCode: _, ...userWithoutPassword } = user;
@@ -83,7 +88,12 @@ export class UsersService {
     });
 
     // Send new verification code via email
-    await this.emailService.sendVerificationCode(user.email, newVerificationCode);
+    try {
+      await this.emailService.sendVerificationCode(user.email, newVerificationCode);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError.message);
+      // Still return success message - user can try again
+    }
 
     return { message: 'If the email exists and account is unverified, a new verification code has been sent' };
   }
@@ -199,7 +209,12 @@ export class UsersService {
     const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
 
     // Send password reset link via email
-    await this.emailService.sendPasswordResetLink(user.email, resetLink);
+    try {
+      await this.emailService.sendPasswordResetLink(user.email, resetLink);
+    } catch (emailError) {
+      console.error('Failed to send password reset email:', emailError.message);
+      // Still return success message for security (don't reveal if email exists)
+    }
 
     return { message: 'If the email exists, a password reset link has been sent' };
   }
