@@ -55,7 +55,7 @@ export class EmailService {
   async sendPasswordResetLink(email: string, resetLink: string): Promise<void> {
     const msg = {
       to: email,
-      from: process.env.SMTP_FROM || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
       subject: 'Password Reset Request',
       text: `You have requested to reset your password. Click the link below or copy and paste it into your browser: ${resetLink}. This link will expire in 1 hour.`,
       html: `
