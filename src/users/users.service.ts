@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, KycTier } from './dto/create-user-dto.js';
+import { ProviderService } from '../provider/provider.service.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
@@ -12,6 +13,7 @@ export class UsersService {
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly providerService: ProviderService,
   ) {}
 
   async signup(signupDto: SignupDto) {
@@ -19,6 +21,14 @@ export class UsersService {
     const existingUser = await this.databaseService.user.findUnique({
       where: { email: signupDto.email },
     });
+
+    const existingPhone = await this.databaseService.user.findUnique({
+      where: { phone: signupDto.phone },
+    });
+
+    if (existingPhone) {
+      throw new ConflictException('User with this phone number already exists');
+    }
 
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
@@ -192,68 +202,73 @@ export class UsersService {
 
     if (!user) {
       // Don't reveal if user exists or not for security
-      return { message: 'If the email exists, a password reset link has been sent' };
+      return { message: 'If the email exists, a password reset OTP has been sent' };
     }
 
-    // Generate JWT token for password reset (expires in 1 hour)
-    const resetToken = this.jwtService.sign(
-      {
-        sub: user.id,
-        email: user.email,
-        type: 'password-reset',
+    // Generate 6-digit OTP for password reset
+    const passwordResetOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Update user with password reset OTP and reset updatedAt to track expiration
+    await this.databaseService.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetOtp,
+        updatedAt: new Date(), // Use updatedAt to track when OTP was last sent
       },
-      { expiresIn: '1h' },
-    );
+    });
 
-    // Construct reset link (frontend URL should be in env)
-    const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
-
-    // Send password reset link via email
+    // Send password reset OTP via email
     try {
-      await this.emailService.sendPasswordResetLink(user.email, resetLink);
+      await this.emailService.sendPasswordResetOtp(user.email, passwordResetOtp);
     } catch (emailError) {
-      console.error('Failed to send password reset email:', emailError.message);
+      console.error('Failed to send password reset OTP email:', emailError.message);
       // Still return success message for security (don't reveal if email exists)
     }
 
-    return { message: 'If the email exists, a password reset link has been sent' };
+    return { message: 'If the email exists, a password reset OTP has been sent' };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
-    try {
-      // Verify JWT token
-      const payload = this.jwtService.verify(resetPasswordDto.token);
+    // Find user by email
+    const user = await this.databaseService.user.findUnique({
+      where: { email: resetPasswordDto.email },
+    });
 
-      // Check if token is for password reset
-      if (payload.type !== 'password-reset') {
-        throw new UnauthorizedException('Invalid token type');
-      }
-
-      // Find user by email from token
-      const user = await this.databaseService.user.findUnique({
-        where: { email: payload.email },
-      });
-
-      if (!user) {
-            throw new NotFoundException('User not found');
-        }
-
-      // Hash new password
-      const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
-
-      // Update password
-      await this.databaseService.user.update({
-        where: { id: user.id },
-        data: { password: hashedPassword },
-      });
-
-      return { message: 'Password reset successfully' };
-    } catch (error) {
-      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-        throw new UnauthorizedException('Invalid or expired token');
-      }
-      throw error;
+    if (!user) {
+      throw new NotFoundException('User not found');
     }
+
+    // Check if password reset OTP exists
+    if (!user.passwordResetOtp) {
+      throw new UnauthorizedException('No password reset OTP found. Please request a new one.');
+    }
+
+    // Check if OTP matches
+    if (user.passwordResetOtp !== resetPasswordDto.otp) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
+
+    // Check if OTP has expired (15 minutes from when OTP was last sent)
+    // Use updatedAt to track when password reset OTP was last generated
+    const otpAge = Date.now() - user.updatedAt.getTime();
+    const expirationTime = 15 * 60 * 1000; // 15 minutes in milliseconds
+    if (otpAge > expirationTime) {
+      throw new UnauthorizedException('Password reset OTP has expired. Please request a new one.');
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
+
+    // Update password and clear password reset OTP
+    await this.databaseService.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        passwordResetOtp: null,
+      },
+    });
+
+    return { message: 'Password reset successfully' };
   }
 
   async create(createUserDto: CreateUserDto) {
@@ -358,6 +373,61 @@ export class UsersService {
     return await this.databaseService.user.delete({
       where: { id },
     });
+  }
+
+  /**
+   * Get user details with customer information and KYC status
+   */
+  async getUserDetails(userId: string) {
+    // Find user with customer relation including wallets and bank accounts
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      include: {
+        customer: {
+          include: {
+            wallets: true,
+            bankAccounts: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
     }
+
+    if (!user.customer) {
+      throw new NotFoundException(`Customer not found for user ${userId}`);
+    }
+
+    const customer = user.customer;
+
+    // Prepare customer details
+    const customerDetails = {
+      firstName: customer.firstName,
+      lastName: customer.lastName,
+      mobileNumber: customer.mobileNumber,
+      emailAddress: customer.emailAddress,
+      tier: customer.tier,
+    };
+
+    // Get KYC status from provider if providerCustomerId exists
+    let kycStatus: any = null;
+    if (customer.providerCustomerId) {
+      try {
+        kycStatus = await this.providerService.getCustomerKycStatus(customer.providerCustomerId);
+      } catch (error: any) {
+        // Log error but don't fail the request - KYC status will be null
+        console.error(`Failed to fetch KYC status for customer ${customer.providerCustomerId}:`, error.message);
+      }
+    }
+
+    return {
+      ...customerDetails,
+      kycStatus,
+      wallets: customer.wallets || [],
+      bankAccounts: customer.bankAccounts || [],
+    };
+  }
 }
 

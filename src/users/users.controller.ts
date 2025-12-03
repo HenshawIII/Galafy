@@ -1,15 +1,20 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto } from './dto/create-user-dto.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { Public } from '../auth/public.decorator.js';
 
 @ApiTags('users')
 @Controller('users')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post('signup')
+  @Public()
   @ApiOperation({ summary: 'User signup' })
   @ApiBody({ type: SignupDto })
   @ApiResponse({ status: 201, description: 'User created successfully' })
@@ -19,6 +24,7 @@ export class UsersController {
   }
 
   @Post('verify')
+  @Public()
   @ApiOperation({ summary: 'Verify account after signup' })
   @ApiBody({ type: VerifyAccountDto })
   @ApiResponse({ status: 200, description: 'Account verified successfully' })
@@ -29,6 +35,7 @@ export class UsersController {
   }
 
   @Post('resend-verification')
+  @Public()
   @ApiOperation({ summary: 'Resend verification code' })
   @ApiBody({ type: ResendVerificationDto })
   @ApiResponse({ status: 200, description: 'Verification code resent successfully' })
@@ -38,6 +45,7 @@ export class UsersController {
   }
 
   @Post('login')
+  @Public()
   @ApiOperation({ summary: 'User login' })
   @ApiBody({ type: LoginDto })
   @ApiResponse({ status: 200, description: 'Login successful, returns JWT token' })
@@ -47,54 +55,65 @@ export class UsersController {
   }
 
   @Post('forgot-password')
-  @ApiOperation({ summary: 'Forgot password' })
+  @Public()
+  @ApiOperation({ summary: 'Forgot password - sends OTP to email' })
   @ApiBody({ type: ForgotPasswordDto })
-  @ApiResponse({ status: 200, description: 'Password reset link sent successfully' })
+  @ApiResponse({ status: 200, description: 'Password reset OTP sent successfully' })
   @ApiResponse({ status: 400, description: 'Email not found' })
   forgotPassword(@Body(ValidationPipe) forgotPasswordDto: ForgotPasswordDto) {
     return this.usersService.forgotPassword(forgotPasswordDto);
   }
 
   @Post('reset-password')
-  @ApiOperation({ summary: 'Reset password' })
+  @Public()
+  @ApiOperation({ summary: 'Reset password using OTP' })
   @ApiBody({ type: ResetPasswordDto })
   @ApiResponse({ status: 200, description: 'Password reset successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid token' })
-  @ApiResponse({ status: 401, description: 'Invalid token type' })
+  @ApiResponse({ status: 400, description: 'Invalid OTP or expired' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired OTP' })
   resetPassword(@Body(ValidationPipe) resetPasswordDto: ResetPasswordDto) {
     return this.usersService.resetPassword(resetPasswordDto);
   }
 
-  @Post()
-  create(@Body(ValidationPipe) createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
+  @Get(':id/details')
+  @ApiOperation({ summary: 'Get user details with customer information and KYC status' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'User details retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'User or customer not found' })
+  getUserDetails(@Param('id') id: string) {
+    return this.usersService.getUserDetails(id);
   }
 
-  @Throttle({short:{ttl:60000,limit:3}})
-  @Get()
-  findAll() {
-    return this.usersService.findAll();
-  }
+  // @Post()
+  // create(@Body(ValidationPipe) createUserDto: CreateUserDto) {
+  //   return this.usersService.create(createUserDto);
+  // }
 
-  @Get('email')
-  findByEmail(@Query('email') email: string) {
-    return this.usersService.findByEmail(email);
-  }
+  // @Throttle({short:{ttl:60000,limit:3}})
+  // @Get()
+  // findAll() {
+  //   return this.usersService.findAll();
+  // }
+
+  // @Get('email')
+  // findByEmail(@Query('email') email: string) {
+  //   return this.usersService.findByEmail(email);
+  // }
   
-  @SkipThrottle({default:false})
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
-  }
+  // @SkipThrottle({default:false})
+  // @Get(':id')
+  // findOne(@Param('id') id: string) {
+  //   return this.usersService.findOne(id);
+  // }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body(ValidationPipe) updateUserDto: UpdateUserDto) {
-    return this.usersService.update(id, updateUserDto);
-  }
+  // @Patch(':id')
+  // update(@Param('id') id: string, @Body(ValidationPipe) updateUserDto: UpdateUserDto) {
+  //   return this.usersService.update(id, updateUserDto);
+  // }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(id);
-  }
+  // @Delete(':id')
+  // remove(@Param('id') id: string) {
+  //   return this.usersService.remove(id);
+  // }
 }
 

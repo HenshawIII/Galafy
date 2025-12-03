@@ -10,8 +10,9 @@ import {
   Request,
   ValidationPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomerKycService } from './customer-kyc.service.js';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
 import { UpdateCustomerNameDto, UpdateCustomerContactsDto } from './dto/update-customer.dto.js';
 import { GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
@@ -23,6 +24,8 @@ import {
 
 @ApiTags('customers')
 @Controller('customer-kyc')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 export class CustomerKycController {
   constructor(private readonly customerKycService: CustomerKycService) {}
 
@@ -47,10 +50,10 @@ export class CustomerKycController {
   @ApiResponse({ status: 400, description: 'Bad request or customer already exists' })
   @ApiBody({ type: CreateCustomerDto })
   async createCustomer(@Request() req: any, @Body(ValidationPipe) createCustomerDto: CreateCustomerDto) {
-    // TODO: Extract userId from JWT token in production
-    const userId = req.user?.id || createCustomerDto.userId;
+    // Extract userId from JWT token
+    const userId = req.user?.id;
     if (!userId) {
-      throw new Error('User ID is required');
+      throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.customerKycService.createCustomer(userId, createCustomerDto);
   }

@@ -7,15 +7,19 @@ import {
   Param,
   Query,
   ValidationPipe,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { WalletmoduleService } from './walletmodule.service.js';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
 
 @ApiTags('wallets')
 @Controller('wallets')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 export class WalletmoduleController {
   constructor(private readonly walletmoduleService: WalletmoduleService) {}
 

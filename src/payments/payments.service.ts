@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
+import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import {
   GetWalletByIdDto,
   GetOrganizationTransactionsDto,
@@ -259,6 +261,9 @@ export class PaymentsService {
         throw new NotFoundException('Source wallet not found');
       }
 
+      // Generate internal reference if not provided
+      const internalReference = transferDto.customerTransactionReference || `PAYOUT-${randomUUID()}`;
+
       // Call provider to initiate transfer
       const result = await this.providerService.interBankTransfer({
         destinationBankCode: transferDto.destinationBankCode,
@@ -269,7 +274,7 @@ export class PaymentsService {
         remarks: transferDto.remarks,
         amount: transferDto.amount,
         currencyId: transferDto.currencyId,
-        customerTransactionReference: transferDto.customerTransactionReference,
+        customerTransactionReference: internalReference,
         webhookUrl: transferDto.webhookUrl,
       });
 
@@ -300,13 +305,13 @@ export class PaymentsService {
       const transaction = await this.databaseService.transaction.create({
         data: {
           walletId: sourceWallet.id,
-          type: 'PAYOUT',
-          direction: 'DEBIT',
-          status: 'PENDING',
+          type: TransactionType.PAYOUT,
+          direction: TransactionDirection.DEBIT,
+          status: TransactionStatus.PENDING,
           amount: transferDto.amount,
           currencyId: transferDto.currencyId,
-          reference: transferDto.customerTransactionReference,
-          externalReference: result.transactionRef,
+          reference: internalReference, // Internal reference
+          externalReference: result.transactionRef, // Provider reference
           narration: transferDto.remarks,
         },
       });

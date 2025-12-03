@@ -60,10 +60,6 @@ export class NinVerificationResponseDto {
 
   @IsOptional()
   @IsString()
-  photoUrl?: string;
-
-  @IsOptional()
-  @IsString()
   vNin?: string;
 }
 
@@ -163,10 +159,6 @@ export class BvnVerificationResponseDto {
   @IsOptional()
   @IsString()
   watchListed?: string;
-
-  @IsOptional()
-  @IsString()
-  photoUrl?: string;
 }
 
 // Address Verification DTOs
@@ -180,6 +172,12 @@ export class CreateAddressVerificationDto {
   @IsOptional()
   @IsString({ message: 'Disco code must be a string' })
   discoCode?: string;
+
+  @ApiPropertyOptional({ example: '12345678901', description: 'Meter number' })
+  @IsOptional()
+  @IsString({ message: 'Meter number must be a string' })
+  @IsNotEmpty({ message: 'Meter number is required' })
+  meterNumber: string;
 }
 
 export class AddressVerificationResponseDto {

@@ -8,9 +8,11 @@ import {
   Param,
   Query,
   ValidationPipe,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service.js';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import {
   GetWalletByIdDto,
   GetOrganizationTransactionsDto,
@@ -25,6 +27,8 @@ import {
 
 @ApiTags('payments')
 @Controller('payments')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 

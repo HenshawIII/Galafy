@@ -3,14 +3,14 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class WalletToWalletTransferDto {
-  @ApiProperty({ example: 'wallet-uuid-1', description: 'Source wallet ID' })
-  @IsString({ message: 'From wallet ID must be a string' })
-  @IsNotEmpty({ message: 'From wallet ID is required' })
+  @ApiProperty({ example: '9710013297', description: 'Source wallet account number' })
+  @IsString({ message: 'From wallet account number must be a string' })
+  @IsNotEmpty({ message: 'From wallet account number is required' })
   fromWalletId: string;
 
-  @ApiProperty({ example: 'wallet-uuid-2', description: 'Destination wallet ID' })
-  @IsString({ message: 'To wallet ID must be a string' })
-  @IsNotEmpty({ message: 'To wallet ID is required' })
+  @ApiProperty({ example: '9710013298', description: 'Destination wallet account number' })
+  @IsString({ message: 'To wallet account number must be a string' })
+  @IsNotEmpty({ message: 'To wallet account number is required' })
   toWalletId: string;
 
   @ApiProperty({ example: 1000.50, description: 'Transfer amount', minimum: 0.01 })

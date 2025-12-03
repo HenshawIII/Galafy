@@ -8,8 +8,11 @@ import {
   Param,
   Query,
   ValidationPipe,
+  UseGuards,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service.js';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import {
   RegisterDeviceDto,
   SendMessageDto,
@@ -17,7 +20,10 @@ import {
   UpdateDeviceDto,
 } from './dto/notification.dto.js';
 
+@ApiTags('notifications')
 @Controller('notifications')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 

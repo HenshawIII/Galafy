@@ -338,7 +338,7 @@ export class CustomerKycService {
     return {
       customerId: customer.id,
       tier: customer.tier,
-      providerTierCode: customer.providerTierCode,
+      providerTierCode: providerStatus.customerTierCode || customer.providerTierCode  ,
       hasNin: providerStatus.hasNin || !!customer.ninVerification,
       hasBvn: providerStatus.hasBvn || !!customer.bvnVerification,
       hasAddressVerification: providerStatus.hasAddressVerification || !!customer.addressVerification,
@@ -399,7 +399,6 @@ export class CustomerKycService {
         ninPhone: ninData?.phone,
         lgaOfResidence: ninData?.lga_of_residence,
         stateOfResidence: ninData?.state_of_residence,
-        photoUrl: ninData?.photo,
         vNin: ninData?.vNin,
         rawResponse: providerResponse as any,
       },
@@ -416,7 +415,6 @@ export class CustomerKycService {
         ninPhone: ninData?.phone,
         lgaOfResidence: ninData?.lga_of_residence,
         stateOfResidence: ninData?.state_of_residence,
-        photoUrl: ninData?.photo,
         vNin: ninData?.vNin,
         rawResponse: providerResponse as any,
       },
@@ -504,7 +502,6 @@ export class CustomerKycService {
         stateOfResidence: bvnData?.state_of_residence,
         enrollmentBank: bvnData?.enrollment_bank,
         watchListed: bvnData?.watch_listed,
-        photoUrl: bvnData?.photo,
         rawResponse: providerResponse as any,
       },
       update: {
@@ -530,7 +527,6 @@ export class CustomerKycService {
         stateOfResidence: bvnData?.state_of_residence,
         enrollmentBank: bvnData?.enrollment_bank,
         watchListed: bvnData?.watch_listed,
-        photoUrl: bvnData?.photo,
         rawResponse: providerResponse as any,
       },
     });
@@ -574,11 +570,15 @@ export class CustomerKycService {
       throw new BadRequestException('Customer does not have a provider customer ID');
     }
 
+    if (customer.tier !== KycTier.Tier_2) {
+      throw new BadRequestException('Customer must be at least Tier 2 to verify address');
+    }
+
     // Call provider API
     const providerResponse = await this.providerService.verifyCustomerAddress({
       customerId: customer.providerCustomerId,
       houseAddress: addressDto.houseAddress,
-      meterNumber: addressDto.discoCode,
+      meterNumber: addressDto.meterNumber,
     });
 
     if (!providerResponse.data?.data) {

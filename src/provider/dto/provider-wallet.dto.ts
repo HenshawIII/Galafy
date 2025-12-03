@@ -137,6 +137,7 @@ export class ProviderWalletResponseDto {
   availableBalance?: number;
   ledgerBalance?: number;
   currencyId?: string;
+  walletClassificationId?: string;
 }
 
 export class ProviderWalletHistoryResponseDto {

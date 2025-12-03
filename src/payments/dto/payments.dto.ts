@@ -130,10 +130,10 @@ export class InterBankTransferDto {
   @IsNotEmpty({ message: 'Currency ID is required' })
   currencyId: string;
 
-  @ApiProperty({ example: 'TXN-20250125-001', description: 'Unique transaction reference' })
+  @ApiPropertyOptional({ example: 'TXN-20250125-001', description: 'Unique transaction reference (auto-generated if not provided)' })
+  @IsOptional()
   @IsString({ message: 'Customer transaction reference must be a string' })
-  @IsNotEmpty({ message: 'Customer transaction reference is required' })
-  customerTransactionReference: string;
+  customerTransactionReference?: string;
 
   @ApiPropertyOptional({ example: 'https://your-app.com/webhooks/payout', description: 'Webhook URL for status updates' })
   @IsOptional()

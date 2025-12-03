@@ -114,10 +114,17 @@ export class VerifyAccountDto {
 }
 
 export class ResetPasswordDto {
-  @IsString({ message: 'Token must be a string' })
-  @IsNotEmpty({ message: 'Token is required' })
-  token: string;
+  @ApiProperty({ example: 'john.doe@example.com', description: 'Email address' })
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email is required' })
+  email: string;
 
+  @ApiProperty({ example: '123456', description: 'Password reset OTP (6 digits)' })
+  @IsString({ message: 'OTP must be a string' })
+  @IsNotEmpty({ message: 'OTP is required' })
+  otp: string;
+
+  @ApiProperty({ example: 'NewSecurePassword123!', description: 'New password (minimum 6 characters)', minLength: 6 })
   @IsString({ message: 'New password must be a string' })
   @IsNotEmpty({ message: 'New password is required' })
   @MinLength(6, { message: 'Password must be at least 6 characters long' })

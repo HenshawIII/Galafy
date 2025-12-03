@@ -84,5 +84,36 @@ export class EmailService {
       throw new Error(`Failed to send password reset email: ${error.message}`);
     }
   }
+
+  async sendPasswordResetOtp(email: string, otp: string): Promise<void> {
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'Password Reset OTP',
+      text: `Your password reset OTP is: ${otp}. This code will expire in 15 minutes.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Password Reset Request</h2>
+          <p>You have requested to reset your password. Please use the following OTP to reset your password:</p>
+          <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #007bff; font-size: 32px; margin: 0; letter-spacing: 5px;">${otp}</h1>
+          </div>
+          <p>This OTP will expire in 15 minutes.</p>
+          <p>If you did not request this password reset, please ignore this email.</p>
+        </div>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Password reset OTP email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending password reset OTP email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      throw new Error(`Failed to send password reset OTP email: ${error.message}`);
+    }
+  }
 }
 

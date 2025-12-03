@@ -44,19 +44,34 @@ export class AuthService {
           const firstName = nameParts[0] || user.email.split('@')[0];
           const lastName = nameParts.slice(1).join(' ') || '';
 
-           dbUser = await this.usersService.create({
+          dbUser = await this.usersService.create({
             firstName,
             lastName,
             email: user.email,
             // No password for Google OAuth users
             kycTier: KycTier.Tier_0,
             isVerified: true,
-           }) as any;
+          }) as any;
         }
+        
+        // At this point, dbUser is guaranteed to exist
+        if (!dbUser) {
+            throw new UnauthorizedException('Failed to create or retrieve user');
+        }
+        
         // Remove password from response for security
         const { password, ...userWithoutPassword } = dbUser as any;
+        
+        // Generate JWT token with same structure as regular login
+        const token = this.jwtService.sign({
+            sub: dbUser.id,
+            email: dbUser.email,
+            firstName: dbUser.firstName,
+            lastName: dbUser.lastName,
+        });
+        
         return {
-            access_token: this.jwtService.sign({email: user.email, name: user.name}),
+            access_token: token,
             user: userWithoutPassword,
         }
     }

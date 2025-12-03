@@ -5,8 +5,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class CreateWalletDto {
   @ApiProperty({ example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9', description: 'Currency ID (defaults to NGN if not provided)' })
   @IsString({ message: 'Currency ID must be a string' })
-  @IsNotEmpty({ message: 'Currency ID is required' })
-  currencyId: string;
+  @IsOptional()
+  currencyId?: string;
 
   @ApiPropertyOptional({ example: 'wallet-group-uuid', description: 'Wallet group ID' })
   @IsOptional()

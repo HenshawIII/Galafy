@@ -1,4 +1,5 @@
 import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import {
   ProviderCreateCustomerRequestDto,
   ProviderUpdateCustomerNameRequestDto,
@@ -39,6 +40,10 @@ export class ProviderService {
 
     if (!this.baseUrl || !this.apiKey || !this.organizationId) {
       this.logger.warn('Provider configuration is incomplete. Some features may not work.');
+    }
+
+    if (!this.payoutBaseUrl) {
+      this.logger.warn('Payout base URL is not configured. Payout-related features (banks, transfers, etc.) may not work.');
     }
   }
 
@@ -440,20 +445,39 @@ export class ProviderService {
     };
 
     const response = await this.makeRequest<{
+      code: string;
+      success: boolean;
       message: string;
-      walletId: string;
-      virtualAccount: {
-        accountNumber: string;
-        bankCode: string;
-        bankName: string;
+      data: {
+        id: string;
+        walletGroupId: string | null;
+        customerId: string;
+        availableBalance: number;
+        ledgerBalance: number;
+        walletRestrictionId: string | null;
+        walletClassificationId: string;
+        currencyId: string;
+        isInternal: boolean;
+        isDefault: boolean;
+        name: string;
+        overdraft: number | null;
+        virtualAccount: {
+          accountNumber: string;
+          bankCode: string;
+          bankName: string;
+        };
+        mobNum: string | null;
+        customerTypeId: string;
       };
-      mobNum?: string;
     }>('/api/v1/wallets/add', 'POST', body);
 
+    // console.log('Wallet creation response:', response);
+
     return {
-      walletId: response.walletId,
-      virtualAccount: response.virtualAccount,
-      mobNum: response.mobNum,
+      walletId: response.data.id,
+      virtualAccount: response.data.virtualAccount,
+      mobNum: response.data.mobNum || undefined,
+      walletClassificationId: response.data.walletClassificationId,
     };
   }
 
@@ -495,7 +519,7 @@ export class ProviderService {
       fromAccount: requestDto.fromWalletId,
       toAccount: requestDto.toWalletId,
       amount: requestDto.amount,
-      transactionReference: requestDto.reference || `TXN-${Date.now()}`,
+      transactionReference: requestDto.reference || `TXN-${randomUUID()}`,
       remarks: requestDto.description || '',
       transactionTypeId: 1, // Default transaction type, adjust as needed
     };
@@ -506,6 +530,8 @@ export class ProviderService {
       message: string;
       data?: any;
     }>('/api/v1/wallets/wallet/transaction/v2/wallet-to-wallet', 'PUT', body);
+
+    // console.log('Wallet to wallet transfer response:', response);
 
     return {
       success: response.success || response.code === '200',

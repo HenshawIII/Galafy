@@ -4,6 +4,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 import {
@@ -16,6 +17,7 @@ import {
 } from './dto/index.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 import { Decimal } from '@prisma/client/runtime/library';
+import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class WalletmoduleService {
@@ -57,17 +59,17 @@ export class WalletmoduleService {
     const tempWallet = await this.databaseService.wallet.create({
       data: {
         customerId,
-        currencyId: createWalletDto.currencyId,
-        walletGroupId: createWalletDto.walletGroupId,
-        walletRestrictionId: createWalletDto.walletRestrictionId,
-        walletClassificationId: createWalletDto.walletClassificationId,
+        currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+        walletGroupId: createWalletDto.walletGroupId || undefined,
+        walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
+        walletClassificationId: createWalletDto.walletClassificationId || undefined,
         availableBalance: 0,
         ledgerBalance: 0,
         overdraft: createWalletDto.overdraft || 0,
         isInternal: createWalletDto.isInternal || false,
         isDefault: createWalletDto.isDefault || false,
-        name: createWalletDto.name,
-        mobNum: createWalletDto.mobNum,
+        name: createWalletDto.name || customer.firstName + ' ' + customer.lastName,
+        mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
       },
     });
     const walletId = tempWallet.id;
@@ -77,16 +79,16 @@ export class WalletmoduleService {
       id: walletId,
       customerId: customer.providerCustomerId,
       currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
-      walletGroupId: createWalletDto.walletGroupId,
-      walletRestrictionId: createWalletDto.walletRestrictionId,
-      walletClassificationId: createWalletDto.walletClassificationId,
-      availableBalance: createWalletDto.availableBalance || 0,
-      ledgerBalance: createWalletDto.ledgerBalance || 0,
+      walletGroupId: createWalletDto.walletGroupId || undefined,
+      walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
+      walletClassificationId: createWalletDto.walletClassificationId || undefined,
+      availableBalance: createWalletDto.availableBalance || 1000000,
+      ledgerBalance: createWalletDto.ledgerBalance || 1000000,
       overdraft: createWalletDto.overdraft || 0,
       isInternal: createWalletDto.isInternal || false,
       isDefault: createWalletDto.isDefault || true,
-      name: createWalletDto.name,
-      mobNum: createWalletDto.mobNum,
+      name: createWalletDto.name || customer.firstName + ' ' + customer.lastName,
+      mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
     };
 
     let providerResponse;
@@ -96,7 +98,7 @@ export class WalletmoduleService {
       // Delete the temporary wallet if provider call fails
       await this.databaseService.wallet.delete({ where: { id: walletId } });
       this.logger.error(`Failed to create wallet with provider: ${error.message}`);
-      throw new BadRequestException('Failed to create wallet with provider service');
+      throw new BadRequestException(error.message || 'Failed to create wallet with provider service');
     }
 
     // Update wallet with provider response
@@ -104,12 +106,13 @@ export class WalletmoduleService {
       where: { id: walletId },
       data: {
         providerWalletId: providerResponse.walletId,
-        availableBalance: providerResponse.virtualAccount ? 0 : (createWalletDto.availableBalance || 0),
-        ledgerBalance: providerResponse.virtualAccount ? 0 : (createWalletDto.ledgerBalance || 0),
+        availableBalance: providerResponse.virtualAccount ? 1000000 : (createWalletDto.availableBalance || 1000000),
+        ledgerBalance: providerResponse.virtualAccount ? 1000000 : (createWalletDto.ledgerBalance || 1000000),
         mobNum: providerResponse.mobNum || createWalletDto.mobNum,
         virtualAccountNumber: providerResponse.virtualAccount?.accountNumber,
         virtualBankCode: providerResponse.virtualAccount?.bankCode,
         virtualBankName: providerResponse.virtualAccount?.bankName,
+        walletClassificationId: providerResponse.walletClassificationId || createWalletDto.walletClassificationId,
       },
       include: {
         customer: {
@@ -269,25 +272,29 @@ export class WalletmoduleService {
    * Wallet to wallet transfer
    */
   async walletToWalletTransfer(transferDto: WalletToWalletTransferDto) {
-    // Verify both wallets exist
-    const fromWallet = await this.databaseService.wallet.findUnique({
-      where: { id: transferDto.fromWalletId },
+    // Verify both wallets exist by account number
+    const fromWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: transferDto.fromWalletId },
     });
 
     if (!fromWallet) {
       throw new NotFoundException('Source wallet not found');
     }
 
-    const toWallet = await this.databaseService.wallet.findUnique({
-      where: { id: transferDto.toWalletId },
+    if (!fromWallet.virtualAccountNumber) {
+      throw new BadRequestException('Source wallet does not have a virtual account number');
+    }
+
+    const toWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: transferDto.toWalletId },
     });
 
     if (!toWallet) {
       throw new NotFoundException('Destination wallet not found');
     }
 
-    if (!fromWallet.providerWalletId || !toWallet.providerWalletId) {
-      throw new BadRequestException('One or both wallets do not have provider wallet IDs');
+    if (!toWallet.virtualAccountNumber) {
+      throw new BadRequestException('Destination wallet does not have a virtual account number');
     }
 
     // Check sufficient balance
@@ -295,14 +302,18 @@ export class WalletmoduleService {
       throw new BadRequestException('Insufficient balance');
     }
 
-    // Execute transfer with provider
+    // Generate internal reference if not provided
+    const internalReference = transferDto.reference || `SPRAY-${randomUUID()}`;
+    const groupReference = `GRP-${randomUUID()}`; // Group reference to link both transactions
+
+    // Execute transfer with provider using account numbers
     const providerResponse = await this.providerService.walletToWalletTransfer({
-      fromWalletId: fromWallet.providerWalletId,
-      toWalletId: toWallet.providerWalletId,
+      fromWalletId: fromWallet.virtualAccountNumber,
+      toWalletId: toWallet.virtualAccountNumber,
       amount: transferDto.amount,
-      currencyId: transferDto.currencyId,
+      currencyId: transferDto.currencyId || fromWallet.currencyId,
       description: transferDto.description,
-      reference: transferDto.reference,
+      reference: internalReference,
     });
 
     if (!providerResponse.success) {
@@ -315,6 +326,57 @@ export class WalletmoduleService {
     const toAvailableBalance = Number(toWallet.availableBalance) + transferDto.amount;
     const toLedgerBalance = Number(toWallet.ledgerBalance) + transferDto.amount;
 
+    // Create Transaction records for both wallets
+    // DEBIT transaction for sender
+    const debitTransaction = await this.databaseService.transaction.create({
+      data: {
+        walletId: fromWallet.id,
+        type: TransactionType.SPRAY,
+        direction: TransactionDirection.DEBIT,
+        status: TransactionStatus.SUCCESS,
+        amount: transferDto.amount,
+        currencyId: transferDto.currencyId || fromWallet.currencyId,
+        reference: internalReference,
+        externalReference: null, // Wallet-to-wallet (sprays) only use internal reference
+        groupReference: groupReference,
+        narration: transferDto.description || 'Wallet to wallet transfer',
+      },
+    });
+
+    // CREDIT transaction for receiver
+    const creditTransaction = await this.databaseService.transaction.create({
+      data: {
+        walletId: toWallet.id,
+        type: TransactionType.SPRAY,
+        direction: TransactionDirection.CREDIT,
+        status: TransactionStatus.SUCCESS,
+        amount: transferDto.amount,
+        currencyId: transferDto.currencyId || fromWallet.currencyId,
+        reference: `SPRAY-CREDIT-${randomUUID()}`, // Unique reference for credit side
+        externalReference: null,
+        groupReference: groupReference, // Same group reference to link transactions
+        narration: transferDto.description || 'Wallet to wallet transfer',
+      },
+    });
+
+    // Create Spray record linked to the DEBIT transaction
+    const spray = await this.databaseService.spray.create({
+      data: {
+        eventId: null, // Can be set if this is part of an event
+        sprayerWalletId: fromWallet.id,
+        receiverWalletId: toWallet.id,
+        transactionId: debitTransaction.id, // Link to the debit transaction
+        transactionGroupReference: groupReference,
+        totalAmount: transferDto.amount,
+        note: transferDto.description,
+        metadata: {
+          creditTransactionId: creditTransaction.id,
+          providerResponse: providerResponse.data,
+        },
+      },
+    });
+
+    // Update wallet balances
     await Promise.all([
       this.databaseService.wallet.update({
         where: { id: fromWallet.id },
@@ -338,6 +400,10 @@ export class WalletmoduleService {
       fromWalletId: fromWallet.id,
       toWalletId: toWallet.id,
       amount: transferDto.amount,
+      transactionId: debitTransaction.id,
+      sprayId: spray.id,
+      reference: internalReference,
+      groupReference: groupReference,
       data: providerResponse.data,
     };
   }
@@ -393,7 +459,7 @@ export class WalletmoduleService {
 
     // Generate transaction reference if not provided
     const transactionReference =
-      transferDto.reference || `FAST-TXN-${Date.now()}-${fromWallet.id.substring(0, 8)}`;
+      transferDto.reference || `FAST-TXN-${randomUUID()}`;
 
     // Execute inter-bank transfer with provider
     const providerResponse = await this.providerService.interBankTransfer({

@@ -29,7 +29,7 @@ enum KycTier {
 }
 
 enum TransactionType {
-  FUNDING
+  INFLOW
   SPRAY
   PAYOUT
   REFUND
@@ -122,6 +122,7 @@ model User {
   kycTier           KycTier              @default(Tier_0)
   isVerified        Boolean              @default(false)
   verificationCode  String?
+  passwordResetOtp  String?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
@@ -225,7 +226,7 @@ model NinVerification {
   ninPhone           String?
   lgaOfResidence     String?
   stateOfResidence   String?
-  photoUrl           String?
+ 
   vNin               String?
 
   rawResponse        Json
@@ -267,7 +268,7 @@ model BvnVerification {
   stateOfResidence   String?
   enrollmentBank     String?
   watchListed        String?
-  photoUrl           String?
+ 
 
   rawResponse        Json
 
@@ -365,6 +366,7 @@ model Transaction {
   // One-to-one links to domain-specific transactions
   fundingTransaction FundingTransaction? @relation("FundingTransactionOnTransaction")
   payoutTransaction  PayoutTransaction?  @relation("PayoutTransactionOnTransaction")
+  spray              Spray?              @relation("SprayOnTransaction")
 
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
@@ -413,14 +415,18 @@ model EventParticipant {
 model Spray {
   id          String   @id @default(uuid())
 
-  eventId     String
-  event       Event    @relation(fields: [eventId], references: [id])
+  eventId     String?
+  event       Event?   @relation(fields: [eventId], references: [id])
 
   sprayerWalletId  String
   sprayerWallet    Wallet   @relation("SpraySprayerWallet", fields: [sprayerWalletId], references: [id])
 
   receiverWalletId String
   receiverWallet   Wallet   @relation("SprayReceiverWallet", fields: [receiverWalletId], references: [id])
+
+  // Link to ledger - transaction for the debit (from sprayer)
+  transactionId String?  @unique
+  transaction   Transaction? @relation("SprayOnTransaction", fields: [transactionId], references: [id])
 
   transactionGroupReference String? @unique
 
