@@ -409,6 +409,7 @@ export class UsersService {
       mobileNumber: customer.mobileNumber,
       emailAddress: customer.emailAddress,
       tier: customer.tier,
+      customerId: customer.id,
     };
 
     // Get KYC status from provider if providerCustomerId exists

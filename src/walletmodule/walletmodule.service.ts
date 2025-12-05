@@ -397,8 +397,8 @@ export class WalletmoduleService {
     return {
       success: true,
       message: providerResponse.message,
-      fromWalletId: fromWallet.id,
-      toWalletId: toWallet.id,
+      fromWalletId: fromWallet.virtualAccountNumber,
+      toWalletId: toWallet.virtualAccountNumber,
       amount: transferDto.amount,
       transactionId: debitTransaction.id,
       sprayId: spray.id,
@@ -409,11 +409,11 @@ export class WalletmoduleService {
   }
 
   /**
-   * Fast wallet transfer (to external account)
+   * Wallet payout (to external account)
    */
-  async fastWalletTransfer(transferDto: FastWalletTransferDto) {
-    const fromWallet = await this.databaseService.wallet.findUnique({
-      where: { id: transferDto.fromWalletId },
+  async walletpayout(transferDto: FastWalletTransferDto) {
+    const fromWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: transferDto.fromWalletId },
       include: {
         customer: {
           include: {
@@ -499,22 +499,30 @@ export class WalletmoduleService {
   /**
    * Get wallet transaction history
    */
-  async getWalletHistory(walletId: string, page?: number, pageSize?: number) {
-    const wallet = await this.databaseService.wallet.findUnique({
-      where: { id: walletId },
+  async getWalletHistory(
+    accountNumber: string,
+    fromDate: string,
+    toDate: string,
+    page?: number,
+    pageSize?: number,
+  ) {
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: accountNumber },
     });
 
     if (!wallet) {
       throw new NotFoundException('Wallet not found');
     }
 
-    if (!wallet.providerWalletId) {
-      throw new BadRequestException('Wallet does not have a provider wallet ID');
+    if (!wallet.virtualAccountNumber) {
+      throw new BadRequestException('Wallet does not have a virtual account number');
     }
 
-    // Get history from provider
-    const history = await this.providerService.getWalletHistory(
-      wallet.providerWalletId,
+    // Get history from provider using account number
+    const history = await this.providerService.getWalletHistoryByAccountNumber(
+      wallet.virtualAccountNumber,
+      fromDate,
+      toDate,
       page,
       pageSize,
     );

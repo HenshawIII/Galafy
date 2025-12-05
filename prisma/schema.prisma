@@ -229,8 +229,6 @@ model NinVerification {
  
   vNin               String?
 
-  rawResponse        Json
-
   verifiedAt         DateTime @default(now())
   createdAt          DateTime @default(now())
 }
@@ -268,9 +266,6 @@ model BvnVerification {
   stateOfResidence   String?
   enrollmentBank     String?
   watchListed        String?
- 
-
-  rawResponse        Json
 
   verifiedAt         DateTime @default(now())
   createdAt          DateTime @default(now())
@@ -294,8 +289,6 @@ model AddressVerification {
   providerStatus     String?
   providerMessage    String?
   providerTimestamp  DateTime?
-
-  rawResponse        Json
 
   verifiedAt         DateTime @default(now())
   createdAt          DateTime @default(now())

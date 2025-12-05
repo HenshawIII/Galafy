@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto } from './dto/create-user-dto.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
@@ -9,7 +9,8 @@ import { Public } from '../auth/public.decorator.js';
 @ApiTags('users')
 @Controller('users')
 @UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
+@ApiBearerAuth('bearer')
+@ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -26,7 +27,7 @@ export class UsersController {
   @Post('verify')
   @Public()
   @ApiOperation({ summary: 'Verify account after signup' })
-  @ApiBody({ type: VerifyAccountDto })
+  @ApiBody({ schema: { properties: { email: { type: 'string' }, verificationCode: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'Account verified successfully' })
   @ApiResponse({ status: 400, description: 'Invalid verification code' })
   @ApiResponse({ status: 401, description: 'Account already verified' })
@@ -37,7 +38,7 @@ export class UsersController {
   @Post('resend-verification')
   @Public()
   @ApiOperation({ summary: 'Resend verification code' })
-  @ApiBody({ type: ResendVerificationDto })
+  @ApiBody({ schema: { properties: { email: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'Verification code resent successfully' })
   @ApiResponse({ status: 400, description: 'Account already verified' })
   resendVerificationCode(@Body(ValidationPipe) resendVerificationDto: ResendVerificationDto) {
@@ -57,7 +58,7 @@ export class UsersController {
   @Post('forgot-password')
   @Public()
   @ApiOperation({ summary: 'Forgot password - sends OTP to email' })
-  @ApiBody({ type: ForgotPasswordDto })
+  @ApiBody({ schema: { properties: { email: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'Password reset OTP sent successfully' })
   @ApiResponse({ status: 400, description: 'Email not found' })
   forgotPassword(@Body(ValidationPipe) forgotPasswordDto: ForgotPasswordDto) {
@@ -80,6 +81,7 @@ export class UsersController {
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User details retrieved successfully' })
   @ApiResponse({ status: 404, description: 'User or customer not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   getUserDetails(@Param('id') id: string) {
     return this.usersService.getUserDetails(id);
   }

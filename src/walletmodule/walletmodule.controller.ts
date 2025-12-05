@@ -9,7 +9,7 @@ import {
   ValidationPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { WalletmoduleService } from './walletmodule.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateWalletDto } from './dto/create-wallet.dto.js';
@@ -19,16 +19,18 @@ import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-t
 @ApiTags('wallets')
 @Controller('wallets')
 @UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
+@ApiBearerAuth('bearer')
+@ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
 export class WalletmoduleController {
   constructor(private readonly walletmoduleService: WalletmoduleService) {}
 
   @Post('customer/:customerId')
   @ApiOperation({ summary: 'Create a new wallet for a customer (requires Tier 1+)' })
   @ApiParam({ name: 'customerId', description: 'Customer ID' })
-  @ApiBody({ type: CreateWalletDto })
+  @ApiBody({})
   @ApiResponse({ status: 201, description: 'Wallet created successfully' })
   @ApiResponse({ status: 400, description: 'Customer tier too low or wallet creation failed' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async createWallet(
     @Param('customerId') customerId: string,
     @Body(ValidationPipe) createWalletDto: CreateWalletDto,
@@ -37,45 +39,65 @@ export class WalletmoduleController {
   }
 
   @Get('customer/:customerId')
+  @ApiExcludeEndpoint()
   async getCustomerWallets(@Param('customerId') customerId: string) {
     return this.walletmoduleService.getCustomerWallets(customerId);
   }
 
   @Get('account/:accountNumber')
+  @ApiExcludeEndpoint()
   async getWalletByAccountNumber(@Param('accountNumber') accountNumber: string) {
     return this.walletmoduleService.getWalletByAccountNumber(accountNumber);
   }
 
   @Get(':id')
+  @ApiExcludeEndpoint()
   async getWalletById(@Param('id') id: string) {
     return this.walletmoduleService.getWalletById(id);
   }
 
-  @Get(':id/history')
+  @Get('account/:accountNumber/history')
+  @ApiOperation({ summary: 'Get wallet transaction history by account number' })
+  @ApiParam({ name: 'accountNumber', description: 'Wallet account number', example: '9719913297' })
+  @ApiQuery({ name: 'startDate', required: true, description: 'Start date (YYYY-MM-DD)', example: '2025-01-01' })
+  @ApiQuery({ name: 'endDate', required: true, description: 'End date (YYYY-MM-DD)', example: '2025-01-31' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number', example: '1' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Number of items per page', example: '10' })
+  @ApiResponse({ status: 200, description: 'Wallet history retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async getWalletHistory(
-    @Param('id') id: string,
+    @Param('accountNumber') accountNumber: string,
     @Query() query: GetWalletHistoryDto,
   ) {
     const page = query.page ? parseInt(query.page) : undefined;
     const limit = query.limit ? parseInt(query.limit) : undefined;
-    return this.walletmoduleService.getWalletHistory(id, page, limit);
+    return this.walletmoduleService.getWalletHistory(
+      accountNumber,
+      query.startDate,
+      query.endDate,
+      page,
+      limit,
+    );
   }
 
   @Put('transfer/wallet-to-wallet')
   @ApiOperation({ summary: 'Transfer funds between wallets' })
-  @ApiBody({ type: WalletToWalletTransferDto })
+  @ApiBody({ schema: {  properties: { fromWalletId: { type: 'string' }, toWalletId: { type: 'string' }, amount: { type: 'number' } ,description: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'Transfer successful' })
   @ApiResponse({ status: 400, description: 'Insufficient balance or transfer failed' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async walletToWalletTransfer(@Body(ValidationPipe) transferDto: WalletToWalletTransferDto) {
     return this.walletmoduleService.walletToWalletTransfer(transferDto);
   }
 
-  @Put('transfer/fast')
-  @ApiOperation({ summary: 'Fast transfer from wallet to external bank account' })
+  @Put('payout')
+  @ApiOperation({ summary: 'Wallet payout to external bank account' })
   @ApiBody({ type: FastWalletTransferDto })
-  @ApiResponse({ status: 200, description: 'Transfer initiated successfully' })
-  @ApiResponse({ status: 400, description: 'Insufficient balance or transfer failed' })
-  async fastWalletTransfer(@Body(ValidationPipe) transferDto: FastWalletTransferDto) {
-    return this.walletmoduleService.fastWalletTransfer(transferDto);
+  @ApiResponse({ status: 200, description: 'Payout initiated successfully' })
+  @ApiResponse({ status: 400, description: 'Insufficient balance or payout failed' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async walletpayout(@Body(ValidationPipe) transferDto: FastWalletTransferDto) {
+    return this.walletmoduleService.walletpayout(transferDto);
   }
 }

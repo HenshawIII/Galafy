@@ -10,7 +10,7 @@ import {
   ValidationPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import {
@@ -28,7 +28,8 @@ import {
 @ApiTags('payments')
 @Controller('payments')
 @UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
+@ApiBearerAuth('bearer')
+@ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
@@ -36,11 +37,13 @@ export class PaymentsController {
   @ApiOperation({ summary: 'Get wallet by ID' })
   @ApiParam({ name: 'walletId', description: 'Wallet ID' })
   @ApiResponse({ status: 200, description: 'Wallet found' })
+  @ApiExcludeEndpoint()
   async getWalletById(@Param('walletId') walletId: string) {
     return this.paymentsService.getWalletById({ walletId });
   }
 
   @Get('organization/transactions')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Get organization wallet transactions' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'pageSize', required: false, type: Number })
@@ -63,6 +66,7 @@ export class PaymentsController {
    * PUT /payments/transactions/reverse
    */
   @Put('transactions/reverse')
+  @ApiExcludeEndpoint()
   async reverseTransaction(@Body(ValidationPipe) reverseDto: ReverseTransactionDto) {
     return this.paymentsService.reverseTransaction(reverseDto);
   }
@@ -72,6 +76,7 @@ export class PaymentsController {
    * POST /payments/wallets/close
    */
   @Post('wallets/close')
+  @ApiExcludeEndpoint()
   async closeWallet(@Body(ValidationPipe) closeWalletDto: CloseWalletDto) {
     return this.paymentsService.closeWallet(closeWalletDto);
   }
@@ -81,6 +86,7 @@ export class PaymentsController {
    * PATCH /payments/wallets/restrict/:accountId/:restrictionType
    */
   @Patch('wallets/restrict/:accountId/:restrictionType')
+  @ApiExcludeEndpoint()
   async restrictByAccountId(
     @Param('accountId') accountId: string,
     @Param('restrictionType') restrictionType: string,
@@ -107,6 +113,7 @@ export class PaymentsController {
   }
 
   @Post('payouts/inter-bank-transfer')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Initiate inter-bank transfer (payout)' })
   @ApiBody({ type: InterBankTransferDto })
   @ApiResponse({ status: 200, description: 'Transfer initiated successfully' })

@@ -10,7 +10,7 @@ import {
   ValidationPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import {
@@ -23,7 +23,8 @@ import {
 @ApiTags('notifications')
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
+@ApiBearerAuth('bearer')
+@ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 

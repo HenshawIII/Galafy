@@ -36,9 +36,9 @@ export class WalletToWalletTransferDto {
 }
 
 export class FastWalletTransferDto {
-  @ApiProperty({ example: 'wallet-uuid-here', description: 'Source wallet ID' })
-  @IsString({ message: 'From wallet ID must be a string' })
-  @IsNotEmpty({ message: 'From wallet ID is required' })
+  @ApiProperty({ example: '9710013297', description: 'Source wallet account number' })
+  @IsString({ message: 'From wallet account number must be a string' })
+  @IsNotEmpty({ message: 'From wallet account number is required' })
   fromWalletId: string;
 
   @ApiProperty({ example: '1234567890', description: 'Destination bank account number' })

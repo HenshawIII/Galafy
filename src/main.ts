@@ -40,7 +40,15 @@ async function bootstrap() {
     .addTag('wallets', 'Wallet management endpoints')
     .addTag('payments', 'Payment and payout endpoints')
     .addTag('notifications', 'Notification management endpoints')
-    .addBearerAuth()
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Enter JWT token obtained from login endpoint. Format: Bearer <token>',
+      },
+      'bearer', // Security scheme name
+    )
     .build();
   
   const document = SwaggerModule.createDocument(app, swaggerConfig);

@@ -10,7 +10,7 @@ import {
   Request,
   ValidationPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiExcludeEndpoint, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { CustomerKycService } from './customer-kyc.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
@@ -25,7 +25,8 @@ import {
 @ApiTags('customers')
 @Controller('customer-kyc')
 @UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
+@ApiBearerAuth('bearer')
+@ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
 export class CustomerKycController {
   constructor(private readonly customerKycService: CustomerKycService) {}
 
@@ -48,7 +49,8 @@ export class CustomerKycController {
     }
   })
   @ApiResponse({ status: 400, description: 'Bad request or customer already exists' })
-  @ApiBody({ type: CreateCustomerDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  @ApiBody({ schema: { properties: { userId: { type: 'string' }, firstName: { type: 'string' }, lastName: { type: 'string' }, middleName: { type: 'string' }, dob: { type: 'string' }, city: { type: 'string' }, address: { type: 'string' }, mobileNumber: { type: 'string' }, emailAddress: { type: 'string' } } } })
   async createCustomer(@Request() req: any, @Body(ValidationPipe) createCustomerDto: CreateCustomerDto) {
     // Extract userId from JWT token
     const userId = req.user?.id;
@@ -59,33 +61,26 @@ export class CustomerKycController {
   }
 
   @Get('user/:userId')
-  @ApiOperation({ summary: 'Get customer by user ID' })
-  @ApiParam({ name: 'userId', description: 'User ID' })
-  @ApiResponse({ status: 200, description: 'Customer found' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiExcludeEndpoint()
   async getCustomerByUserId(@Param('userId') userId: string) {
     return this.customerKycService.getCustomerByUserId(userId);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get customer by ID' })
-  @ApiParam({ name: 'id', description: 'Customer ID' })
-  @ApiResponse({ status: 200, description: 'Customer found' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiExcludeEndpoint()
   async getCustomerById(@Param('id') id: string) {
     return this.customerKycService.getCustomerById(id);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all customers with optional filters' })
-  @ApiQuery({ name: 'tier', required: false, description: 'Filter by KYC tier' })
-  @ApiQuery({ name: 'organizationId', required: false, description: 'Filter by organization ID' })
+  @ApiExcludeEndpoint()
   @ApiResponse({ status: 200, description: 'List of customers' })
   async getAllCustomers(@Query(ValidationPipe) query: GetAllCustomersQueryDto) {
     return this.customerKycService.getAllCustomers(query);
   }
 
   @Patch(':id/name')
+  @ApiExcludeEndpoint()
   async updateCustomerName(
     @Param('id') id: string,
     @Body(ValidationPipe) updateDto: UpdateCustomerNameDto,
@@ -94,6 +89,7 @@ export class CustomerKycController {
   }
 
   @Patch(':id/contacts')
+  @ApiExcludeEndpoint()
   async updateCustomerContacts(
     @Param('id') id: string,
     @Body(ValidationPipe) updateDto: UpdateCustomerContactsDto,
@@ -113,6 +109,7 @@ export class CustomerKycController {
   @ApiResponse({ status: 200, description: 'NIN verification successful' })
   @ApiResponse({ status: 400, description: 'NIN verification failed' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async upgradeWithNin(
     @Param('id') id: string,
     @Body(ValidationPipe) ninDto: CreateNinVerificationDto,
@@ -127,6 +124,7 @@ export class CustomerKycController {
   @ApiResponse({ status: 200, description: 'BVN verification successful' })
   @ApiResponse({ status: 400, description: 'BVN verification failed' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async upgradeWithBvn(
     @Param('id') id: string,
     @Body(ValidationPipe) bvnDto: CreateBvnVerificationDto,

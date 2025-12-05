@@ -541,16 +541,24 @@ export class ProviderService {
   }
 
   /**
-   * Get wallet transaction history
+   * Get wallet transaction history by account number
    */
-  async getWalletHistory(walletId?: string, page?: number, pageSize?: number): Promise<ProviderWalletHistoryResponseDto> {
+  async getWalletHistoryByAccountNumber(
+    accountNumber: string,
+    fromDate: string,
+    toDate: string,
+    pageNumber?: number,
+    pageSize?: number,
+  ): Promise<ProviderWalletHistoryResponseDto> {
     const queryParams = new URLSearchParams();
-    if (walletId) queryParams.append('walletId', walletId);
-    if (page) queryParams.append('page', page.toString());
-    if (pageSize) queryParams.append('pageSize', pageSize.toString());
+    queryParams.append('AccountNumber', accountNumber);
+    queryParams.append('From', fromDate);
+    queryParams.append('To', toDate);
+    if (pageNumber) queryParams.append('PageNumber', pageNumber.toString());
+    if (pageSize) queryParams.append('PageSize', pageSize.toString());
 
     const queryString = queryParams.toString();
-    const endpoint = `/api/v1/wallets/history${queryString ? `?${queryString}` : ''}`;
+    const endpoint = `/api/v1/wallets/account-number/history${queryString ? `?${queryString}` : ''}`;
 
     const response = await this.makeRequest<{
       code: string;
@@ -839,28 +847,24 @@ export class ProviderService {
 
     const response = await this.makePayoutRequest<{
       data: {
-        status: string;
-        data: {
-          destinationBankCode: string;
-          accountNumber: string;
-          accountName: string;
-        };
-        code: string | null;
-        message: string | null;
+        destinationBankCode: string;
+        accountNumber: string;
+        accountName: string;
       };
       statusCode: number;
+      code: string | null;
       message: string;
       succeeded: boolean;
     }>('/api/Payout/name-enquiry', 'POST', body);
 
-    if (!response.succeeded || response.data.status !== 'success') {
+    if (!response.succeeded) {
       throw new HttpException(
-        response.data.message || response.message || 'Name enquiry failed',
+        response.message || 'Name enquiry failed',
         HttpStatus.BAD_REQUEST,
       );
     }
 
-    return response.data.data;
+    return response.data;
   }
 
   /**

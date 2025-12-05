@@ -400,7 +400,6 @@ export class CustomerKycService {
         lgaOfResidence: ninData?.lga_of_residence,
         stateOfResidence: ninData?.state_of_residence,
         vNin: ninData?.vNin,
-        rawResponse: providerResponse as any,
       },
       update: {
         providerCheckId: providerResponse.data.id,
@@ -416,7 +415,6 @@ export class CustomerKycService {
         lgaOfResidence: ninData?.lga_of_residence,
         stateOfResidence: ninData?.state_of_residence,
         vNin: ninData?.vNin,
-        rawResponse: providerResponse as any,
       },
     });
 
@@ -502,7 +500,6 @@ export class CustomerKycService {
         stateOfResidence: bvnData?.state_of_residence,
         enrollmentBank: bvnData?.enrollment_bank,
         watchListed: bvnData?.watch_listed,
-        rawResponse: providerResponse as any,
       },
       update: {
         kycCompleted: providerResponse.data.kycCompleted,
@@ -527,7 +524,6 @@ export class CustomerKycService {
         stateOfResidence: bvnData?.state_of_residence,
         enrollmentBank: bvnData?.enrollment_bank,
         watchListed: bvnData?.watch_listed,
-        rawResponse: providerResponse as any,
       },
     });
 
@@ -602,7 +598,6 @@ export class CustomerKycService {
         providerTimestamp: providerResponse.data.timestamp
           ? new Date(providerResponse.data.timestamp)
           : null,
-        rawResponse: providerResponse as any,
       },
       update: {
         verified: verificationData.verified || false,
@@ -615,7 +610,6 @@ export class CustomerKycService {
         providerTimestamp: providerResponse.data.timestamp
           ? new Date(providerResponse.data.timestamp)
           : null,
-        rawResponse: providerResponse as any,
       },
     });
 
