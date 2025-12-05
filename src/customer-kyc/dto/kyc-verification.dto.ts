@@ -168,13 +168,7 @@ export class CreateAddressVerificationDto {
   @IsNotEmpty({ message: 'House address is required' })
   houseAddress: string;
 
-  @ApiPropertyOptional({ example: 'AEDC', description: 'Disco code (electricity distribution company)' })
-  @IsOptional()
-  @IsString({ message: 'Disco code must be a string' })
-  discoCode?: string;
-
-  @ApiPropertyOptional({ example: '12345678901', description: 'Meter number' })
-  @IsOptional()
+  @ApiProperty({ example: '12345678901', description: 'Meter number' })
   @IsString({ message: 'Meter number must be a string' })
   @IsNotEmpty({ message: 'Meter number is required' })
   meterNumber: string;

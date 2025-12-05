@@ -892,6 +892,8 @@ export class ProviderService {
       succeeded: boolean;
     }>('/api/Payout/inter-bank-transfer', 'POST', request);
 
+    console.log("response:", response);
+
     if (!response.succeeded) {
       throw new HttpException(
         response.message || 'Inter bank transfer failed',

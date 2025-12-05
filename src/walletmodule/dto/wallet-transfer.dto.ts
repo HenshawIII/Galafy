@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, Min, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, Min, IsUUID, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -29,9 +29,10 @@ export class WalletToWalletTransferDto {
   @IsString({ message: 'Description must be a string' })
   description?: string;
 
-  @ApiPropertyOptional({ example: 'TXN-20250125-001', description: 'Transaction reference' })
+  @ApiPropertyOptional({ example: 'TXN-20250125-001', description: 'Transaction reference (max 36 characters)' })
   @IsOptional()
   @IsString({ message: 'Reference must be a string' })
+  // @MaxLength(36, { message: 'Transaction reference must not be more than 36 characters' })
   reference?: string;
 }
 
@@ -67,9 +68,10 @@ export class FastWalletTransferDto {
   @IsString({ message: 'Description must be a string' })
   description?: string;
 
-  @ApiPropertyOptional({ example: 'TXN-20250125-001', description: 'Transaction reference' })
+  @ApiPropertyOptional({ example: 'TXN-20250125-001', description: 'Transaction reference (max 36 characters)' })
   @IsOptional()
   @IsString({ message: 'Reference must be a string' })
+  @MaxLength(36, { message: 'Transaction reference must not be more than 36 characters' })
   reference?: string;
 
   @ApiPropertyOptional({ example: 'John Doe', description: 'Recipient name (will be fetched via name enquiry if not provided)' })

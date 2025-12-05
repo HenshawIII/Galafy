@@ -21,6 +21,10 @@ import {
   CreateBvnVerificationDto,
   CreateAddressVerificationDto,
 } from './dto/kyc-verification.dto.js';
+import {
+  CreateCustomerWithBvnDto,
+  UpgradeWithNinAndAddressDto,
+} from './dto/kyc-utility.dto.js';
 
 @ApiTags('customers')
 @Controller('customer-kyc')
@@ -138,5 +142,51 @@ export class CustomerKycController {
     @Body(ValidationPipe) addressDto: CreateAddressVerificationDto,
   ) {
     return this.customerKycService.verifyAddress(id, addressDto);
+  }
+
+  // ==================== KYC UTILITY ROUTES ====================
+
+  @Post('utility/create-with-bvn')
+  @ApiOperation({ summary: 'Create customer and upgrade with BVN in one request (Tier 1)' })
+  @ApiBody({ type: CreateCustomerWithBvnDto })
+  @ApiResponse({ status: 201, description: 'Customer created and BVN verification completed successfully' })
+  @ApiResponse({ status: 400, description: 'Bad request or verification failed' })
+  @ApiResponse({ status: 409, description: 'Customer or BVN verification already exists' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async createCustomerWithBvn(
+    @Request() req: any,
+    @Body(ValidationPipe) dto: CreateCustomerWithBvnDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.customerKycService.createCustomerWithBvn(userId, dto);
+  }
+
+  @Post('utility/:customerId/upgrade-nin-address')
+  @ApiOperation({ summary: 'Upgrade customer with NIN, Address verification, and bank account name enquiry. Skips already verified steps.' })
+  @ApiParam({ name: 'customerId', description: 'Customer ID' })
+  @ApiBody({ type: UpgradeWithNinAndAddressDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'NIN, Address verification, and bank name enquiry completed successfully',
+    schema: {
+      example: {
+        ninVerification: { id: 1, status: 'verified' },
+        addressVerification: { id: 1, verified: true },
+        bankNameEnquiry: { destinationBankCode: '058', accountNumber: '1234567890', accountName: 'John Doe' },
+        message: 'NIN verification completed. Address verification completed. Bank account name enquiry completed.'
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Bad request or verification failed' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async upgradeWithNinAndAddress(
+    @Param('customerId') customerId: string,
+    @Body(ValidationPipe) dto: UpgradeWithNinAndAddressDto,
+  ) {
+    return this.customerKycService.upgradeWithNinAndAddress(customerId, dto);
   }
 }

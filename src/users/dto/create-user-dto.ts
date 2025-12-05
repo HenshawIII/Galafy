@@ -10,17 +10,21 @@ export enum KycTier {
 }
 
 export class CreateUserDto {
+  @IsOptional()
   @IsString({ message: 'First name must be a string' })
-  @IsNotEmpty({ message: 'First name is required' })
-  firstName: string;
+  firstName?: string;
 
+  @IsOptional()
   @IsString({ message: 'Last name must be a string' })
-  @IsNotEmpty({ message: 'Last name is required' })
-  lastName: string;
+  lastName?: string;
 
   @IsEmail({}, { message: 'Invalid email format' })
   @IsNotEmpty({ message: 'Email is required' })
   email: string;
+
+  @IsOptional()
+  @IsString({ message: 'Username must be a string' })
+  username?: string;
 
   @IsOptional()
   @IsString({ message: 'Password must be a string' })
@@ -45,20 +49,25 @@ export class CreateUserDto {
 export class UpdateUserDto extends PartialType(CreateUserDto) {}
 
 export class SignupDto {
-  @ApiProperty({ example: 'John', description: 'First name' })
+  @ApiPropertyOptional({ example: 'John', description: 'First name' })
+  @IsOptional()
   @IsString({ message: 'First name must be a string' })
-  @IsNotEmpty({ message: 'First name is required' })
-  firstName: string;
+  firstName?: string;
 
-  @ApiProperty({ example: 'Doe', description: 'Last name' })
+  @ApiPropertyOptional({ example: 'Doe', description: 'Last name' })
+  @IsOptional()
   @IsString({ message: 'Last name must be a string' })
-  @IsNotEmpty({ message: 'Last name is required' })
-  lastName: string;
+  lastName?: string;
 
   @ApiProperty({ example: 'john.doe@example.com', description: 'Email address' })
   @IsEmail({}, { message: 'Invalid email format' })
   @IsNotEmpty({ message: 'Email is required' })
   email: string;
+
+  @ApiPropertyOptional({ example: 'johndoe', description: 'Username' })
+  @IsOptional()
+  @IsString({ message: 'Username must be a string' })
+  username?: string;
 
   @ApiProperty({ example: 'SecurePassword123!', description: 'Password (minimum 6 characters)', minLength: 6 })
   @IsString({ message: 'Password must be a string' })

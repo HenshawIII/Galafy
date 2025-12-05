@@ -114,9 +114,10 @@ enum KycRequestStatus {
 
 model User {
   id                String               @id @default(uuid())
-  firstName         String
-  lastName          String
+  firstName         String?
+  lastName          String?
   email             String               @unique
+  username          String?              @unique
   password          String?
   phone             String?              @unique
   kycTier           KycTier              @default(Tier_0)

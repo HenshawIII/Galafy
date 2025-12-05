@@ -17,7 +17,7 @@ export class UsersController {
   @Post('signup')
   @Public()
   @ApiOperation({ summary: 'User signup' })
-  @ApiBody({ type: SignupDto })
+  @ApiBody({ schema: { properties: {  email: { type: 'string' }, username: { type: 'string' }, password: { type: 'string' }, phone: { type: 'string' }, kycTier: { type: 'string' } } } })
   @ApiResponse({ status: 201, description: 'User created successfully' })
   @ApiResponse({ status: 400, description: 'User already exists or validation failed' })
   signup(@Body(ValidationPipe) signupDto: SignupDto) {

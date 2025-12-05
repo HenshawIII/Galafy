@@ -40,12 +40,24 @@ export class UsersService {
     // Generate 6-digit verification code
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
+    // Check if username already exists (if provided)
+    if (signupDto.username) {
+      const existingUsername = await this.databaseService.user.findUnique({
+        where: { username: signupDto.username },
+      });
+
+      if (existingUsername) {
+        throw new ConflictException('User with this username already exists');
+      }
+    }
+
     // Create user with unverified status
     const user = await this.databaseService.user.create({
       data: {
         firstName: signupDto.firstName,
         lastName: signupDto.lastName,
         email: signupDto.email,
+        username: signupDto.username,
         password: hashedPassword,
         phone: signupDto.phone,
         kycTier: signupDto.kycTier ?? KycTier.Tier_0, // Default to Tier_0 for new signups
@@ -182,8 +194,8 @@ export class UsersService {
     const token = this.jwtService.sign({
       sub: user.id,
       email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
+      firstName: user.firstName || null,
+      lastName: user.lastName || null,
     });
 
     // Remove password from response
@@ -410,6 +422,7 @@ export class UsersService {
       emailAddress: customer.emailAddress,
       tier: customer.tier,
       customerId: customer.id,
+      username: user.username,
     };
 
     // Get KYC status from provider if providerCustomerId exists

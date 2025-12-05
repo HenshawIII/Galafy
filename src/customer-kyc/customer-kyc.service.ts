@@ -16,6 +16,10 @@ import {
   CreateBvnVerificationDto,
   CreateAddressVerificationDto,
 } from './dto/kyc-verification.dto.js';
+import {
+  CreateCustomerWithBvnDto,
+  UpgradeWithNinAndAddressDto,
+} from './dto/kyc-utility.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 
 @Injectable()
@@ -625,5 +629,163 @@ export class CustomerKycService {
     }
 
     return addressVerification;
+  }
+
+  /**
+   * Utility method: Create customer and upgrade with BVN in one request
+   * Includes duplicate checks to avoid creating duplicate customers or BVN verifications
+   */
+  async createCustomerWithBvn(userId: string, dto: CreateCustomerWithBvnDto) {
+    // Check if customer already exists for this user
+    let customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      include: {
+        bvnVerification: true,
+      },
+    });
+
+    // If customer doesn't exist, create it
+    if (!customer) {
+      const createCustomerDto: CreateCustomerDto = {
+        userId,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        middleName: dto.middleName,
+        dob: dto.dob,
+        city: dto.city,
+        address: dto.address,
+        mobileNumber: dto.mobileNumber,
+        emailAddress: dto.emailAddress,
+      };
+
+      await this.createCustomer(userId, createCustomerDto);
+      
+      // Fetch the newly created customer with BVN verification relation
+      customer = await this.databaseService.customer.findUnique({
+        where: { userId },
+        include: {
+          bvnVerification: true,
+        },
+      });
+
+      if (!customer) {
+        throw new BadRequestException('Failed to create customer');
+      }
+    }
+
+    // Check if BVN verification already exists
+    if (customer.bvnVerification) {
+      throw new ConflictException('BVN verification already exists for this customer');
+    }
+
+    // Upgrade with BVN
+    const bvnDto: CreateBvnVerificationDto = {
+      bvn: dto.bvn,
+    };
+
+    const bvnVerification = await this.upgradeWithBvn(customer.id, bvnDto);
+
+    return {
+      customer,
+      bvnVerification,
+      message: 'Customer created and BVN verification completed successfully',
+    };
+  }
+
+  /**
+   * Utility method: Upgrade customer with NIN and Address verification, plus bank account name enquiry
+   * Includes duplicate checks - skips already verified steps and continues with remaining steps
+   */
+  async upgradeWithNinAndAddress(customerId: string, dto: UpgradeWithNinAndAddressDto) {
+    // Verify customer exists
+    const customer = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+      include: {
+        ninVerification: true,
+        addressVerification: true,
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (!customer.providerCustomerId) {
+      throw new BadRequestException('Customer does not have a provider customer ID');
+    }
+
+    const results: any = {
+      ninVerification: null,
+      addressVerification: null,
+      bankNameEnquiry: null,
+      message: '',
+    };
+
+    // Step 1: NIN Verification (skip if already verified)
+    if (customer.ninVerification) {
+      this.logger.log(`NIN verification already exists for customer ${customerId}, skipping NIN verification`);
+      results.ninVerification = customer.ninVerification;
+      results.message += 'NIN already verified. ';
+    } else {
+      // Check customer tier - must be at least Tier 1 (should have BVN already)
+      if (customer.tier === KycTier.Tier_0) {
+        throw new BadRequestException('Customer must complete BVN verification first before proceeding with NIN verification.');
+      }
+
+      try {
+        const ninDto: CreateNinVerificationDto = {
+          nin: dto.nin,
+        };
+        results.ninVerification = await this.upgradeWithNin(customerId, ninDto);
+        results.message += 'NIN verification completed. ';
+      } catch (error: any) {
+        throw new BadRequestException(`NIN verification failed: ${error.message}`);
+      }
+    }
+
+    // Refresh customer to get updated tier after NIN verification
+    const updatedCustomer = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+    });
+
+    if (!updatedCustomer) {
+      throw new NotFoundException('Customer not found after NIN verification');
+    }
+
+    // Step 2: Address Verification (skip if already verified)
+    if (customer.addressVerification) {
+      this.logger.log(`Address verification already exists for customer ${customerId}, skipping address verification`);
+      results.addressVerification = customer.addressVerification;
+      results.message += 'Address already verified. ';
+    } else {
+      // Check customer tier - must be Tier 2 for address verification
+      if (updatedCustomer.tier !== KycTier.Tier_2) {
+        throw new BadRequestException(`Customer must be Tier 2 before address verification. Current tier: ${updatedCustomer.tier}`);
+      }
+
+      try {
+        const addressDto: CreateAddressVerificationDto = {
+          houseAddress: dto.houseAddress,
+          meterNumber: dto.meterNumber,
+        };
+        results.addressVerification = await this.verifyAddress(customerId, addressDto);
+        results.message += 'Address verification completed. ';
+      } catch (error: any) {
+        throw new BadRequestException(`Address verification failed: ${error.message}`);
+      }
+    }
+
+    // Step 3: Bank Account Name Enquiry (always perform)
+    try {
+      results.bankNameEnquiry = await this.providerService.bankAccountNameEnquiry(
+        dto.bankCode,
+        dto.accountNumber,
+      );
+      results.message += 'Bank account name enquiry completed.';
+    } catch (error: any) {
+      throw new BadRequestException(`Bank account name enquiry failed: ${error.message}`);
+    }
+
+    return results;
   }
 }

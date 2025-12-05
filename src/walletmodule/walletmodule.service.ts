@@ -68,7 +68,9 @@ export class WalletmoduleService {
         overdraft: createWalletDto.overdraft || 0,
         isInternal: createWalletDto.isInternal || false,
         isDefault: createWalletDto.isDefault || false,
-        name: createWalletDto.name || customer.firstName + ' ' + customer.lastName,
+        name: createWalletDto.name || (customer.firstName && customer.lastName 
+          ? `${customer.firstName} ${customer.lastName}` 
+          : customer.firstName || customer.lastName || 'Wallet'),
         mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
       },
     });
@@ -87,7 +89,9 @@ export class WalletmoduleService {
       overdraft: createWalletDto.overdraft || 0,
       isInternal: createWalletDto.isInternal || false,
       isDefault: createWalletDto.isDefault || true,
-      name: createWalletDto.name || customer.firstName + ' ' + customer.lastName,
+      name: createWalletDto.name || (customer.firstName && customer.lastName 
+        ? `${customer.firstName} ${customer.lastName}` 
+        : customer.firstName || customer.lastName || 'Wallet'),
       mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
     };
 
@@ -311,7 +315,7 @@ export class WalletmoduleService {
       fromWalletId: fromWallet.virtualAccountNumber,
       toWalletId: toWallet.virtualAccountNumber,
       amount: transferDto.amount,
-      currencyId: transferDto.currencyId || fromWallet.currencyId,
+      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       description: transferDto.description,
       reference: internalReference,
     });
@@ -335,7 +339,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.DEBIT,
         status: TransactionStatus.SUCCESS,
         amount: transferDto.amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId,
+        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         reference: internalReference,
         externalReference: null, // Wallet-to-wallet (sprays) only use internal reference
         groupReference: groupReference,
@@ -351,7 +355,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.CREDIT,
         status: TransactionStatus.SUCCESS,
         amount: transferDto.amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId,
+        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         reference: `SPRAY-CREDIT-${randomUUID()}`, // Unique reference for credit side
         externalReference: null,
         groupReference: groupReference, // Same group reference to link transactions
@@ -452,14 +456,18 @@ export class WalletmoduleService {
     }
 
     // Get source account name
-    const sourceAccountName =
-      fromWallet.name ||
-      `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}` ||
-      `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`;
+    const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
+      ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
+      : null;
+    const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
+      ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
+      : null;
+    const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
 
-    // Generate transaction reference if not provided
+    // Generate transaction reference if not provided (max 36 characters)
+    // Use UUID directly (36 chars) to meet provider requirement
     const transactionReference =
-      transferDto.reference || `FAST-TXN-${randomUUID()}`;
+      transferDto.reference || randomUUID();
 
     // Execute inter-bank transfer with provider
     const providerResponse = await this.providerService.interBankTransfer({
@@ -470,7 +478,7 @@ export class WalletmoduleService {
       sourceAccountName: sourceAccountName,
       remarks: transferDto.description || 'Fast wallet transfer',
       amount: transferDto.amount,
-      currencyId: transferDto.currencyId || fromWallet.currencyId,
+      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       customerTransactionReference: transactionReference,
     });
 
