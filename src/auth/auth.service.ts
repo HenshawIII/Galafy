@@ -37,9 +37,20 @@ export class AuthService {
         }
 
         try {
+            // Decode token to get audience (client ID) without verification
+            // This helps debug client ID mismatches
+            let tokenAudience: string | undefined;
+            try {
+                const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+                tokenAudience = decoded.aud;
+            } catch (decodeError) {
+                // If we can't decode, continue with verification attempt
+            }
+
+            const configuredClientId = process.env.GOOGLE_CLIENT_ID;
             const ticket = await this.client.verifyIdToken({
                 idToken: token,
-                audience: process.env.GOOGLE_CLIENT_ID,
+                audience: configuredClientId,
             });
             
             const payload = ticket.getPayload();
@@ -58,17 +69,41 @@ export class AuthService {
                 name: payload.name as string,
             };
         } catch (error: any) {
+            // Decode token to get audience for debugging
+            let tokenAudience: string | undefined;
+            try {
+                const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+                tokenAudience = decoded.aud;
+            } catch (decodeError) {
+                // If we can't decode, that's okay
+            }
+
+            const configuredClientId = process.env.GOOGLE_CLIENT_ID;
+            // Log partial client IDs for debugging (first 10 and last 4 chars)
+            const logClientId = configuredClientId 
+                ? `${configuredClientId.substring(0, 10)}...${configuredClientId.substring(configuredClientId.length - 4)}`
+                : 'missing';
+            const logTokenAudience = tokenAudience
+                ? `${tokenAudience.substring(0, 10)}...${tokenAudience.substring(tokenAudience.length - 4)}`
+                : 'unknown';
+
             // Log the actual error for debugging
             console.error('Google token validation error:', {
                 message: error.message,
                 code: error.code,
                 name: error.name,
-                clientId: process.env.GOOGLE_CLIENT_ID ? 'set' : 'missing',
+                configuredClientId: logClientId,
+                tokenAudience: logTokenAudience,
+                clientIdsMatch: configuredClientId === tokenAudience,
             });
 
             // Provide more specific error messages
-            if (error.message?.includes('audience')) {
-                throw new UnauthorizedException('Invalid token: Client ID mismatch. Please ensure the token was issued for the correct Google OAuth client ID.');
+            if (error.message?.includes('audience') || error.message?.includes('Wrong recipient')) {
+                throw new UnauthorizedException(
+                    `Invalid token: Client ID mismatch. ` +
+                    `The token was issued for a different Google OAuth client ID than configured. ` +
+                    `Please ensure your mobile app uses the same client ID as configured in GOOGLE_CLIENT_ID environment variable.`
+                );
             }
             
             if (error.message?.includes('expired')) {
