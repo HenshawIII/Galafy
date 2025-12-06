@@ -75,10 +75,17 @@ enum PayoutStatus {
 
 enum EventStatus {
   DRAFT
-  ACTIVE
+  SCHEDULED
+  LIVE
   ENDED
   CANCELLED
 }
+
+enum EventVisibility {
+  PUBLIC
+  PRIVATE
+}
+
 
 enum WebhookProcessingStatus {
   PENDING
@@ -375,28 +382,43 @@ model Transaction {
 model Event {
   id          String        @id @default(uuid())
   code        String        @unique
-  name        String
+  
+  // Basic event info
+  title       String
+  name        String        // Keep for backward compatibility, can be same as title
+  location    String
+  category    String
   description String?
+  imageUrl    String?
 
+  // Event settings
+  goLiveInstantly Boolean    @default(false)
+  sprayGoal       Decimal?
+  minSprayAmount  Decimal?
+
+  // Scheduling
   hostUserId  String
   hostUser    User          @relation("UserHostedEvents", fields: [hostUserId], references: [id])
 
   status      EventStatus   @default(DRAFT)
-  startsAt    DateTime?
+  startsAt    DateTime
   endsAt      DateTime?
 
   participants EventParticipant[]
   sprays       Spray[]
-
+  visibility EventVisibility @default(PUBLIC)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+
+  @@index([hostUserId])
+  @@index([status, startsAt])
 }
 
 model EventParticipant {
   id         String   @id @default(uuid())
 
   eventId    String
-  event      Event    @relation(fields: [eventId], references: [id])
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   userId     String
   user       User     @relation(fields: [userId], references: [id])
@@ -406,6 +428,12 @@ model EventParticipant {
 
   role       EventRole @default(ATTENDEE)
   joinedAt   DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId, role])
 }
 
 model Spray {
