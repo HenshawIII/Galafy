@@ -21,6 +21,7 @@ import {
   ApiQuery,
   ApiBody,
   ApiUnauthorizedResponse,
+  ApiExcludeEndpoint,
 } from '@nestjs/swagger';
 import { EventsService } from './events.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
@@ -105,6 +106,7 @@ export class EventsController {
   }
 
   @Get('code/:code')
+  @ApiExcludeEndpoint() 
   @ApiOperation({ summary: 'Get an event by code' })
   @ApiParam({ name: 'code', description: 'Event code (6-character alphanumeric)' })
   @ApiResponse({ status: 200, description: 'Event retrieved successfully' })
