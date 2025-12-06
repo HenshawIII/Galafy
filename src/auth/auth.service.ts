@@ -3,37 +3,84 @@ import { UsersService } from '../users/users.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
 import { google } from 'googleapis';
+import type { OAuth2Client } from 'google-auth-library';
 import { config } from 'dotenv';
 import { KycTier } from '../users/dto/create-user-dto.js';
 config();
 
 @Injectable()
 export class AuthService {
-    private client = new google.auth.OAuth2({
-        clientId: process.env.GOOGLE_CLIENT_ID,
-        
-    })
+    private client: OAuth2Client;
+    
     constructor(
         private readonly usersService: UsersService,
         private readonly jwtService: JwtService,
         private readonly databaseService: DatabaseService,
-    ) {}
+    ) {
+        // Validate Google OAuth configuration
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        if (!clientId) {
+            console.error('GOOGLE_CLIENT_ID environment variable is not set');
+            throw new Error('GOOGLE_CLIENT_ID environment variable is required');
+        }
+        
+        this.client = new google.auth.OAuth2({
+            clientId: clientId,
+        });
+    }
 
     async validateGoogleToken(token: string) {
+        // Check if GOOGLE_CLIENT_ID is set
+        if (!process.env.GOOGLE_CLIENT_ID) {
+            console.error('GOOGLE_CLIENT_ID is not configured');
+            throw new UnauthorizedException('Google OAuth is not properly configured');
+        }
+
         try {
             const ticket = await this.client.verifyIdToken({
                 idToken: token,
                 audience: process.env.GOOGLE_CLIENT_ID,
             });
+            
             const payload = ticket.getPayload();
             if (!payload) {
-                throw new UnauthorizedException('Invalid token/Bad Request1');
+                console.error('Google token verification returned no payload');
+                throw new UnauthorizedException('Invalid token: No payload received');
             }
-            // console.log(payload);
-            return {email: payload?.email as string,
-                 name: payload?.name as string};
-        } catch (error) {
-            throw new UnauthorizedException('Invalid token/Bad Request2');
+
+            if (!payload.email) {
+                console.error('Google token payload missing email');
+                throw new UnauthorizedException('Invalid token: Email not found in token');
+            }
+
+            return {
+                email: payload.email as string,
+                name: payload.name as string,
+            };
+        } catch (error: any) {
+            // Log the actual error for debugging
+            console.error('Google token validation error:', {
+                message: error.message,
+                code: error.code,
+                name: error.name,
+                clientId: process.env.GOOGLE_CLIENT_ID ? 'set' : 'missing',
+            });
+
+            // Provide more specific error messages
+            if (error.message?.includes('audience')) {
+                throw new UnauthorizedException('Invalid token: Client ID mismatch. Please ensure the token was issued for the correct Google OAuth client ID.');
+            }
+            
+            if (error.message?.includes('expired')) {
+                throw new UnauthorizedException('Invalid token: Token has expired');
+            }
+
+            if (error.message?.includes('malformed')) {
+                throw new UnauthorizedException('Invalid token: Token format is invalid');
+            }
+
+            // Generic error with more context
+            throw new UnauthorizedException(`Invalid Google token: ${error.message || 'Token verification failed'}`);
         }
     }
     async googleLogin(idtoken: string) {
@@ -41,43 +88,43 @@ export class AuthService {
         if (!user) {
             throw new UnauthorizedException('Invalid token/Bad Request3');
         }
+        // console.log("user", user);
         let dbUser = await this.usersService.findByEmail(user.email);
         if (!dbUser) {
-          // Generate username from email (use part before @) or name
-          // Remove special characters and make lowercase
-          const baseUsername = (user.name || user.email.split('@')[0])
+          // Generate username from email prefix (part before @)
+          const emailPrefix = user.email.split('@')[0]
             .toLowerCase()
             .replace(/[^a-z0-9]/g, '')
             .substring(0, 20); // Limit to 20 characters
           
-          // Generate unique username with retry logic
-          let username: string;
-          let attempts = 0;
-          const maxAttempts = 10;
+          // Ensure emailPrefix is not empty (fallback to 'user' if all characters were removed)
+          const baseUsername = emailPrefix || 'user';
           
-          do {
+          // First, try to use the email prefix as-is
+          let username = baseUsername;
+          let existingUser = await this.databaseService.user.findUnique({
+            where: { username },
+          });
+          
+          // If username is taken, add random suffix
+          if (existingUser) {
             const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
             username = `${baseUsername}${randomSuffix}`;
             
-            const existingUser = await this.databaseService.user.findUnique({
+            // Check if this username is also taken (retry if needed)
+            existingUser = await this.databaseService.user.findUnique({
               where: { username },
             });
             
-            if (!existingUser) {
-              break; // Username is available
+            // If still taken after adding suffix, use timestamp
+            if (existingUser) {
+              const timestamp = Date.now().toString().slice(-6);
+              username = `${baseUsername}${timestamp}`;
             }
-            
-            attempts++;
-          } while (attempts < maxAttempts);
-          
-          // If still not unique after max attempts, use timestamp
-          if (attempts >= maxAttempts) {
-            const timestamp = Date.now().toString().slice(-6);
-            username = `${baseUsername}${timestamp}`;
           }
 
           dbUser = await this.usersService.create({
-            username,
+            username: username,
             email: user.email,
             // No password for Google OAuth users
             kycTier: KycTier.Tier_0,

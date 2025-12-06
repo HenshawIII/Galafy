@@ -8,6 +8,7 @@ import {
   Query,
   ValidationPipe,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { WalletmoduleService } from './walletmodule.service.js';
@@ -24,24 +25,34 @@ import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-t
 export class WalletmoduleController {
   constructor(private readonly walletmoduleService: WalletmoduleService) {}
 
-  @Post('customer/:customerId')
-  @ApiOperation({ summary: 'Create a new wallet for a customer (requires Tier 1+)' })
-  @ApiParam({ name: 'customerId', description: 'Customer ID' })
+  @Post()
+  @ApiOperation({ summary: 'Create a new wallet for the authenticated user (requires Tier 1+)' })
   @ApiBody({})
   @ApiResponse({ status: 201, description: 'Wallet created successfully' })
   @ApiResponse({ status: 400, description: 'Customer tier too low or wallet creation failed' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async createWallet(
-    @Param('customerId') customerId: string,
+    @Request() req: any,
     @Body(ValidationPipe) createWalletDto: CreateWalletDto,
   ) {
-    return this.walletmoduleService.createWallet(customerId, createWalletDto);
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.createWalletByUserId(userId, createWalletDto);
   }
 
-  @Get('customer/:customerId')
-  @ApiExcludeEndpoint()
-  async getCustomerWallets(@Param('customerId') customerId: string) {
-    return this.walletmoduleService.getCustomerWallets(customerId);
+  @Get()
+  @ApiOperation({ summary: 'Get all wallets for the authenticated user' })
+  @ApiResponse({ status: 200, description: 'Wallets retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async getCustomerWallets(@Request() req: any) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.getCustomerWalletsByUserId(userId);
   }
 
   @Get('account/:accountNumber')

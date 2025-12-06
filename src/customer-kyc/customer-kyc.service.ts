@@ -176,6 +176,23 @@ export class CustomerKycService {
   }
 
   /**
+   * Helper method to get customer by userId and return customerId
+   * Throws NotFoundException if customer doesn't exist
+   */
+  private async getCustomerIdByUserId(userId: string): Promise<string> {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found for this user. Please create a customer profile first.');
+    }
+
+    return customer.id;
+  }
+
+  /**
    * Get all customers with optional filters
    */
   async getAllCustomers(query: GetAllCustomersQueryDto) {
@@ -302,6 +319,14 @@ export class CustomerKycService {
   }
 
   /**
+   * Get customer KYC status by userId
+   */
+  async getCustomerKycStatusByUserId(userId: string) {
+    const customerId = await this.getCustomerIdByUserId(userId);
+    return this.getCustomerKycStatus(customerId);
+  }
+
+  /**
    * Get customer KYC status
    */
   async getCustomerKycStatus(customerId: string) {
@@ -356,6 +381,14 @@ export class CustomerKycService {
    * - If customer already has BVN verification → Tier_2
    * - Otherwise → Tier_1
    */
+  /**
+   * Upgrade customer with NIN by userId
+   */
+  async upgradeWithNinByUserId(userId: string, ninDto: CreateNinVerificationDto) {
+    const customerId = await this.getCustomerIdByUserId(userId);
+    return this.upgradeWithNin(customerId, ninDto);
+  }
+
   async upgradeWithNin(customerId: string, ninDto: CreateNinVerificationDto) {
     const customer = await this.databaseService.customer.findUnique({
       where: { id: customerId },
@@ -450,6 +483,14 @@ export class CustomerKycService {
    * - If customer already has NIN verification → Tier_2
    * - Otherwise → Tier_1
    */
+  /**
+   * Upgrade customer with BVN by userId
+   */
+  async upgradeWithBvnByUserId(userId: string, bvnDto: CreateBvnVerificationDto) {
+    const customerId = await this.getCustomerIdByUserId(userId);
+    return this.upgradeWithBvn(customerId, bvnDto);
+  }
+
   async upgradeWithBvn(customerId: string, bvnDto: CreateBvnVerificationDto) {
     const customer = await this.databaseService.customer.findUnique({
       where: { id: customerId },
@@ -557,6 +598,14 @@ export class CustomerKycService {
   /**
    * Verify customer address (Tier 3)
    */
+  /**
+   * Verify customer address by userId
+   */
+  async verifyAddressByUserId(userId: string, addressDto: CreateAddressVerificationDto) {
+    const customerId = await this.getCustomerIdByUserId(userId);
+    return this.verifyAddress(customerId, addressDto);
+  }
+
   async verifyAddress(customerId: string, addressDto: CreateAddressVerificationDto) {
     const customer = await this.databaseService.customer.findUnique({
       where: { id: customerId },
@@ -696,6 +745,14 @@ export class CustomerKycService {
    * Utility method: Upgrade customer with NIN and Address verification, plus bank account name enquiry
    * Includes duplicate checks - skips already verified steps and continues with remaining steps
    */
+  /**
+   * Upgrade customer with NIN and Address by userId
+   */
+  async upgradeWithNinAndAddressByUserId(userId: string, dto: UpgradeWithNinAndAddressDto) {
+    const customerId = await this.getCustomerIdByUserId(userId);
+    return this.upgradeWithNinAndAddress(customerId, dto);
+  }
+
   async upgradeWithNinAndAddress(customerId: string, dto: UpgradeWithNinAndAddressDto) {
     // Verify customer exists
     const customer = await this.databaseService.customer.findUnique({

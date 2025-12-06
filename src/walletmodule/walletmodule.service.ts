@@ -32,10 +32,13 @@ export class WalletmoduleService {
    * Create a new wallet for a customer
    * Customers must be at least Tier 1 to create a wallet
    */
-  async createWallet(customerId: string, createWalletDto: CreateWalletDto) {
-    // Verify customer exists and has required tier
+  /**
+   * Create wallet by userId
+   */
+  async createWalletByUserId(userId: string, createWalletDto: CreateWalletDto) {
+    // Find customer by userId
     const customer = await this.databaseService.customer.findUnique({
-      where: { id: customerId },
+      where: { userId },
       include: {
         user: true,
       },
@@ -58,7 +61,7 @@ export class WalletmoduleService {
     // We'll create the wallet first, then use its ID for provider
     const tempWallet = await this.databaseService.wallet.create({
       data: {
-        customerId,
+        customerId: customer.id,
         currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         walletGroupId: createWalletDto.walletGroupId || undefined,
         walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
@@ -242,19 +245,20 @@ export class WalletmoduleService {
   }
 
   /**
-   * Get all wallets for a customer
+   * Get all wallets for a customer by userId
    */
-  async getCustomerWallets(customerId: string) {
+  async getCustomerWalletsByUserId(userId: string) {
+    // Find customer by userId
     const customer = await this.databaseService.customer.findUnique({
-      where: { id: customerId },
+      where: { userId },
     });
 
     if (!customer) {
-      throw new NotFoundException('Customer not found');
+      throw new NotFoundException('Customer not found for this user');
     }
 
     const wallets = await this.databaseService.wallet.findMany({
-      where: { customerId },
+      where: { customerId: customer.id },
       include: {
         customer: {
           select: {

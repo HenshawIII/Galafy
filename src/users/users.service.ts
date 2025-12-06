@@ -325,6 +325,7 @@ export class UsersService {
       firstName: createUserDto.firstName,
       lastName: createUserDto.lastName,
       email: createUserDto.email,
+      username: createUserDto.username,
       phone: createUserDto.phone,
       kycTier: createUserDto.kycTier ?? KycTier.Tier_0,
       isVerified: createUserDto.isVerified ?? false,
