@@ -17,6 +17,11 @@ export class UsersService {
   ) {}
 
   async signup(signupDto: SignupDto) {
+    // Validate username is provided
+    if (!signupDto.username || signupDto.username.trim() === '') {
+      throw new BadRequestException('Username is required');
+    }
+
     // Check if user already exists
     const existingUser = await this.databaseService.user.findUnique({
       where: { email: signupDto.email },
@@ -40,15 +45,13 @@ export class UsersService {
     // Generate 6-digit verification code
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Check if username already exists (if provided)
-    if (signupDto.username) {
-      const existingUsername = await this.databaseService.user.findUnique({
-        where: { username: signupDto.username },
-      });
+    // Check if username already exists
+    const existingUsername = await this.databaseService.user.findUnique({
+      where: { username: signupDto.username },
+    });
 
-      if (existingUsername) {
-        throw new ConflictException('User with this username already exists');
-      }
+    if (existingUsername) {
+      throw new ConflictException('User with this username already exists');
     }
 
     // Create user with unverified status
@@ -190,18 +193,51 @@ export class UsersService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Generate JWT token
-    const token = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-      firstName: user.firstName || null,
-      lastName: user.lastName || null,
+    // Generate access token (short-lived: 15 minutes)
+    const accessToken = this.jwtService.sign(
+      {
+        sub: user.id,
+        email: user.email,
+        firstName: user.firstName || null,
+        lastName: user.lastName || null,
+        type: 'access',
+      },
+      {
+        expiresIn: '15m', // Access token expires in 15 minutes
+      },
+    );
+
+    // Generate refresh token (long-lived: 7 days)
+    const refreshToken = this.jwtService.sign(
+      {
+        sub: user.id,
+        email: user.email,
+        type: 'refresh',
+      },
+      {
+        expiresIn: '7d', // Refresh token expires in 7 days
+        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, // Use separate secret if available
+      },
+    );
+
+    // Calculate refresh token expiration date
+    const refreshTokenExpiresAt = new Date();
+    refreshTokenExpiresAt.setDate(refreshTokenExpiresAt.getDate() + 7); // 7 days from now
+
+    // Store refresh token in database
+    await this.databaseService.user.update({
+      where: { id: user.id },
+      data: {
+        refreshToken,
+        refreshTokenExpiresAt,
+      },
     });
 
-    // Remove password from response
-    const { password, ...userWithoutPassword } = user;
+    // Remove sensitive data from response
+    const { password, refreshToken: _, refreshTokenExpiresAt: __, ...userWithoutPassword } = user;
     return {
-      access_token: token,
+      access_token: accessToken,
+      refresh_token: refreshToken,
       user: userWithoutPassword,
     };
   }

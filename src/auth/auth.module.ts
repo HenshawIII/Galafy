@@ -18,7 +18,8 @@ config();
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       global: true,
-      signOptions: { expiresIn: '7d' }, // 7 days - suitable for mobile apps
+      // Default options - we'll override in service methods
+      signOptions: { expiresIn: '15m' }, // Access token: 15 minutes
     }),
   ],
   providers: [AuthService, JwtStrategy, JwtAuthGuard],

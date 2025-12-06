@@ -124,6 +124,8 @@ model User {
   isVerified        Boolean              @default(false)
   verificationCode  String?
   passwordResetOtp  String?
+  refreshToken      String?              @unique
+  refreshTokenExpiresAt DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 

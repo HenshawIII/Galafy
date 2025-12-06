@@ -49,7 +49,22 @@ export class UsersController {
   @Public()
   @ApiOperation({ summary: 'User login' })
   @ApiBody({ type: LoginDto })
-  @ApiResponse({ status: 200, description: 'Login successful, returns JWT token' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Login successful, returns access token and refresh token',
+    schema: {
+      example: {
+        access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refresh_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        user: {
+          id: 'uuid',
+          email: 'user@example.com',
+          firstName: 'John',
+          lastName: 'Doe',
+        }
+      }
+    }
+  })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   login(@Body(ValidationPipe) loginDto: LoginDto) {
     return this.usersService.login(loginDto);

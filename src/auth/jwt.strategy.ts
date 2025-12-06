@@ -16,6 +16,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    // Ensure this is an access token, not a refresh token
+    if (payload.type && payload.type !== 'access') {
+      throw new UnauthorizedException('Invalid token type. Access token required.');
+    }
+
     // Payload contains: sub (user id), email, firstName, lastName
     const user = await this.databaseService.user.findUnique({
       where: { id: payload.sub },

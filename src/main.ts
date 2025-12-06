@@ -9,7 +9,13 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     rawBody: true, // Enable raw body for webhook signature verification
   });
-  app.enableCors();
+  
+  // Enable CORS for mobile apps (allow all origins)
+  app.enableCors({
+    origin: true, // Allow all origins for mobile apps
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
   app.setGlobalPrefix('api');
   // Global validation pipe to validate all incoming requests
   app.useGlobalPipes(

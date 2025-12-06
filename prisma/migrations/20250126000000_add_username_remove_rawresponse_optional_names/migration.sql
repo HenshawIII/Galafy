@@ -19,3 +19,4 @@ ALTER TABLE "BvnVerification" DROP COLUMN IF EXISTS "rawResponse";
 -- AlterTable: Remove rawResponse from AddressVerification table
 ALTER TABLE "AddressVerification" DROP COLUMN IF EXISTS "rawResponse";
 
+
