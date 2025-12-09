@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "payoutPin" TEXT,
+ADD COLUMN IF NOT EXISTS "payoutOtp" TEXT,
+ADD COLUMN IF NOT EXISTS "payoutOtpExpiresAt" TIMESTAMP(3),
+ADD COLUMN IF NOT EXISTS "pendingPayoutData" JSONB;
+

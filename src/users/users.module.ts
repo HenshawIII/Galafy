@@ -4,6 +4,7 @@ import { UsersController } from './users.controller.js';
 import { DatabaseModule } from '../database/database.module.js';
 import { EmailService } from './email.service.js';
 import { ProviderModule } from '../provider/provider.module.js';
+import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 import { JwtModule } from '@nestjs/jwt';
 import { config } from 'dotenv';
 config();
@@ -12,6 +13,7 @@ config();
   imports: [
     DatabaseModule,
     ProviderModule,
+    CustomerKycModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '7d' }, // 7 days - suitable for mobile apps
@@ -19,7 +21,7 @@ config();
   ],
   controllers: [UsersController],
   providers: [UsersService, EmailService],
-  exports: [UsersService],
+  exports: [UsersService, EmailService],
 })
 export class UsersModule {}
 

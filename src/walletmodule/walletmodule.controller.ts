@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
+import { SetPayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payout-security.dto.js';
 
 @ApiTags('wallets')
 @Controller('wallets')
@@ -43,9 +44,9 @@ export class WalletmoduleController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all wallets for the authenticated user' })
-  @ApiResponse({ status: 200, description: 'Wallets retrieved successfully' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiOperation({ summary: 'Get wallet for the authenticated user ' })
+  @ApiResponse({ status: 200, description: 'Wallet retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Customer or wallet not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async getCustomerWallets(@Request() req: any) {
     const userId = req.user?.id;
@@ -103,12 +104,90 @@ export class WalletmoduleController {
   }
 
   @Put('payout')
-  @ApiOperation({ summary: 'Wallet payout to external bank account' })
+  @ApiOperation({ summary: 'Wallet payout to external bank account (Legacy - use initiate/confirm endpoints)' })
   @ApiBody({ schema: {  properties: { fromWalletId: { type: 'string' }, toAccountNumber: { type: 'string' },bankCode: { type: 'string' }, amount: { type: 'number' } ,description: { type: 'string' },recipientName: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'Payout initiated successfully' })
   @ApiResponse({ status: 400, description: 'Insufficient balance or payout failed' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async walletpayout(@Body(ValidationPipe) transferDto: FastWalletTransferDto) {
     return this.walletmoduleService.walletpayout(transferDto);
+  }
+
+  @Post('payout/set-pin')
+  @ApiOperation({ summary: 'Set or update payout PIN (4 digits)' })
+  @ApiBody({ type: SetPayoutPinDto })
+  @ApiResponse({ status: 200, description: 'Payout PIN set successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid PIN format' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async setPayoutPin(
+    @Request() req: any,
+    @Body(ValidationPipe) setPinDto: SetPayoutPinDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    await this.walletmoduleService.setPayoutPin(userId, setPinDto.pin);
+    return { success: true, message: 'Payout PIN set successfully' };
+  }
+
+  @Post('payout/initiate')
+  @ApiOperation({ summary: 'Initiate payout - Step 1: Validates request and sends OTP to email' })
+  @ApiBody({ type: InitiatePayoutDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'OTP sent successfully. Use the OTP and PIN to confirm the payout.',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        expiresIn: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request, insufficient balance, or wallet not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async initiatePayout(
+    @Request() req: any,
+    @Body(ValidationPipe) initiateDto: InitiatePayoutDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.initiatePayout(userId, initiateDto);
+  }
+
+  @Post('payout/confirm')
+  @ApiOperation({ summary: 'Confirm payout - Step 2: Verifies OTP and PIN, then executes the payout' })
+  @ApiBody({ type: ConfirmPayoutDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Payout confirmed and executed successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        transactionRef: { type: 'string' },
+        fromWalletId: { type: 'string' },
+        toAccountNumber: { type: 'string' },
+        amount: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid OTP, expired OTP, or no pending payout found' })
+  @ApiResponse({ status: 401, description: 'Invalid PIN or OTP' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async confirmPayout(
+    @Request() req: any,
+    @Body(ValidationPipe) confirmDto: ConfirmPayoutDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.confirmPayout(userId, confirmDto.otp, confirmDto.pin);
   }
 }

@@ -1,5 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service.js';
+import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
 import { google } from 'googleapis';
@@ -14,6 +15,7 @@ export class AuthService {
     
     constructor(
         private readonly usersService: UsersService,
+        private readonly customerKycService: CustomerKycService,
         private readonly jwtService: JwtService,
         private readonly databaseService: DatabaseService,
     ) {
@@ -215,10 +217,20 @@ export class AuthService {
             },
         });
         
+        // Get KYC status if customer exists
+        let kycStatus: any = null;
+        try {
+            kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(dbUser.id);
+        } catch (error) {
+            // Customer might not exist yet, which is fine - return null for kycStatus
+            kycStatus = null;
+        }
+        
         return {
             access_token: accessToken,
             refresh_token: refreshToken,
             user: userWithoutPassword,
+            kycStatus,
         }
     }
 

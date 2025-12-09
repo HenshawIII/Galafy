@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException, UnauthorizedExcepti
 import { DatabaseService } from '../database/database.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, KycTier } from './dto/create-user-dto.js';
 import { ProviderService } from '../provider/provider.service.js';
+import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
@@ -14,6 +15,7 @@ export class UsersService {
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
     private readonly providerService: ProviderService,
+    private readonly customerKycService: CustomerKycService,
   ) {}
 
   async signup(signupDto: SignupDto) {
@@ -235,10 +237,21 @@ export class UsersService {
 
     // Remove sensitive data from response
     const { password, refreshToken: _, refreshTokenExpiresAt: __, ...userWithoutPassword } = user;
+    
+    // Get KYC status if customer exists
+    let kycStatus: any = null;
+    try {
+      kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(user.id);
+    } catch (error) {
+      // Customer might not exist yet, which is fine - return null for kycStatus
+      kycStatus = null;
+    }
+    
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
       user: userWithoutPassword,
+      kycStatus,
     };
   }
 

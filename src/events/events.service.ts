@@ -107,6 +107,7 @@ export class EventsService {
         category: createEventDto.category,
         description: createEventDto.description,
         imageUrl: createEventDto.imageUrl,
+        imagePath: createEventDto.imagePath,
         goLiveInstantly: createEventDto.goLiveInstantly,
         sprayGoal: createEventDto.sprayGoal ? new Decimal(createEventDto.sprayGoal) : null,
         minSprayAmount: createEventDto.minSprayAmount ? new Decimal(createEventDto.minSprayAmount) : null,
@@ -399,6 +400,7 @@ export class EventsService {
     if (dto.category !== undefined) updateData.category = dto.category;
     if (dto.description !== undefined) updateData.description = dto.description;
     if (dto.imageUrl !== undefined) updateData.imageUrl = dto.imageUrl;
+    if (dto.imagePath !== undefined) updateData.imagePath = dto.imagePath;
     if (dto.goLiveInstantly !== undefined) updateData.goLiveInstantly = dto.goLiveInstantly;
     if (dto.sprayGoal !== undefined) {
       updateData.sprayGoal = dto.sprayGoal !== null ? new Decimal(dto.sprayGoal) : null;

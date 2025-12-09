@@ -115,5 +115,37 @@ export class EmailService {
       throw new Error(`Failed to send password reset OTP email: ${error.message}`);
     }
   }
+
+  async sendPayoutOtp(email: string, otp: string): Promise<void> {
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'Payout Confirmation OTP',
+      text: `Your payout confirmation OTP is: ${otp}. This code will expire in 10 minutes.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Payout Confirmation</h2>
+          <p>You have initiated a payout transaction. Please use the following OTP to confirm the transaction:</p>
+          <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #007bff; font-size: 32px; margin: 0; letter-spacing: 5px;">${otp}</h1>
+          </div>
+          <p>This OTP will expire in 10 minutes.</p>
+          <p><strong>Important:</strong> After confirming with this OTP, you will also need to enter your payout PIN to complete the transaction.</p>
+          <p>If you did not initiate this payout, please ignore this email and contact support immediately.</p>
+        </div>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Payout OTP email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending payout OTP email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      throw new Error(`Failed to send payout OTP email: ${error.message}`);
+    }
+  }
 }
 

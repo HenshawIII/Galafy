@@ -37,6 +37,11 @@ export class CreateEventDto {
   @IsOptional()
   imageUrl?: string;
 
+  @ApiPropertyOptional({ description: 'Event cover image path (local file path)', example: '/uploads/events/image.jpg' })
+  @IsString()
+  @IsOptional()
+  imagePath?: string;
+
   @ApiProperty({ description: 'Go live instantly (true) or schedule for later (false)', example: false })
   @IsBoolean()
   @IsNotEmpty()

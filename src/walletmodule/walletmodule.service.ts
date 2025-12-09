@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
@@ -15,6 +16,8 @@ import {
   WalletToWalletTransferDto,
   FastWalletTransferDto,
 } from './dto/index.js';
+import { InitiatePayoutDto } from './dto/payout-security.dto.js';
+import { PayoutSecurityService } from './services/payout-security.service.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
@@ -26,6 +29,7 @@ export class WalletmoduleService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly providerService: ProviderService,
+    private readonly payoutSecurityService: PayoutSecurityService,
   ) {}
 
   /**
@@ -257,7 +261,7 @@ export class WalletmoduleService {
       throw new NotFoundException('Customer not found for this user');
     }
 
-    const wallets = await this.databaseService.wallet.findMany({
+    const wallet = await this.databaseService.wallet.findFirst({
       where: { customerId: customer.id },
       include: {
         customer: {
@@ -273,7 +277,11 @@ export class WalletmoduleService {
       },
     });
 
-    return wallets;
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found for this customer');
+    }
+
+    return wallet;
   }
 
   /**
@@ -417,7 +425,8 @@ export class WalletmoduleService {
   }
 
   /**
-   * Wallet payout (to external account)
+   * Wallet payout (to external account) - Legacy method (kept for backward compatibility)
+   * @deprecated Use initiatePayout and confirmPayout instead
    */
   async walletpayout(transferDto: FastWalletTransferDto) {
     const fromWallet = await this.databaseService.wallet.findFirst({
@@ -509,6 +518,172 @@ export class WalletmoduleService {
   }
 
   /**
+   * Initiate payout - Step 1: Validate request, send OTP
+   */
+  async initiatePayout(userId: string, initiateDto: InitiatePayoutDto) {
+    // Find wallet and verify ownership
+    const fromWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: initiateDto.fromWalletId },
+      include: {
+        customer: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+
+    if (!fromWallet) {
+      throw new NotFoundException('Source wallet not found');
+    }
+
+    // Verify wallet belongs to user
+    if (fromWallet.customer.userId !== userId) {
+      throw new UnauthorizedException('You do not have access to this wallet');
+    }
+
+    if (!fromWallet.virtualAccountNumber) {
+      throw new BadRequestException('Wallet does not have a virtual account number');
+    }
+
+    // Check sufficient balance
+    if (Number(fromWallet.availableBalance) < initiateDto.amount) {
+      throw new BadRequestException('Insufficient balance');
+    }
+
+    // Get destination account name if not provided (via name enquiry)
+    let destinationAccountName = initiateDto.recipientName;
+    if (!destinationAccountName) {
+      try {
+        const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
+          initiateDto.bankCode,
+          initiateDto.toAccountNumber,
+        );
+        destinationAccountName = nameEnquiry.accountName;
+      } catch (error) {
+        this.logger.warn(`Name enquiry failed: ${error.message}. Proceeding without account name.`);
+        destinationAccountName = 'Unknown';
+      }
+    }
+
+    // Get source account name
+    const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
+      ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
+      : null;
+    const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
+      ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
+      : null;
+    const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
+
+    // Prepare payout data to store temporarily
+    const payoutData = {
+      fromWalletId: initiateDto.fromWalletId,
+      bankCode: initiateDto.bankCode,
+      toAccountNumber: initiateDto.toAccountNumber,
+      amount: initiateDto.amount,
+      description: initiateDto.description,
+      recipientName: destinationAccountName,
+      currencyId: initiateDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      sourceAccountName,
+      walletId: fromWallet.id,
+    };
+
+    // Store pending payout data
+    await this.payoutSecurityService.storePendingPayout(userId, payoutData);
+
+    // Generate and send OTP
+    await this.payoutSecurityService.generateAndSendOtp(userId);
+
+    return {
+      success: true,
+      message: 'OTP sent to your email. Please confirm the payout with the OTP and your PIN.',
+      expiresIn: '10 minutes',
+    };
+  }
+
+  /**
+   * Confirm payout - Step 2: Verify OTP and PIN, execute payout
+   */
+  async confirmPayout(userId: string, otp: string, pin: string) {
+    // Verify OTP
+    await this.payoutSecurityService.verifyOtp(userId, otp);
+
+    // Verify PIN
+    const isPinValid = await this.payoutSecurityService.verifyPayoutPin(userId, pin);
+    if (!isPinValid) {
+      throw new UnauthorizedException('Invalid PIN');
+    }
+
+    // Retrieve pending payout data
+    const payoutData = await this.payoutSecurityService.getAndClearPendingPayout(userId);
+    if (!payoutData) {
+      throw new BadRequestException('No pending payout found. Please initiate a payout first.');
+    }
+
+    // Find wallet again to get latest balance
+    const fromWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: payoutData.fromWalletId },
+      include: {
+        customer: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+
+    if (!fromWallet) {
+      throw new NotFoundException('Source wallet not found');
+    }
+
+    if (!fromWallet.virtualAccountNumber) {
+      throw new BadRequestException('Wallet does not have a virtual account number');
+    }
+
+    // Re-check balance (in case it changed)
+    if (Number(fromWallet.availableBalance) < payoutData.amount) {
+      throw new BadRequestException('Insufficient balance');
+    }
+
+    // Generate transaction reference
+    const transactionReference = randomUUID();
+
+    // Execute inter-bank transfer with provider
+    const providerResponse = await this.providerService.interBankTransfer({
+      destinationBankCode: payoutData.bankCode as string,
+      destinationAccountNumber: payoutData.toAccountNumber as string,
+      destinationAccountName: (payoutData.recipientName as string) || 'Unknown',
+      sourceAccountNumber: fromWallet.virtualAccountNumber,
+      sourceAccountName: (payoutData.sourceAccountName as string) || 'Unknown',
+      remarks: (payoutData.description as string) || 'Wallet payout',
+      amount: payoutData.amount as number,
+      currencyId: payoutData.currencyId as string,
+      customerTransactionReference: transactionReference,
+    });
+
+    // Update wallet balance
+    const newAvailableBalance = Number(fromWallet.availableBalance) - payoutData.amount;
+    const newLedgerBalance = Number(fromWallet.ledgerBalance) - payoutData.amount;
+
+    await this.databaseService.wallet.update({
+      where: { id: fromWallet.id },
+      data: {
+        availableBalance: new Decimal(newAvailableBalance),
+        ledgerBalance: new Decimal(newLedgerBalance),
+      },
+    });
+
+    return {
+      success: true,
+      message: providerResponse.message || 'Payout completed successfully',
+      transactionRef: providerResponse.transactionRef,
+      fromWalletId: fromWallet.id,
+      toAccountNumber: payoutData.toAccountNumber,
+      amount: payoutData.amount,
+    };
+  }
+
+  /**
    * Get wallet transaction history
    */
   async getWalletHistory(
@@ -540,5 +715,12 @@ export class WalletmoduleService {
     );
 
     return history;
+  }
+
+  /**
+   * Set or update payout PIN for a user
+   */
+  async setPayoutPin(userId: string, pin: string): Promise<void> {
+    await this.payoutSecurityService.setPayoutPin(userId, pin);
   }
 }
