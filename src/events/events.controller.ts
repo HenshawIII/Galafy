@@ -96,6 +96,58 @@ export class EventsController {
     return this.eventsService.getUserEvents(userId, role);
   }
 
+  @Get(':id/participants')
+  @ApiOperation({ summary: 'Get all participants (users and their roles) for an event' })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Event participants retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        eventId: { type: 'string' },
+        totalParticipants: { type: 'number' },
+        participants: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              userId: { type: 'string' },
+              role: { type: 'string', enum: ['ATTENDEE', 'PERFORMER', 'CELEBRANT'] },
+              joinedAt: { type: 'string', format: 'date-time' },
+              user: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  email: { type: 'string' },
+                  firstName: { type: 'string', nullable: true },
+                  lastName: { type: 'string', nullable: true },
+                  username: { type: 'string', nullable: true },
+                  phone: { type: 'string', nullable: true },
+                },
+              },
+              wallet: {
+                type: 'object',
+                nullable: true,
+                properties: {
+                  id: { type: 'string' },
+                  virtualAccountNumber: { type: 'string', nullable: true },
+                  availableBalance: { type: 'number' },
+                  ledgerBalance: { type: 'number' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async getEventParticipants(@Param('id') id: string) {
+    return this.eventsService.getEventParticipants(id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single event by ID' })
   @ApiParam({ name: 'id', description: 'Event ID' })

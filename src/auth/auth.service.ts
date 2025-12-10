@@ -6,7 +6,6 @@ import { DatabaseService } from '../database/database.service.js';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { config } from 'dotenv';
-import { KycTier } from '../users/dto/create-user-dto.js';
 config();
 
 @Injectable()
@@ -164,7 +163,6 @@ export class AuthService {
             username: username,
             email: user.email,
             // No password for Google OAuth users
-            kycTier: KycTier.Tier_0,
             isVerified: true,
           }) as any;
         }

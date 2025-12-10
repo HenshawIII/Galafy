@@ -5,8 +5,8 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
   moduleFormat = "esm"
 }
 
@@ -14,8 +14,6 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
-
 
 // =====================
 // ENUMS
@@ -86,13 +84,11 @@ enum EventVisibility {
   PRIVATE
 }
 
-
 enum WebhookProcessingStatus {
   PENDING
   PROCESSED
   FAILED
 }
-
 
 // Only these three as requested
 enum EventRole {
@@ -120,53 +116,52 @@ enum KycRequestStatus {
 // =====================
 
 model User {
-  id                String               @id @default(uuid())
-  firstName         String?
-  lastName          String?
-  email             String               @unique
-  username          String?              @unique
-  password          String?
-  phone             String?              @unique
-  kycTier           KycTier              @default(Tier_0)
-  isVerified        Boolean              @default(false)
-  verificationCode  String?
-  passwordResetOtp  String?
-  refreshToken      String?              @unique
+  id                    String    @id @default(uuid())
+  firstName             String?
+  lastName              String?
+  email                 String    @unique
+  username              String?   @unique
+  password              String?
+  phone                 String?   @unique
+  isVerified            Boolean   @default(false)
+  verificationCode      String?
+  passwordResetOtp      String?
+  refreshToken          String?   @unique
   refreshTokenExpiresAt DateTime?
-  
-  // Payout security
-  payoutPin         String?              // Hashed PIN for payout verification
-  payoutOtp         String?              // Temporary OTP for payout confirmation
-  payoutOtpExpiresAt DateTime?           // OTP expiration time
-  pendingPayoutData Json?                // Temporary storage for pending payout details
-  
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
 
-  customer          Customer?
+  // Payout security
+  payoutPin          String? // Hashed PIN for payout verification
+  payoutOtp          String? // Temporary OTP for payout confirmation
+  payoutOtpExpiresAt DateTime? // OTP expiration time
+  pendingPayoutData  Json? // Temporary storage for pending payout details
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer            Customer?
   notificationDevices NotificationDevice[]
 
   // Events user participates in
   eventParticipants EventParticipant[]
   // Events this user hosts
-  hostedEvents      Event[]              @relation("UserHostedEvents")
+  hostedEvents      Event[]            @relation("UserHostedEvents")
 }
 
 model NotificationDevice {
-  id        String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
   deviceToken String  @unique
-  deviceType  String  // 'web', 'android', 'ios', etc.
+  deviceType  String // 'web', 'android', 'ios', etc.
   appVersion  String?
 
   isActive   Boolean  @default(true)
   lastSeenAt DateTime @default(now())
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =====================
@@ -174,31 +169,31 @@ model NotificationDevice {
 // =====================
 
 model Customer {
-  id                 String   @id @default(uuid())
+  id String @id @default(uuid())
 
   // Link to your app user
-  userId             String   @unique
-  user               User     @relation(fields: [userId], references: [id])
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
 
   // Provider-side identifiers
-  providerCustomerId String?  @unique
+  providerCustomerId String? @unique
   organizationId     String?
   customerTypeId     String?
   countryId          String?
 
   // Tier management
-  tier               KycTier  @default(Tier_0)
-  providerTierCode   Int      @default(0)
+  tier             KycTier @default(Tier_0)
+  providerTierCode Int     @default(0)
 
   // Personal data
-  firstName          String
-  lastName           String
-  middleName         String?
-  dob                DateTime?
-  city               String?
-  address            String?
-  mobileNumber       String?
-  emailAddress       String?
+  firstName           String
+  lastName            String
+  middleName          String?
+  dob                 DateTime?
+  city                String?
+  address             String?
+  mobileNumber        String?
+  emailAddress        String?
   isCorporateVerified Boolean?
   providerDateCreated DateTime?
 
@@ -208,16 +203,16 @@ model Customer {
   addressVerification AddressVerification?
 
   // Wallets
-  wallets             Wallet[]
+  wallets Wallet[]
 
   // Bank accounts
-  bankAccounts        BankAccount[]
+  bankAccounts BankAccount[]
 
   // KYC workflow requests
-  kycRequests         KycRequest[]
+  kycRequests KycRequest[]
 
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // --------------------
@@ -225,29 +220,29 @@ model Customer {
 // --------------------
 
 model NinVerification {
-  id                 Int      @id @default(autoincrement())
-  customerId         String   @unique
-  customer           Customer @relation(fields: [customerId], references: [id])
+  id         Int      @id @default(autoincrement())
+  customerId String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id])
 
-  providerCheckId    Int?
+  providerCheckId Int?
 
-  state              String?
-  status             String?
+  state  String?
+  status String?
 
-  ninCheckStatus     String?
-  firstnameMatch     Boolean?
-  lastnameMatch      Boolean?
+  ninCheckStatus String?
+  firstnameMatch Boolean?
+  lastnameMatch  Boolean?
 
-  ninBirthdate       DateTime?
-  ninGender          String?
-  ninPhone           String?
-  lgaOfResidence     String?
-  stateOfResidence   String?
- 
-  vNin               String?
+  ninBirthdate     DateTime?
+  ninGender        String?
+  ninPhone         String?
+  lgaOfResidence   String?
+  stateOfResidence String?
 
-  verifiedAt         DateTime @default(now())
-  createdAt          DateTime @default(now())
+  vNin String?
+
+  verifiedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 }
 
 // --------------------
@@ -255,19 +250,19 @@ model NinVerification {
 // --------------------
 
 model BvnVerification {
-  id                 Int      @id @default(autoincrement())
-  customerId         String   @unique
-  customer           Customer @relation(fields: [customerId], references: [id])
+  id         Int      @id @default(autoincrement())
+  customerId String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id])
 
-  kycCompleted       Boolean?
-  providerCheckId    Int?
+  kycCompleted    Boolean?
+  providerCheckId Int?
 
-  state              String?
-  status             String?
+  state  String?
+  status String?
 
-  bvnCheckStatus     String?
-  firstnameMatch     Boolean?
-  lastnameMatch      Boolean?
+  bvnCheckStatus String?
+  firstnameMatch Boolean?
+  lastnameMatch  Boolean?
 
   birthdate          DateTime?
   gender             String?
@@ -284,8 +279,8 @@ model BvnVerification {
   enrollmentBank     String?
   watchListed        String?
 
-  verifiedAt         DateTime @default(now())
-  createdAt          DateTime @default(now())
+  verifiedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 }
 
 // --------------------
@@ -293,22 +288,22 @@ model BvnVerification {
 // --------------------
 
 model AddressVerification {
-  id                 Int      @id @default(autoincrement())
-  customerId         String   @unique
-  customer           Customer @relation(fields: [customerId], references: [id])
+  id         Int      @id @default(autoincrement())
+  customerId String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id])
 
-  verified           Boolean
-  houseAddress       String?
-  houseOwner         String?
-  confidenceLevel    Int?
-  discoCode          String?
+  verified        Boolean
+  houseAddress    String?
+  houseOwner      String?
+  confidenceLevel Int?
+  discoCode       String?
 
-  providerStatus     String?
-  providerMessage    String?
-  providerTimestamp  DateTime?
+  providerStatus    String?
+  providerMessage   String?
+  providerTimestamp DateTime?
 
-  verifiedAt         DateTime @default(now())
-  createdAt          DateTime @default(now())
+  verifiedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 }
 
 // =====================
@@ -316,70 +311,70 @@ model AddressVerification {
 // =====================
 
 model Wallet {
-  id                     String   @id @default(uuid())
-  customerId             String
-  customer               Customer @relation(fields: [customerId], references: [id])
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
 
-  providerWalletId       String?  @unique
+  providerWalletId String? @unique
 
   walletGroupId          String?
   walletRestrictionId    String?
   walletClassificationId String?
-  currencyId             String   // provider's currency UUID
+  currencyId             String // provider's currency UUID
 
-  availableBalance       Decimal  @default(0)
-  ledgerBalance          Decimal  @default(0)
-  overdraft              Decimal? @default(0)
+  availableBalance Decimal  @default(0)
+  ledgerBalance    Decimal  @default(0)
+  overdraft        Decimal? @default(0)
 
-  isInternal             Boolean  @default(false)
-  isDefault              Boolean  @default(false)
+  isInternal Boolean @default(false)
+  isDefault  Boolean @default(false)
 
-  name                   String?
-  mobNum                 String?
+  name   String?
+  mobNum String?
 
-  virtualAccountNumber   String?
-  virtualBankCode        String?
-  virtualBankName        String?
+  virtualAccountNumber String?
+  virtualBankCode      String?
+  virtualBankName      String?
 
   // Relations
-  transactions           Transaction[]
-  spraysAsSprayer        Spray[]  @relation("SpraySprayerWallet")
-  spraysAsReceiver       Spray[]  @relation("SprayReceiverWallet")
-  fundings               FundingTransaction[]
-  payouts                PayoutTransaction[]
-  eventParticipants      EventParticipant[]
+  transactions      Transaction[]
+  spraysAsSprayer   Spray[]              @relation("SpraySprayerWallet")
+  spraysAsReceiver  Spray[]              @relation("SprayReceiverWallet")
+  fundings          FundingTransaction[]
+  payouts           PayoutTransaction[]
+  eventParticipants EventParticipant[]
 
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Transaction {
-  id          String               @id @default(uuid())
+  id String @id @default(uuid())
 
-  walletId    String
-  wallet      Wallet               @relation(fields: [walletId], references: [id])
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
 
-  type        TransactionType
-  direction   TransactionDirection
-  status      TransactionStatus    @default(PENDING)
+  type      TransactionType
+  direction TransactionDirection
+  status    TransactionStatus    @default(PENDING)
 
-  amount      Decimal
-  currencyId  String               // same as wallet.currencyId
+  amount     Decimal
+  currencyId String // same as wallet.currencyId
 
-  groupReference      String?
-  reference           String        @unique  // your internal reference
-  externalReference   String?                 // generic provider reference if needed
+  groupReference    String?
+  reference         String  @unique // your internal reference
+  externalReference String? // generic provider reference if needed
 
-  narration   String?
-  metadata    Json?
+  narration String?
+  metadata  Json?
 
   // One-to-one links to domain-specific transactions
   fundingTransaction FundingTransaction? @relation("FundingTransactionOnTransaction")
   payoutTransaction  PayoutTransaction?  @relation("PayoutTransactionOnTransaction")
   spray              Spray?              @relation("SprayOnTransaction")
 
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =====================
@@ -387,12 +382,12 @@ model Transaction {
 // =====================
 
 model Event {
-  id          String        @id @default(uuid())
-  code        String        @unique
-  
+  id   String @id @default(uuid())
+  code String @unique
+
   // Basic event info
   title       String
-  name        String        // Keep for backward compatibility, can be same as title
+  name        String // Keep for backward compatibility, can be same as title
   location    String
   category    String
   description String?
@@ -400,44 +395,44 @@ model Event {
   imagePath   String?
 
   // Event settings
-  goLiveInstantly Boolean    @default(false)
+  goLiveInstantly Boolean  @default(false)
   sprayGoal       Decimal?
   minSprayAmount  Decimal?
 
   // Scheduling
-  hostUserId  String
-  hostUser    User          @relation("UserHostedEvents", fields: [hostUserId], references: [id])
+  hostUserId String
+  hostUser   User   @relation("UserHostedEvents", fields: [hostUserId], references: [id])
 
-  status      EventStatus   @default(DRAFT)
-  startsAt    DateTime
-  endsAt      DateTime?
+  status   EventStatus @default(DRAFT)
+  startsAt DateTime
+  endsAt   DateTime?
 
   participants EventParticipant[]
   sprays       Spray[]
-  visibility EventVisibility @default(PUBLIC)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  visibility   EventVisibility    @default(PUBLIC)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 
   @@index([hostUserId])
   @@index([status, startsAt])
 }
 
 model EventParticipant {
-  id         String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  eventId    String
-  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
-  userId     String
-  user       User     @relation(fields: [userId], references: [id])
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  walletId   String?
-  wallet     Wallet?  @relation(fields: [walletId], references: [id])
+  walletId String?
+  wallet   Wallet? @relation(fields: [walletId], references: [id])
 
-  role       EventRole @default(ATTENDEE)
-  joinedAt   DateTime  @default(now())
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  role      EventRole @default(ATTENDEE)
+  joinedAt  DateTime  @default(now())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@unique([eventId, userId])
   @@index([eventId])
@@ -445,29 +440,29 @@ model EventParticipant {
 }
 
 model Spray {
-  id          String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  eventId     String?
-  event       Event?   @relation(fields: [eventId], references: [id])
+  eventId String?
+  event   Event?  @relation(fields: [eventId], references: [id])
 
-  sprayerWalletId  String
-  sprayerWallet    Wallet   @relation("SpraySprayerWallet", fields: [sprayerWalletId], references: [id])
+  sprayerWalletId String
+  sprayerWallet   Wallet @relation("SpraySprayerWallet", fields: [sprayerWalletId], references: [id])
 
   receiverWalletId String
-  receiverWallet   Wallet   @relation("SprayReceiverWallet", fields: [receiverWalletId], references: [id])
+  receiverWallet   Wallet @relation("SprayReceiverWallet", fields: [receiverWalletId], references: [id])
 
   // Link to ledger - transaction for the debit (from sprayer)
-  transactionId String?  @unique
+  transactionId String?      @unique
   transaction   Transaction? @relation("SprayOnTransaction", fields: [transactionId], references: [id])
 
   transactionGroupReference String? @unique
 
-  totalAmount  Decimal
-  note         String?
-  metadata     Json?
+  totalAmount Decimal
+  note        String?
+  metadata    Json?
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =====================
@@ -475,74 +470,74 @@ model Spray {
 // =====================
 
 model BankAccount {
-  id                    String      @id @default(uuid())
+  id String @id @default(uuid())
 
-  customerId            String
-  customer              Customer    @relation(fields: [customerId], references: [id])
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
 
-  accountName           String
-  accountNumber         String
-  bankCode              String      // e.g. "058"
-  bankName              String
+  accountName   String
+  accountNumber String
+  bankCode      String // e.g. "058"
+  bankName      String
 
-  isDefault             Boolean     @default(false)
-  isVerified            Boolean     @default(false)
+  isDefault             Boolean @default(false)
+  isVerified            Boolean @default(false)
   providerRecipientCode String?
 
-  payouts               PayoutTransaction[]
+  payouts PayoutTransaction[]
 
-  createdAt             DateTime    @default(now())
-  updatedAt             DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model FundingTransaction {
-  id            String          @id @default(uuid())
+  id String @id @default(uuid())
 
-  walletId      String
-  wallet        Wallet          @relation(fields: [walletId], references: [id])
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
 
-  amount        Decimal
-  fee           Decimal         @default(0)
+  amount Decimal
+  fee    Decimal @default(0)
 
-  channel       FundingChannel
-  status        FundingStatus   @default(PENDING)
+  channel FundingChannel
+  status  FundingStatus  @default(PENDING)
 
   // Link to ledger
-  transactionId String          @unique
-  transaction   Transaction     @relation("FundingTransactionOnTransaction", fields: [transactionId], references: [id])
+  transactionId String      @unique
+  transaction   Transaction @relation("FundingTransactionOnTransaction", fields: [transactionId], references: [id])
 
-  providerReference String?     @unique
+  providerReference String? @unique
   providerPayload   Json?
 
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model PayoutTransaction {
-  id            String        @id @default(uuid())
+  id String @id @default(uuid())
 
-  walletId      String
-  wallet        Wallet        @relation(fields: [walletId], references: [id])
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
 
   bankAccountId String
-  bankAccount   BankAccount   @relation(fields: [bankAccountId], references: [id])
+  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
 
-  amount        Decimal
-  fee           Decimal        @default(0)
+  amount Decimal
+  fee    Decimal @default(0)
 
-  status        PayoutStatus   @default(PENDING)
+  status PayoutStatus @default(PENDING)
 
   // Link to ledger
-  transactionId String         @unique
-  transaction   Transaction    @relation("PayoutTransactionOnTransaction", fields: [transactionId], references: [id])
+  transactionId String      @unique
+  transaction   Transaction @relation("PayoutTransactionOnTransaction", fields: [transactionId], references: [id])
 
   // Provider transactionRef
   providerTransactionRef String? @unique
 
-  providerPayload   Json?
+  providerPayload Json?
 
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([providerTransactionRef])
 }
@@ -552,17 +547,17 @@ model PayoutTransaction {
 // =====================
 
 model ProviderWebhookEvent {
-  id               String                   @id @default(uuid())
+  id String @id @default(uuid())
 
-  event            String                   // e.g. "payout"
+  event            String // e.g. "payout"
   paymentReference String?
   payload          Json
 
-  processingStatus WebhookProcessingStatus  @default(PENDING)
+  processingStatus WebhookProcessingStatus @default(PENDING)
   errorMessage     String?
 
-  createdAt        DateTime                 @default(now())
-  processedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
 }
 
 // =====================
@@ -570,35 +565,34 @@ model ProviderWebhookEvent {
 // =====================
 
 model Admin {
-  id        String    @id @default(uuid())
+  id String @id @default(uuid())
 
-  userId    String    @unique
- 
+  userId String @unique
 
-  role      AdminRole
-  isActive  Boolean   @default(true)
+  role     AdminRole
+  isActive Boolean   @default(true)
 
   kycRequests KycRequest[]
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
 }
 
 model KycRequest {
-  id            String           @id @default(uuid())
+  id String @id @default(uuid())
 
-  customerId    String
-  customer      Customer         @relation(fields: [customerId], references: [id])
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
 
   requestedTier KycTier
   status        KycRequestStatus @default(PENDING)
 
-  adminId       String?
-  admin         Admin?           @relation(fields: [adminId], references: [id])
+  adminId String?
+  admin   Admin?  @relation(fields: [adminId], references: [id])
 
-  reason        String?
-  decidedAt     DateTime?
+  reason    String?
+  decidedAt DateTime?
 
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

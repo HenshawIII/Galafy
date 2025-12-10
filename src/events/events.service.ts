@@ -32,20 +32,20 @@ export class EventsService {
    * Check if user has required KYC tier for a role
    */
   private async checkKycTierForRole(userId: string, role: EventRole): Promise<void> {
-    const user = await this.databaseService.user.findUnique({
-      where: { id: userId },
-      select: { kycTier: true },
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      select: { tier: true },
     });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
+    if (!customer) {
+      throw new NotFoundException('Customer not found for this user');
     }
 
     // CELEBRANT and PERFORMER require Tier_2 or higher
     if ((role === EventRole.CELEBRANT || role === EventRole.PERFORMER) && 
-        (user.kycTier === KycTier.Tier_0 || user.kycTier === KycTier.Tier_1)) {
+        (customer.tier === KycTier.Tier_0 || customer.tier === KycTier.Tier_1)) {
       throw new ForbiddenException(
-        `You need at least KYC Tier_2 to be a ${role}. Your current tier is ${user.kycTier}.`
+        `You need at least KYC Tier_2 to be a ${role}. Your current tier is ${customer.tier}.`
       );
     }
   }
@@ -55,20 +55,30 @@ export class EventsService {
    * Only users with Tier_2 or Tier_3 can create events
    */
   async createEvent(userId: string, createEventDto: CreateEventDto) {
-    // Verify user exists and check KYC tier
+    // Verify user exists
     const user = await this.databaseService.user.findUnique({
       where: { id: userId },
-      select: { id: true, kycTier: true },
+      select: { id: true },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
+    // Check KYC tier from customer table
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      select: { tier: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found for this user');
+    }
+
     // Only Tier_2 and Tier_3 users can create events
-    if (user.kycTier !== KycTier.Tier_2 && user.kycTier !== KycTier.Tier_3) {
+    if (customer.tier !== KycTier.Tier_2 && customer.tier !== KycTier.Tier_3) {
       throw new ForbiddenException(
-        `You need at least KYC Tier_2 to create events. Your current tier is ${user.kycTier}. Please complete your KYC verification to upgrade.`
+        `You need at least KYC Tier_2 to create events. Your current tier is ${customer.tier}. Please complete your KYC verification to upgrade.`
       );
     }
 
@@ -150,7 +160,7 @@ export class EventsService {
     });
 
     // Automatically add creator as CELEBRANT if they have Tier_2+
-    if (user.kycTier === KycTier.Tier_2 || user.kycTier === KycTier.Tier_3) {
+    if (customer.tier === KycTier.Tier_2 || customer.tier === KycTier.Tier_3) {
       await this.databaseService.eventParticipant.create({
         data: {
           eventId: event.id,
@@ -661,5 +671,74 @@ export class EventsService {
       userRole: p.role,
       joinedAt: p.joinedAt,
     }));
+  }
+
+  /**
+   * Get all participants (users and their roles) for a specific event
+   */
+  async getEventParticipants(eventId: string) {
+    // First verify the event exists
+    const event = await this.databaseService.event.findUnique({
+      where: { id: eventId },
+      select: { id: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    // Get all participants with their user details
+    const participants = await this.databaseService.eventParticipant.findMany({
+      where: { eventId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+            phone: true,
+          },
+        },
+        wallet: {
+          select: {
+            id: true,
+            virtualAccountNumber: true,
+            availableBalance: true,
+            ledgerBalance: true,
+          },
+        },
+      },
+      orderBy: [
+        { role: 'asc' }, // Order by role (CELEBRANT, PERFORMER, ATTENDEE)
+        { joinedAt: 'asc' }, // Then by join date
+      ],
+    });
+
+    return {
+      eventId,
+      totalParticipants: participants.length,
+      participants: participants.map(p => ({
+        id: p.id,
+        userId: p.userId,
+        role: p.role,
+        joinedAt: p.joinedAt,
+        user: {
+          id: p.user.id,
+          email: p.user.email,
+          firstName: p.user.firstName,
+          lastName: p.user.lastName,
+          username: p.user.username,
+          phone: p.user.phone,
+        },
+        wallet: p.wallet ? {
+          id: p.wallet.id,
+          virtualAccountNumber: p.wallet.virtualAccountNumber,
+          availableBalance: p.wallet.availableBalance,
+          ledgerBalance: p.wallet.ledgerBalance,
+        } : null,
+      })),
+    };
   }
 }

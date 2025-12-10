@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
-import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, KycTier } from './dto/create-user-dto.js';
+import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto } from './dto/create-user-dto.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import * as bcrypt from 'bcrypt';
@@ -65,7 +65,6 @@ export class UsersService {
         username: signupDto.username,
         password: hashedPassword,
         phone: signupDto.phone,
-        kycTier: signupDto.kycTier ?? KycTier.Tier_0, // Default to Tier_0 for new signups
         isVerified: false,
         verificationCode,
       },
@@ -340,7 +339,6 @@ export class UsersService {
       email: createUserDto.email,
       username: createUserDto.username,
       phone: createUserDto.phone,
-      kycTier: createUserDto.kycTier ?? KycTier.Tier_0,
       isVerified: createUserDto.isVerified ?? false,
     };
 

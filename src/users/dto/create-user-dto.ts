@@ -36,12 +36,6 @@ export class CreateUserDto {
   phone?: string;
 
   @IsOptional()
-  @IsEnum(KycTier, {
-    message: 'KYC Tier must be one of: Tier_0, Tier_1, Tier_2, Tier_3',
-  })
-  kycTier?: KycTier;
-
-  @IsOptional()
   @IsBoolean()
   isVerified?: boolean;
 }
@@ -79,13 +73,6 @@ export class SignupDto {
   @IsOptional()
   @IsString({ message: 'Phone must be a string' })
   phone?: string;
-
-  @ApiPropertyOptional({ enum: KycTier, example: KycTier.Tier_0, description: 'KYC Tier', default: KycTier.Tier_0 })
-  @IsOptional()
-  @IsEnum(KycTier, {
-    message: 'KYC Tier must be one of: Tier_0, Tier_1, Tier_2, Tier_3',
-  })
-  kycTier?: KycTier;
 }
 
 export class LoginDto {
