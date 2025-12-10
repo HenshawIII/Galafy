@@ -399,7 +399,7 @@ model Event {
   sprayGoal            Decimal?
   minSprayAmount        Decimal?
   enableLeaderboard    Boolean  @default(true)
-  anonSprayersAllowed  Boolean  @default(false)
+  anonSprayersAllowed  Boolean  @default(true)
   taggedPerformer      String?
 
   // Scheduling

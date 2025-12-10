@@ -125,7 +125,7 @@ export class EventsService {
         status: status,
         startsAt: startAt,
         enableLeaderboard: createEventDto.enableLeaderboard ?? true,
-        anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? false,
+        anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? true,
         taggedPerformer: createEventDto.taggedPerformer || null,
         visibility: createEventDto.visibility || EventVisibility.PUBLIC,
       },
@@ -161,24 +161,75 @@ export class EventsService {
       },
     });
 
-    // Automatically add creator as CELEBRANT if they have Tier_2+
-    if (customer.tier === KycTier.Tier_2 || customer.tier === KycTier.Tier_3) {
-      await this.databaseService.eventParticipant.create({
-        data: {
-          eventId: event.id,
-          userId: userId,
-          role: EventRole.CELEBRANT,
-        },
+    // Automatically add host user as CELEBRANT
+    // (Only Tier_2 and Tier_3 users can create events, so host is always eligible)
+    await this.databaseService.eventParticipant.create({
+      data: {
+        eventId: event.id,
+        userId: userId,
+        role: EventRole.CELEBRANT,
+      },
+    });
+
+    // If taggedPerformer is provided, add them as a participant with PERFORMER role
+    if (createEventDto.taggedPerformer) {
+      const performerIdentifier = createEventDto.taggedPerformer.trim();
+      const isEmail = performerIdentifier.includes('@');
+      
+      let performerUser;
+      if (isEmail) {
+        performerUser = await this.databaseService.user.findUnique({
+          where: { email: performerIdentifier },
+          select: { id: true },
+        });
+      } else {
+        performerUser = await this.databaseService.user.findUnique({
+          where: { username: performerIdentifier },
+          select: { id: true },
+        });
+      }
+
+      if (!performerUser) {
+        throw new NotFoundException(
+          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`
+        );
+      }
+
+      // Check if performer has required KYC tier
+      const performerCustomer = await this.databaseService.customer.findUnique({
+        where: { userId: performerUser.id },
+        select: { tier: true },
       });
-    } else {
-      // Otherwise add as ATTENDEE
-      await this.databaseService.eventParticipant.create({
-        data: {
-          eventId: event.id,
-          userId: userId,
-          role: EventRole.ATTENDEE,
-        },
-      });
+
+      if (!performerCustomer) {
+        throw new BadRequestException(
+          `Tagged performer (${performerIdentifier}) does not have a customer record. They need to complete KYC registration.`
+        );
+      }
+
+      if (performerCustomer.tier !== KycTier.Tier_2 && performerCustomer.tier !== KycTier.Tier_3) {
+        throw new ForbiddenException(
+          `Tagged performer (${performerIdentifier}) has KYC Tier ${performerCustomer.tier}. Performer role requires Tier_2 or Tier_3.`
+        );
+      }
+
+      // Add performer as participant (avoid duplicate if they're the creator)
+      if (performerUser.id !== userId) {
+        try {
+          await this.databaseService.eventParticipant.create({
+            data: {
+              eventId: event.id,
+              userId: performerUser.id,
+              role: EventRole.PERFORMER,
+            },
+          });
+        } catch (error: any) {
+          // If participant already exists, skip (shouldn't happen since we check userId !== userId)
+          if (error.code !== 'P2002') {
+            throw error;
+          }
+        }
+      }
     }
 
     // Return event with updated participants
