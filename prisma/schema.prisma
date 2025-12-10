@@ -395,9 +395,12 @@ model Event {
   imagePath   String?
 
   // Event settings
-  goLiveInstantly Boolean  @default(false)
-  sprayGoal       Decimal?
-  minSprayAmount  Decimal?
+  goLiveInstantly      Boolean  @default(false)
+  sprayGoal            Decimal?
+  minSprayAmount        Decimal?
+  enableLeaderboard    Boolean  @default(true)
+  anonSprayersAllowed  Boolean  @default(false)
+  taggedPerformer      String?
 
   // Scheduling
   hostUserId String
@@ -405,7 +408,6 @@ model Event {
 
   status   EventStatus @default(DRAFT)
   startsAt DateTime
-  endsAt   DateTime?
 
   participants EventParticipant[]
   sprays       Spray[]

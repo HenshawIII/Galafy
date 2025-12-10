@@ -64,10 +64,32 @@ export class CreateEventDto {
   @IsNotEmpty()
   startAt: string;
 
-  @ApiPropertyOptional({ description: 'Event end date and time (ISO 8601)', example: '2025-12-25T23:00:00Z' })
-  @IsDateString()
+  @ApiPropertyOptional({ 
+    description: 'Enable leaderboard for this event', 
+    example: true,
+    default: true 
+  })
+  @IsBoolean()
   @IsOptional()
-  endsAt?: string;
+  enableLeaderboard?: boolean;
+
+  @ApiPropertyOptional({ 
+    description: 'Allow anonymous sprayers', 
+    example: false,
+    default: false 
+  })
+  @IsBoolean()
+  @IsOptional()
+  anonSprayersAllowed?: boolean;
+
+  @ApiPropertyOptional({ 
+    description: 'Tagged performer (email or username)', 
+    example: 'performer@example.com' 
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  taggedPerformer?: string;
 
   @ApiPropertyOptional({ 
     description: 'Event visibility', 

@@ -26,6 +26,7 @@ import {
 import { EventsService } from './events.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
+import { VerifyPerformerDto } from './dto/verify-performer.dto.js';
 import { EventStatus, EventVisibility, EventRole } from '../../generated/prisma/enums.js';
 
 @ApiTags('Events')
@@ -239,5 +240,40 @@ export class EventsController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.eventsService.leaveEvent(id, userId);
+  }
+
+  @Post('verify-performer')
+  @ApiOperation({ summary: 'Verify if a user is eligible to be a performer (requires KYC Tier_2 or Tier_3)' })
+  @ApiBody({ type: VerifyPerformerDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Performer eligibility verified',
+    schema: {
+      type: 'object',
+      properties: {
+        eligible: { type: 'boolean', description: 'Whether the user is eligible to be a performer' },
+        reason: { type: 'string', description: 'Reason for eligibility status' },
+        user: {
+          type: 'object',
+          nullable: true,
+          properties: {
+            id: { type: 'string' },
+            email: { type: 'string' },
+            username: { type: 'string', nullable: true },
+          },
+        },
+        kycTier: { 
+          type: 'string', 
+          nullable: true,
+          enum: ['Tier_0', 'Tier_1', 'Tier_2', 'Tier_3'],
+          description: 'Current KYC tier of the user' 
+        },
+      },
+    },
+  })
+  async verifyPerformer(
+    @Body(ValidationPipe) verifyPerformerDto: VerifyPerformerDto,
+  ) {
+    return this.eventsService.verifyPerformerEligibility(verifyPerformerDto.identifier);
   }
 }

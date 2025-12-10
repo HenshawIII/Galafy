@@ -124,7 +124,9 @@ export class EventsService {
         hostUserId: userId,
         status: status,
         startsAt: startAt,
-        endsAt: createEventDto.endsAt ? new Date(createEventDto.endsAt) : null,
+        enableLeaderboard: createEventDto.enableLeaderboard ?? true,
+        anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? false,
+        taggedPerformer: createEventDto.taggedPerformer || null,
         visibility: createEventDto.visibility || EventVisibility.PUBLIC,
       },
       include: {
@@ -421,9 +423,9 @@ export class EventsService {
         : null;
     }
     if (dto.startAt !== undefined) updateData.startsAt = new Date(dto.startAt);
-    if (dto.endsAt !== undefined) {
-      updateData.endsAt = dto.endsAt !== null ? new Date(dto.endsAt) : null;
-    }
+    if (dto.enableLeaderboard !== undefined) updateData.enableLeaderboard = dto.enableLeaderboard;
+    if (dto.anonSprayersAllowed !== undefined) updateData.anonSprayersAllowed = dto.anonSprayersAllowed;
+    if (dto.taggedPerformer !== undefined) updateData.taggedPerformer = dto.taggedPerformer || null;
     if (dto.visibility !== undefined) updateData.visibility = dto.visibility;
     if (dto.status !== undefined) updateData.status = dto.status;
 
@@ -739,6 +741,72 @@ export class EventsService {
           ledgerBalance: p.wallet.ledgerBalance,
         } : null,
       })),
+    };
+  }
+
+  /**
+   * Verify if a user is eligible to be a performer
+   * Performer must have at least KYC Tier_2 or Tier_3
+   */
+  async verifyPerformerEligibility(identifier: string) {
+    // Determine if identifier is email or username
+    const isEmail = identifier.includes('@');
+    
+    let user;
+    if (isEmail) {
+      user = await this.databaseService.user.findUnique({
+        where: { email: identifier },
+        select: { id: true, email: true, username: true },
+      });
+    } else {
+      user = await this.databaseService.user.findUnique({
+        where: { username: identifier },
+        select: { id: true, email: true, username: true },
+      });
+    }
+
+    if (!user) {
+      return {
+        eligible: false,
+        reason: 'User not found',
+        user: null,
+        kycTier: null,
+      };
+    }
+
+    // Get customer to check KYC tier
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId: user.id },
+      select: { tier: true },
+    });
+
+    if (!customer) {
+      return {
+        eligible: false,
+        reason: 'Customer record not found. User needs to complete KYC registration.',
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+        },
+        kycTier: null,
+      };
+    }
+
+    // Check if tier is Tier_2 or Tier_3
+    const isEligible = customer.tier === KycTier.Tier_2 || customer.tier === KycTier.Tier_3;
+
+    return {
+      eligible: isEligible,
+      reason: isEligible 
+        ? 'User is eligible to be a performer' 
+        : `User has KYC Tier ${customer.tier}. Performer role requires Tier_2 or Tier_3.`,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+      },
+      kycTier: customer.tier,
     };
   }
 }
