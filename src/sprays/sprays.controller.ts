@@ -37,7 +37,7 @@ export class SpraysController {
       'Creates a spray transaction within a LIVE event. Requires Idempotency-Key header to prevent duplicate charges.',
   })
   @ApiHeader({
-    name: 'Idempotency-Key',
+    name: 'idempotency-key',
     description: 'UUID for idempotency. Required to prevent duplicate charges.',
     required: true,
     example: '550e8400-e29b-41d4-a716-446655440000',

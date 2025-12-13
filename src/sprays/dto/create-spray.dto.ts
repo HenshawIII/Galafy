@@ -1,20 +1,18 @@
 import { IsString, IsOptional, IsNotEmpty, IsDecimal, Min, ValidateIf } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, ApiHideProperty } from '@nestjs/swagger';
 
 export class CreateSprayDto {
-  @ApiPropertyOptional({
-    description: 'User ID of the receiver (alternative to receiverParticipantId)',
+  @ApiProperty({
+    description: 'User ID of the receiver',
     example: 'uuid-of-receiver-user',
+    required: true,
   })
   @IsOptional()
   @IsString()
   @IsNotEmpty()
   receiverUserId?: string;
 
-  @ApiPropertyOptional({
-    description: 'Event participant ID of the receiver (alternative to receiverUserId)',
-    example: 'uuid-of-receiver-participant',
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsString()
   @IsNotEmpty()
