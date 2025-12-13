@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
@@ -13,6 +14,8 @@ import { Decimal } from '@prisma/client/runtime/library';
 
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(private readonly databaseService: DatabaseService) {}
 
   /**
@@ -858,6 +861,118 @@ export class EventsService {
         username: user.username,
       },
       kycTier: customer.tier,
+    };
+  }
+
+  /**
+   * Get leaderboard for an event
+   * Returns aggregated sprays per user, sorted by total amount descending
+   */
+  async getEventLeaderboard(eventId: string) {
+    // Verify event exists
+    const event = await this.databaseService.event.findUnique({
+      where: { id: eventId },
+      select: { id: true, title: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+
+    // Get all sprays for this event with receiver wallet and user info
+    const sprays = await this.databaseService.spray.findMany({
+      where: { eventId },
+      include: {
+        receiverWallet: {
+          include: {
+            customer: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    username: true,
+                    email: true,
+                    firstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Group by receiver and sum amounts
+    const leaderboardMap = new Map<
+      string,
+      {
+        userId: string;
+        username: string | null;
+        email: string;
+        firstName: string | null;
+        lastName: string | null;
+        totalAmount: Decimal;
+        sprayCount: number;
+      }
+    >();
+
+    for (const spray of sprays) {
+      const receiverWallet = spray.receiverWallet;
+      const customer = receiverWallet.customer;
+      const user = customer.user;
+
+      if (!user) {
+        this.logger.warn(`User not found for receiver wallet ${receiverWallet.id}`);
+        continue;
+      }
+
+      const userId = user.id;
+      const existing = leaderboardMap.get(userId);
+
+      if (existing) {
+        existing.totalAmount = existing.totalAmount.plus(spray.totalAmount);
+        existing.sprayCount += 1;
+      } else {
+        leaderboardMap.set(userId, {
+          userId: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          totalAmount: spray.totalAmount,
+          sprayCount: 1,
+        });
+      }
+    }
+
+    // Convert to array and sort by total amount descending
+    const leaderboard = Array.from(leaderboardMap.values())
+      .map((entry) => ({
+        userId: entry.userId,
+        username: entry.username,
+        email: entry.email,
+        firstName: entry.firstName,
+        lastName: entry.lastName,
+        totalAmount: entry.totalAmount.toString(),
+        sprayCount: entry.sprayCount,
+        rank: 0, // Will be set after sorting
+      }))
+      .sort((a, b) => {
+        const amountA = new Decimal(a.totalAmount);
+        const amountB = new Decimal(b.totalAmount);
+        return amountB.comparedTo(amountA); // Descending order
+      })
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1,
+      }));
+
+    return {
+      eventId: event.id,
+      eventTitle: event.title,
+      leaderboard,
+      totalParticipants: leaderboard.length,
     };
   }
 }

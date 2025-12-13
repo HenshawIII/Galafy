@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module.js';
 import {config} from 'dotenv';
 config();
@@ -9,6 +10,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     rawBody: true, // Enable raw body for webhook signature verification
   });
+
+  // Configure Socket.IO adapter for WebSocket support
+  app.useWebSocketAdapter(new IoAdapter(app));
   
   // Enable CORS for mobile apps (allow all origins)
   app.enableCors({
@@ -46,6 +50,7 @@ async function bootstrap() {
     .addTag('wallets', 'Wallet management endpoints')
     .addTag('payments', 'Payment and payout endpoints')
     .addTag('notifications', 'Notification management endpoints')
+    .addTag('sprays', 'Live spray  endpoints for events')
     .addBearerAuth(
       {
         type: 'http',
@@ -64,5 +69,6 @@ async function bootstrap() {
   
   console.log(`Application is running on: ${baseUrl}/api`);
   console.log(`Swagger documentation available at: ${baseUrl}/api/docs`);
+  console.log(`WebSocket server available at: ws://localhost:${port}/live`);
 }
 bootstrap();

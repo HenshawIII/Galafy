@@ -276,4 +276,51 @@ export class EventsController {
   ) {
     return this.eventsService.verifyPerformerEligibility(verifyPerformerDto.identifier);
   }
+
+  @Get(':id/leaderboard')
+  @ApiOperation({
+    summary: 'Get event leaderboard',
+    description:
+      'Returns aggregated sprays per user in an event, sorted by total amount received in descending order.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Event ID',
+    type: String,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Leaderboard retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        eventId: { type: 'string' },
+        eventTitle: { type: 'string' },
+        totalParticipants: { type: 'number' },
+        leaderboard: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              rank: { type: 'number', description: 'Rank position (1-based)' },
+              userId: { type: 'string' },
+              username: { type: 'string', nullable: true },
+              email: { type: 'string' },
+              firstName: { type: 'string', nullable: true },
+              lastName: { type: 'string', nullable: true },
+              totalAmount: { type: 'string', description: 'Total amount received as decimal string' },
+              sprayCount: { type: 'number', description: 'Number of sprays received' },
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Event not found',
+  })
+  async getEventLeaderboard(@Param('id') eventId: string) {
+    return this.eventsService.getEventLeaderboard(eventId);
+  }
 }

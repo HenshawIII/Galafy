@@ -13,13 +13,15 @@ import { PaymentsModule } from './payments/payments.module.js';
 import { ProviderModule } from './provider/provider.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { EventsModule } from './events/events.module.js';
+import { LiveModule } from './live/live.module.js';
+import { SpraysModule } from './sprays/sprays.module.js';
 
 @Module({
   imports: [UsersModule, DatabaseModule, ThrottlerModule.forRoot([{
     name: 'short',
     ttl: 60000,
     limit: 5,
-  }]), AuthModule, NotificationsModule, CustomerKycModule, WalletmoduleModule, PaymentsModule, ProviderModule, AdminModule, EventsModule],
+  }]), AuthModule, NotificationsModule, CustomerKycModule, WalletmoduleModule, PaymentsModule, ProviderModule, AdminModule, EventsModule, LiveModule, SpraysModule],
   controllers: [AppController],
   providers: [AppService, {
     provide: APP_GUARD,
