@@ -42,7 +42,10 @@ export class CreateEventDto {
   @IsOptional()
   imagePath?: string;
 
-  @ApiProperty({ description: 'Go live instantly (true) or schedule for later (false)', example: false })
+  @ApiProperty({ 
+    description: 'Go live instantly (true) or schedule for later (false). When false, event status will be SCHEDULED. When true, status will be LIVE.', 
+    example: false 
+  })
   @IsBoolean()
   @IsNotEmpty()
   goLiveInstantly: boolean;
