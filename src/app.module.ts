@@ -4,6 +4,7 @@ import { AppService } from './app.service.js';
 import { UsersModule } from './users/users.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import {APP_GUARD} from '@nestjs/core';
 import { AuthModule } from './auth/auth.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
@@ -17,11 +18,26 @@ import { LiveModule } from './live/live.module.js';
 import { SpraysModule } from './sprays/sprays.module.js';
 
 @Module({
-  imports: [UsersModule, DatabaseModule, ThrottlerModule.forRoot([{
-    name: 'short',
-    ttl: 60000,
-    limit: 5,
-  }]), AuthModule, NotificationsModule, CustomerKycModule, WalletmoduleModule, PaymentsModule, ProviderModule, AdminModule, EventsModule, LiveModule, SpraysModule],
+  imports: [
+    ScheduleModule.forRoot(), // Enable scheduled tasks
+    UsersModule, 
+    DatabaseModule, 
+    ThrottlerModule.forRoot([{
+      name: 'short',
+      ttl: 60000,
+      limit: 5,
+    }]), 
+    AuthModule, 
+    NotificationsModule, 
+    CustomerKycModule, 
+    WalletmoduleModule, 
+    PaymentsModule, 
+    ProviderModule, 
+    AdminModule, 
+    EventsModule, 
+    LiveModule, 
+    SpraysModule
+  ],
   controllers: [AppController],
   providers: [AppService, {
     provide: APP_GUARD,
