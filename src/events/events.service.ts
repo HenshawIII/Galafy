@@ -166,11 +166,40 @@ export class EventsService {
 
     // Automatically add host user as CELEBRANT
     // (Only Tier_2 and Tier_3 users can create events, so host is always eligible)
+    // Get host's default wallet for receiving sprays
+    let hostWalletId: string | null = null;
+    const hostCustomer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      include: {
+        wallets: {
+          where: { isDefault: true },
+          take: 1,
+        },
+      },
+    });
+
+    if (hostCustomer && hostCustomer.wallets && hostCustomer.wallets.length > 0) {
+      hostWalletId = hostCustomer.wallets[0].id;
+    } else {
+      // If no default wallet, try to get any wallet
+      const anyWallet = await this.databaseService.wallet.findFirst({
+        where: {
+          customer: {
+            userId,
+          },
+        },
+      });
+      if (anyWallet) {
+        hostWalletId = anyWallet.id;
+      }
+    }
+
     await this.databaseService.eventParticipant.create({
       data: {
         eventId: event.id,
         userId: userId,
         role: EventRole.CELEBRANT,
+        walletId: hostWalletId,
       },
     });
 
@@ -219,11 +248,40 @@ export class EventsService {
       // Add performer as participant (avoid duplicate if they're the creator)
       if (performerUser.id !== userId) {
         try {
+          // Get performer's default wallet for receiving sprays
+          let performerWalletId: string | null = null;
+          const performerCustomer = await this.databaseService.customer.findUnique({
+            where: { userId: performerUser.id },
+            include: {
+              wallets: {
+                where: { isDefault: true },
+                take: 1,
+              },
+            },
+          });
+
+          if (performerCustomer && performerCustomer.wallets && performerCustomer.wallets.length > 0) {
+            performerWalletId = performerCustomer.wallets[0].id;
+          } else {
+            // If no default wallet, try to get any wallet
+            const anyWallet = await this.databaseService.wallet.findFirst({
+              where: {
+                customer: {
+                  userId: performerUser.id,
+                },
+              },
+            });
+            if (anyWallet) {
+              performerWalletId = anyWallet.id;
+            }
+          }
+
           await this.databaseService.eventParticipant.create({
             data: {
               eventId: event.id,
               userId: performerUser.id,
               role: EventRole.PERFORMER,
+              walletId: performerWalletId,
             },
           });
         } catch (error: any) {
@@ -703,15 +761,52 @@ export class EventsService {
       throw new ConflictException('You are already a participant in this event');
     }
 
-    // Validate wallet if provided
-    if (joinEventDto.walletId) {
+    // Determine wallet to use
+    let walletIdToUse: string | null = joinEventDto.walletId || null;
+
+    // For CELEBRANT and PERFORMER roles, automatically fetch default wallet if not provided
+    // They need a wallet to receive sprays
+    if (!walletIdToUse && (joinEventDto.role === EventRole.CELEBRANT || joinEventDto.role === EventRole.PERFORMER)) {
+      const customer = await this.databaseService.customer.findUnique({
+        where: { userId },
+        include: {
+          wallets: {
+            where: { isDefault: true },
+            take: 1,
+          },
+        },
+      });
+
+      if (customer && customer.wallets && customer.wallets.length > 0) {
+        walletIdToUse = customer.wallets[0].id;
+        this.logger.log(`Auto-assigned default wallet ${walletIdToUse} to ${joinEventDto.role} ${userId}`);
+      } else {
+        // If no default wallet, try to get any wallet
+        const anyWallet = await this.databaseService.wallet.findFirst({
+          where: {
+            customer: {
+              userId,
+            },
+          },
+        });
+        if (anyWallet) {
+          walletIdToUse = anyWallet.id;
+          this.logger.log(`Auto-assigned wallet ${walletIdToUse} to ${joinEventDto.role} ${userId}`);
+        } else {
+          this.logger.warn(`No wallet found for ${joinEventDto.role} ${userId}. They may not be able to receive sprays.`);
+        }
+      }
+    }
+
+    // Validate wallet if provided or auto-assigned
+    if (walletIdToUse) {
       const wallet = await this.databaseService.wallet.findUnique({
-        where: { id: joinEventDto.walletId },
+        where: { id: walletIdToUse },
         include: { customer: true },
       });
 
       if (!wallet) {
-        throw new NotFoundException(`Wallet with ID ${joinEventDto.walletId} not found`);
+        throw new NotFoundException(`Wallet with ID ${walletIdToUse} not found`);
       }
 
       // Verify wallet belongs to user
@@ -726,7 +821,7 @@ export class EventsService {
         eventId,
         userId,
         role: joinEventDto.role,
-        walletId: joinEventDto.walletId || null,
+        walletId: walletIdToUse,
       },
       include: {
         user: {
