@@ -134,6 +134,11 @@ export class SpraysService {
         where: { id: createSprayDto.receiverParticipantId },
         include: {
           wallet: true,
+          user: {
+            select: {
+              id: true,
+            },
+          },
         },
       });
 
@@ -152,6 +157,11 @@ export class SpraysService {
         },
         include: {
           wallet: true,
+          user: {
+            select: {
+              id: true,
+            },
+          },
         },
       });
 
@@ -389,18 +399,45 @@ export class SpraysService {
     // Compute event totals
     const eventTotals = await this.computeEventTotals(eventId);
 
+    // Fetch sprayer and receiver user details for the WebSocket event
+    const sprayerUser = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        profilePicture: true,
+      },
+    });
+
+    const receiverUser = await this.databaseService.user.findUnique({
+      where: { id: receiverParticipant.userId },
+      select: {
+        id: true,
+        username: true,
+        profilePicture: true,
+      },
+    });
+
     // Emit WebSocket events AFTER transaction commits
     try {
-      // Emit to event room
+      // Emit to event room with full user details
       this.liveGateway.emitSprayCreated(eventId, {
         eventId,
         spray: {
           id: result.spray.id,
-          amount: result.spray.totalAmount.toString(),
+          totalAmount: result.spray.totalAmount.toString(),
           note: result.spray.note,
           createdAt: result.spray.createdAt,
-          sprayerWalletId: result.spray.sprayerWalletId,
-          receiverWalletId: result.spray.receiverWalletId,
+          sprayer: {
+            id: sprayerUser?.id || userId,
+            username: sprayerUser?.username || null,
+            profilePicture: sprayerUser?.profilePicture || null,
+          },
+          receiver: {
+            id: receiverUser?.id || receiverParticipant.userId,
+            username: receiverUser?.username || null,
+            profilePicture: receiverUser?.profilePicture || null,
+          },
         },
         eventTotals: {
           totalAmount: eventTotals.totalAmount.toString(),

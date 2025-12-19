@@ -305,10 +305,54 @@ export class EventsService {
               username: true,
             },
           },
-          _count: {
+          participants: {
             select: {
-              participants: true,
-              sprays: true,
+              id: true,
+              role: true,
+              user: {
+                select: {
+                  id: true,
+                  username: true,
+                  profilePicture: true,
+                },
+              },
+            },
+          },
+          sprays: {
+            include: {
+              sprayerWallet: {
+                include: {
+                  customer: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                          username: true,
+                          profilePicture: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              receiverWallet: {
+                include: {
+                  customer: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                          username: true,
+                          profilePicture: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: {
+              createdAt: 'desc',
             },
           },
         },
@@ -321,8 +365,61 @@ export class EventsService {
       this.databaseService.event.count({ where }),
     ]);
 
+    // Transform events to include formatted participants, sprays, and accumulated spray total
+    const transformedEvents = events.map((event: any) => {
+      // Format participants
+      const participants = (event.participants || []).map((participant: any) => ({
+        id: participant.id,
+        role: participant.role,
+        userId: participant.user.id,
+        username: participant.user.username,
+        profilePicture: participant.user.profilePicture,
+      }));
+
+      // Format sprays with sprayer and receiver info
+      const sprays = (event.sprays || [])
+        .filter((spray: any) => 
+          spray.sprayerWallet?.customer?.user && 
+          spray.receiverWallet?.customer?.user
+        )
+        .map((spray: any) => ({
+          id: spray.id,
+          totalAmount: spray.totalAmount.toString(),
+          note: spray.note,
+          createdAt: spray.createdAt,
+          updatedAt: spray.updatedAt,
+          sprayer: {
+            id: spray.sprayerWallet.customer.user.id,
+            username: spray.sprayerWallet.customer.user.username,
+            profilePicture: spray.sprayerWallet.customer.user.profilePicture,
+          },
+          receiver: {
+            id: spray.receiverWallet.customer.user.id,
+            username: spray.receiverWallet.customer.user.username,
+            profilePicture: spray.receiverWallet.customer.user.profilePicture,
+          },
+        }));
+
+      // Calculate accumulated spray total
+      const accumulatedSprayTotal = (event.sprays || []).reduce((sum: Decimal, spray: any) => {
+        return sum.plus(spray.totalAmount);
+      }, new Decimal(0));
+
+      // Remove the raw participants and sprays from the event object
+      const { participants: _, sprays: __, ...eventWithoutRawData } = event;
+
+      return {
+        ...eventWithoutRawData,
+        participants,
+        sprays,
+        accumulatedSprayTotal: accumulatedSprayTotal.toString(),
+        participantCount: participants.length,
+        sprayCount: sprays.length,
+      };
+    });
+
     return {
-      events,
+      events: transformedEvents,
       pagination: {
         page,
         pageSize,

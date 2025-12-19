@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
+import { Decimal } from '@prisma/client/runtime/library';
 import { config } from 'dotenv';
 config();
 
@@ -127,10 +128,61 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         return;
       }
 
-      // Lightweight check: verify event exists
+      // Fetch event with participants and sprays
       const event = await this.databaseService.event.findUnique({
         where: { id: eventId },
-        select: { id: true, status: true },
+        include: {
+          participants: {
+            select: {
+              id: true,
+              role: true,
+              user: {
+                select: {
+                  id: true,
+                  username: true,
+                  profilePicture: true,
+                },
+              },
+            },
+          },
+          sprays: {
+            include: {
+              sprayerWallet: {
+                include: {
+                  customer: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                          username: true,
+                          profilePicture: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              receiverWallet: {
+                include: {
+                  customer: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                          username: true,
+                          profilePicture: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: {
+              createdAt: 'desc',
+            },
+          },
+        },
       });
 
       if (!event) {
@@ -138,12 +190,59 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         return;
       }
 
+      // Format participants
+      const participants = (event.participants || []).map((participant: any) => ({
+        id: participant.id,
+        role: participant.role,
+        userId: participant.user.id,
+        username: participant.user.username,
+        profilePicture: participant.user.profilePicture,
+      }));
+
+      // Format sprays with sprayer and receiver info
+      const sprays = (event.sprays || [])
+        .filter((spray: any) => 
+          spray.sprayerWallet?.customer?.user && 
+          spray.receiverWallet?.customer?.user
+        )
+        .map((spray: any) => ({
+          id: spray.id,
+          totalAmount: spray.totalAmount.toString(),
+          note: spray.note,
+          createdAt: spray.createdAt,
+          updatedAt: spray.updatedAt,
+          sprayer: {
+            id: spray.sprayerWallet.customer.user.id,
+            username: spray.sprayerWallet.customer.user.username,
+            profilePicture: spray.sprayerWallet.customer.user.profilePicture,
+          },
+          receiver: {
+            id: spray.receiverWallet.customer.user.id,
+            username: spray.receiverWallet.customer.user.username,
+            profilePicture: spray.receiverWallet.customer.user.profilePicture,
+          },
+        }));
+
+      // Calculate accumulated spray total
+      const accumulatedSprayTotal = (event.sprays || []).reduce((sum: Decimal, spray: any) => {
+        return sum.plus(spray.totalAmount);
+      }, new Decimal(0));
+
       // Join event room
       await client.join(`event:${eventId}`);
 
       this.logger.log(`User ${client.user.id} joined event room: event:${eventId}`);
 
-      client.emit('event.joined', { eventId });
+      // Return comprehensive event data
+      client.emit('event.joined', {
+        eventId: event.id,
+        eventStatus: event.status,
+        participantCount: participants.length,
+        sprayCount: sprays.length,
+        accumulatedSprayTotal: accumulatedSprayTotal.toString(),
+        participants,
+        sprays,
+      });
     } catch (error: any) {
       this.logger.error(`Error joining event: ${error.message}`);
       client.emit('error', { message: 'Failed to join event' });
@@ -177,11 +276,109 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   /**
+   * Handle reaction message from client
+   * Reactions are ephemeral and don't need to be stored in the database
+   */
+  @SubscribeMessage('event.reaction')
+  async handleReaction(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { eventId: string; reaction: string; targetUserId?: string },
+  ) {
+    if (!client.user) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    try {
+      const { eventId, reaction, targetUserId } = data;
+
+      if (!eventId || typeof eventId !== 'string') {
+        client.emit('error', { message: 'Invalid eventId' });
+        return;
+      }
+
+      if (!reaction || typeof reaction !== 'string') {
+        client.emit('error', { message: 'Invalid reaction' });
+        return;
+      }
+
+      // Validate reaction type (allowed emojis)
+      const allowedReactions = ['🔥', '❤️', '🎉', '😂', '💚', '👍', '👏', '🎊'];
+      if (!allowedReactions.includes(reaction)) {
+        client.emit('error', { message: 'Invalid reaction type' });
+        return;
+      }
+
+      // Verify user is a participant in the event
+      const participant = await this.databaseService.eventParticipant.findUnique({
+        where: {
+          eventId_userId: {
+            eventId,
+            userId: client.user.id,
+          },
+        },
+      });
+
+      if (!participant) {
+        client.emit('error', { message: 'You are not a participant in this event' });
+        return;
+      }
+
+      // Get user details for the reaction
+      const user = await this.databaseService.user.findUnique({
+        where: { id: client.user.id },
+        select: {
+          id: true,
+          username: true,
+          profilePicture: true,
+        },
+      });
+
+      // Broadcast reaction to all event subscribers
+      this.emitReaction(eventId, {
+        eventId,
+        reaction,
+        user: {
+          id: user?.id || client.user.id,
+          username: user?.username || null,
+          profilePicture: user?.profilePicture || null,
+        },
+        targetUserId: targetUserId || null, // If null, reaction is for the event in general
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.log(`User ${client.user.id} sent reaction ${reaction} in event:${eventId}`);
+    } catch (error: any) {
+      this.logger.error(`Error handling reaction: ${error.message}`);
+      client.emit('error', { message: 'Failed to send reaction' });
+    }
+  }
+
+  /**
    * Emit spray.created event to event room
    */
   emitSprayCreated(eventId: string, payload: any) {
     this.server.to(`event:${eventId}`).emit('spray.created', payload);
     this.logger.log(`Emitted spray.created to event:${eventId}`);
+  }
+
+  /**
+   * Emit reaction to event room
+   * Broadcasts reactions to all subscribers in the event
+   */
+  emitReaction(eventId: string, payload: {
+    eventId: string;
+    reaction: string;
+    user: {
+      id: string;
+      username: string | null;
+      profilePicture: string | null;
+    };
+    targetUserId?: string | null;
+    timestamp: string;
+  }) {
+    this.server.to(`event:${eventId}`).emit('event.reaction', payload);
+    this.logger.log(`Emitted reaction ${payload.reaction} to event:${eventId}`);
   }
 
   /**

@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards, Request, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
-import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto } from './dto/create-user-dto.js';
+import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Public } from '../auth/public.decorator.js';
@@ -97,6 +97,35 @@ export class UsersController {
   @ApiResponse({ status: 401, description: 'Invalid or expired OTP' })
   resetPassword(@Body(ValidationPipe) resetPasswordDto: ResetPasswordDto) {
     return this.usersService.resetPassword(resetPasswordDto);
+  }
+
+  @Patch('profile')
+  @ApiOperation({ summary: 'Update user profile (username and profilePicture)' })
+  @ApiBody({ type: UpdateUserProfileDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User profile updated successfully',
+    schema: {
+      example: {
+        id: 'uuid',
+        email: 'user@example.com',
+        username: 'newusername',
+        profilePicture: 'https://example.com/profile.jpg',
+        firstName: 'John',
+        lastName: 'Doe',
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({ status: 409, description: 'Username already taken' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  updateUserProfile(@Request() req: any, @Body(ValidationPipe) updateUserProfileDto: UpdateUserProfileDto) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.usersService.updateUserProfile(userId, updateUserProfileDto);
   }
 
   @Get(':id/details')

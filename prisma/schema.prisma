@@ -121,6 +121,7 @@ model User {
   lastName              String?
   email                 String    @unique
   username              String?   @unique
+  profilePicture        String?
   password              String?
   phone                 String?   @unique
   isVerified            Boolean   @default(false)

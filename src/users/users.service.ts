@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
-import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto } from './dto/create-user-dto.js';
+import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import * as bcrypt from 'bcrypt';
@@ -433,6 +433,51 @@ export class UsersService {
     return await this.databaseService.user.delete({
       where: { id },
     });
+  }
+
+  /**
+   * Update user profile (username and profilePicture)
+   * Only allows updating username and profilePicture fields
+   */
+  async updateUserProfile(userId: string, updateUserProfileDto: UpdateUserProfileDto) {
+    // Check if user exists
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    // Check if username is being updated and if it already exists
+    if (updateUserProfileDto.username && updateUserProfileDto.username !== user.username) {
+      const existingUsername = await this.databaseService.user.findUnique({
+        where: { username: updateUserProfileDto.username },
+      });
+
+      if (existingUsername) {
+        throw new ConflictException('Username already taken');
+      }
+    }
+
+    // Prepare update data (only include fields that are provided)
+    const updateData: any = {};
+    if (updateUserProfileDto.username !== undefined) {
+      updateData.username = updateUserProfileDto.username;
+    }
+    if (updateUserProfileDto.profilePicture !== undefined) {
+      updateData.profilePicture = updateUserProfileDto.profilePicture;
+    }
+
+    // Update user
+    const updatedUser = await this.databaseService.user.update({
+      where: { id: userId },
+      data: updateData,
+    });
+
+    // Remove sensitive data from response
+    const { password, refreshToken, refreshTokenExpiresAt, verificationCode, passwordResetOtp, ...userWithoutSensitiveData } = updatedUser;
+    return userWithoutSensitiveData;
   }
 
   /**

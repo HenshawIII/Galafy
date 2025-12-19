@@ -127,3 +127,15 @@ export class ResetPasswordDto {
   newPassword: string;
 }
 
+export class UpdateUserProfileDto {
+  @ApiPropertyOptional({ example: 'johndoe', description: 'Username' })
+  @IsOptional()
+  @IsString({ message: 'Username must be a string' })
+  username?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/profile.jpg', description: 'Profile picture URL' })
+  @IsOptional()
+  @IsString({ message: 'Profile picture must be a string (URL)' })
+  profilePicture?: string;
+}
+
