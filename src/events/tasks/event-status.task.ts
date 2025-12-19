@@ -14,11 +14,10 @@ export class EventStatusTask {
   constructor(private readonly databaseService: DatabaseService) {}
 
   /**
-   * Runs every minute to check for events that should go live
-   * Cron expression: '* * * * *' means every minute
+   * Runs every 15 minutes to check for events that should go live
    */
-  @Cron(CronExpression.EVERY_MINUTE)
-  async handleScheduledEvents() {
+  @Cron('*/15 * * * *')
+  async handleScheduledEvents(): Promise<void> {
     this.logger.debug('Checking for scheduled events that should go live...');
 
     const now = new Date();
@@ -65,4 +64,3 @@ export class EventStatusTask {
     }
   }
 }
-
