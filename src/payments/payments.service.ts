@@ -295,7 +295,6 @@ export class PaymentsService {
             accountName: transferDto.destinationAccountName,
             accountNumber: transferDto.destinationAccountNumber,
             bankCode: transferDto.destinationBankCode,
-            bankName: transferDto.destinationBankCode, // You might want to look this up
             isVerified: true, // Verified via name enquiry
           },
         });
