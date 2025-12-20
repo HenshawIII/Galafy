@@ -774,7 +774,7 @@ export class CustomerKycService {
     const results: any = {
       ninVerification: null,
       addressVerification: null,
-      bankNameEnquiry: null,
+      bankAccount: null,
       message: '',
     };
 
@@ -832,15 +832,47 @@ export class CustomerKycService {
       }
     }
 
-    // Step 3: Bank Account Name Enquiry (always perform)
+    // Step 3: Save Bank Account to database
     try {
-      results.bankNameEnquiry = await this.providerService.bankAccountNameEnquiry(
-        dto.bankCode,
-        dto.accountNumber,
-      );
-      results.message += 'Bank account name enquiry completed.';
+      // Check if bank account already exists for this customer with same account number
+      const existingBankAccount = await this.databaseService.bankAccount.findFirst({
+        where: {
+          customerId,
+          accountNumber: dto.accountNumber,
+          bankCode: dto.bankCode,
+        },
+      });
+
+      if (existingBankAccount) {
+        this.logger.log(`Bank account already exists for customer ${customerId}, updating...`);
+        results.bankAccount = await this.databaseService.bankAccount.update({
+          where: { id: existingBankAccount.id },
+          data: {
+            accountName: dto.accountName,
+            accountNumber: dto.accountNumber,
+            bankCode: dto.bankCode,
+          },
+        });
+        results.message += 'Bank account updated.';
+      } else {
+        // Check if customer has any bank accounts to determine if this should be default
+        const existingAccounts = await this.databaseService.bankAccount.findMany({
+          where: { customerId },
+        });
+
+        results.bankAccount = await this.databaseService.bankAccount.create({
+          data: {
+            customerId,
+            accountName: dto.accountName,
+            accountNumber: dto.accountNumber,
+            bankCode: dto.bankCode,
+            isDefault: existingAccounts.length === 0, // Set as default if this is the first account
+          },
+        });
+        results.message += 'Bank account saved.';
+      }
     } catch (error: any) {
-      throw new BadRequestException(`Bank account name enquiry failed: ${error.message}`);
+      throw new BadRequestException(`Failed to save bank account: ${error.message}`);
     }
 
     return results;

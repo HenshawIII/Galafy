@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPip
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
+import { UserSettingsDto, UpdateUserSettingsDto } from './dto/user-settings.dto.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Public } from '../auth/public.decorator.js';
@@ -136,6 +137,40 @@ export class UsersController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   getUserDetails(@Param('id') id: string) {
     return this.usersService.getUserDetails(id);
+  }
+
+  @Get('settings')
+  @ApiOperation({ summary: 'Get current user settings' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User settings retrieved successfully',
+    type: UserSettingsDto
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  getUserSettings(@Request() req: any) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.usersService.getUserSettings(userId);
+  }
+
+  @Patch('settings')
+  @ApiOperation({ summary: 'Update current user settings' })
+  @ApiBody({ type: UpdateUserSettingsDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User settings updated successfully',
+    type: UserSettingsDto
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  updateUserSettings(@Request() req: any, @Body(ValidationPipe) updateUserSettingsDto: UpdateUserSettingsDto) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.usersService.updateUserSettings(userId, updateUserSettingsDto);
   }
 
   // @Post()

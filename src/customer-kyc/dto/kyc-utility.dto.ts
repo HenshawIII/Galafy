@@ -74,15 +74,20 @@ export class UpgradeWithNinAndAddressDto {
   @IsNotEmpty({ message: 'Meter number is required' })
   meterNumber: string;
 
-  // Bank account name enquiry fields
-  @ApiProperty({ example: '058', description: 'Bank code for account name enquiry' })
+  // Bank account fields
+  @ApiProperty({ example: '058', description: 'Bank code' })
   @IsString({ message: 'Bank code must be a string' })
   @IsNotEmpty({ message: 'Bank code is required' })
   bankCode: string;
 
-  @ApiProperty({ example: '1234567890', description: 'Bank account number for name enquiry' })
+  @ApiProperty({ example: '1234567890', description: 'Bank account number' })
   @IsString({ message: 'Account number must be a string' })
   @IsNotEmpty({ message: 'Account number is required' })
   accountNumber: string;
+
+  @ApiProperty({ example: 'John Doe', description: 'Bank account name' })
+  @IsString({ message: 'Account name must be a string' })
+  @IsNotEmpty({ message: 'Account name is required' })
+  accountName: string;
 }
 

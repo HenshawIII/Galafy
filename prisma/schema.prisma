@@ -141,11 +141,33 @@ model User {
 
   customer            Customer?
   notificationDevices NotificationDevice[]
+  settings            UserSettings?
 
   // Events user participates in
   eventParticipants EventParticipant[]
   // Events this user hosts
   hostedEvents      Event[]            @relation("UserHostedEvents")
+}
+
+model UserSettings {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Privacy Settings
+  showOnLeaderboard  Boolean @default(false)
+  allowMentionsOrTags Boolean @default(true)
+  showOnlineStatus    Boolean @default(false)
+
+  // Notification Settings
+  pushNotifications   Boolean @default(true)
+  eventReminders      Boolean @default(true)
+  leaderboardUpdates  Boolean @default(false)
+  newFollowerAlerts   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model NotificationDevice {
@@ -481,7 +503,6 @@ model BankAccount {
   accountName   String
   accountNumber String
   bankCode      String // e.g. "058"
-  bankName      String
 
   isDefault             Boolean @default(false)
   isVerified            Boolean @default(false)

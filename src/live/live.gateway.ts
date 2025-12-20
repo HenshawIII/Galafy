@@ -233,6 +233,73 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
       this.logger.log(`User ${client.user.id} joined event room: event:${eventId}`);
 
+      // Fetch user's wallet balance
+      let userWallet: { walletId: string; availableBalance: string; ledgerBalance: string } | null = null;
+      try {
+        // First, try to get wallet from event participant
+        const participant = await this.databaseService.eventParticipant.findUnique({
+          where: {
+            eventId_userId: {
+              eventId,
+              userId: client.user.id,
+            },
+          },
+          include: {
+            wallet: {
+              select: {
+                id: true,
+                availableBalance: true,
+                ledgerBalance: true,
+              },
+            },
+          },
+        });
+
+        if (participant?.wallet) {
+          userWallet = {
+            walletId: participant.wallet.id,
+            availableBalance: participant.wallet.availableBalance.toString(),
+            ledgerBalance: participant.wallet.ledgerBalance.toString(),
+          };
+        } else {
+          // Fallback: get user's default wallet
+          const customer = await this.databaseService.customer.findUnique({
+            where: { userId: client.user.id },
+            include: {
+              wallets: {
+                where: { isDefault: true },
+                take: 1,
+                select: {
+                  id: true,
+                  availableBalance: true,
+                  ledgerBalance: true,
+                },
+              },
+            },
+          });
+
+          if (customer?.wallets && customer.wallets.length > 0) {
+            const defaultWallet = customer.wallets[0];
+            userWallet = {
+              walletId: defaultWallet.id,
+              availableBalance: defaultWallet.availableBalance.toString(),
+              ledgerBalance: defaultWallet.ledgerBalance.toString(),
+            };
+          }
+        }
+
+        // Emit wallet balance to user
+        if (userWallet) {
+          this.emitBalanceUpdate(client.user.id, {
+            walletId: userWallet.walletId,
+            availableBalance: userWallet.availableBalance,
+          });
+        }
+      } catch (walletError: any) {
+        // Log error but don't fail the join - wallet balance is optional
+        this.logger.warn(`Failed to fetch wallet balance for user ${client.user.id}: ${walletError.message}`);
+      }
+
       // Return comprehensive event data
       client.emit('event.joined', {
         eventId: event.id,

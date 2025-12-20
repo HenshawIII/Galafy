@@ -285,7 +285,7 @@ export class SpraysService {
       toWalletId: receiverWallet.virtualAccountNumber,
       amount: Number(amount),
       currencyId: sprayerWallet.currencyId,
-      description: createSprayDto.note || `Spray in event ${eventId}`,
+      description: createSprayDto.note || `Spray in event ${event.title }, EventId: ${eventId}`,
       reference: idempotencyKey,
     });
 
@@ -338,7 +338,7 @@ export class SpraysService {
             currencyId: lockedSprayerWallet.currencyId,
             reference: idempotencyKey, // Use idempotency key as reference
             groupReference,
-            narration: createSprayDto.note || `Spray in event ${eventId}`,
+            narration: createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`,
             metadata: {
               eventId,
               receiverWalletId: receiverWallet.id,
@@ -358,7 +358,7 @@ export class SpraysService {
             currencyId: receiverWallet.currencyId,
             reference: `SPRAY-CREDIT-${randomUUID()}`,
             groupReference,
-            narration: createSprayDto.note || `Spray received in event ${eventId}`,
+            narration: createSprayDto.note || `Spray received in event ${event.title}, EventId: ${eventId}`,
             metadata: {
               eventId,
               sprayerWalletId: sprayerWallet.id,

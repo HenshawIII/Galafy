@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
+import { UserSettingsDto, UpdateUserSettingsDto } from './dto/user-settings.dto.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import * as bcrypt from 'bcrypt';
@@ -67,6 +68,20 @@ export class UsersService {
         phone: signupDto.phone,
         isVerified: false,
         verificationCode,
+      },
+    });
+
+    // Create default user settings for new user
+    await this.databaseService.userSettings.create({
+      data: {
+        userId: user.id,
+        showOnLeaderboard: false,
+        allowMentionsOrTags: true,
+        showOnlineStatus: false,
+        pushNotifications: true,
+        eventReminders: true,
+        leaderboardUpdates: false,
+        newFollowerAlerts: false,
       },
     });
 
@@ -352,6 +367,20 @@ export class UsersService {
       data,
     });
 
+    // Create default user settings for new user
+    await this.databaseService.userSettings.create({
+      data: {
+        userId: user.id,
+        showOnLeaderboard: false,
+        allowMentionsOrTags: true,
+        showOnlineStatus: false,
+        pushNotifications: true,
+        eventReminders: true,
+        leaderboardUpdates: false,
+        newFollowerAlerts: false,
+      },
+    });
+
     // Remove password from response
     const { password, ...userWithoutPassword } = user;
     return userWithoutPassword;
@@ -484,7 +513,7 @@ export class UsersService {
    * Get user details with customer information and KYC status
    */
   async getUserDetails(userId: string) {
-    // Find user with customer relation including wallets and bank accounts
+    // Find user with customer relation including wallets, bank accounts, and settings
     const user = await this.databaseService.user.findUnique({
       where: { id: userId },
       include: {
@@ -494,6 +523,7 @@ export class UsersService {
             bankAccounts: true,
           },
         },
+        settings: true,
       },
     });
 
@@ -529,11 +559,130 @@ export class UsersService {
       }
     }
 
+    // Get user settings, create defaults if they don't exist
+    let settings: UserSettingsDto | null = null;
+    if (user.settings) {
+      settings = {
+        showOnLeaderboard: user.settings.showOnLeaderboard,
+        allowMentionsOrTags: user.settings.allowMentionsOrTags,
+        showOnlineStatus: user.settings.showOnlineStatus,
+        pushNotifications: user.settings.pushNotifications,
+        eventReminders: user.settings.eventReminders,
+        leaderboardUpdates: user.settings.leaderboardUpdates,
+        newFollowerAlerts: user.settings.newFollowerAlerts,
+      };
+    } else {
+      // Create default settings if they don't exist
+      const defaultSettings = await this.databaseService.userSettings.create({
+        data: {
+          userId: user.id,
+          showOnLeaderboard: false,
+          allowMentionsOrTags: true,
+          showOnlineStatus: false,
+          pushNotifications: true,
+          eventReminders: true,
+          leaderboardUpdates: false,
+          newFollowerAlerts: false,
+        },
+      });
+      settings = {
+        showOnLeaderboard: defaultSettings.showOnLeaderboard,
+        allowMentionsOrTags: defaultSettings.allowMentionsOrTags,
+        showOnlineStatus: defaultSettings.showOnlineStatus,
+        pushNotifications: defaultSettings.pushNotifications,
+        eventReminders: defaultSettings.eventReminders,
+        leaderboardUpdates: defaultSettings.leaderboardUpdates,
+        newFollowerAlerts: defaultSettings.newFollowerAlerts,
+      };
+    }
+
     return {
       ...customerDetails,
       kycStatus,
       wallets: customer.wallets || [],
       bankAccounts: customer.bankAccounts || [],
+      settings,
+    };
+  }
+
+  /**
+   * Get user settings, creating default settings if they don't exist
+   */
+  async getUserSettings(userId: string): Promise<UserSettingsDto> {
+    let settings = await this.databaseService.userSettings.findUnique({
+      where: { userId },
+    });
+
+    // If settings don't exist, create default settings
+    if (!settings) {
+      settings = await this.databaseService.userSettings.create({
+        data: {
+          userId,
+          // Default values are set in the schema, but we can be explicit here
+          showOnLeaderboard: false,
+          allowMentionsOrTags: true,
+          showOnlineStatus: false,
+          pushNotifications: true,
+          eventReminders: true,
+          leaderboardUpdates: false,
+          newFollowerAlerts: false,
+        },
+      });
+    }
+
+    return {
+      showOnLeaderboard: settings.showOnLeaderboard,
+      allowMentionsOrTags: settings.allowMentionsOrTags,
+      showOnlineStatus: settings.showOnlineStatus,
+      pushNotifications: settings.pushNotifications,
+      eventReminders: settings.eventReminders,
+      leaderboardUpdates: settings.leaderboardUpdates,
+      newFollowerAlerts: settings.newFollowerAlerts,
+    };
+  }
+
+  /**
+   * Update user settings
+   */
+  async updateUserSettings(userId: string, updateDto: UpdateUserSettingsDto): Promise<UserSettingsDto> {
+    // Check if settings exist
+    const existingSettings = await this.databaseService.userSettings.findUnique({
+      where: { userId },
+    });
+
+    let settings;
+    if (existingSettings) {
+      // Update existing settings
+      settings = await this.databaseService.userSettings.update({
+        where: { userId },
+        data: {
+          ...updateDto,
+        },
+      });
+    } else {
+      // Create new settings with provided values and defaults
+      settings = await this.databaseService.userSettings.create({
+        data: {
+          userId,
+          showOnLeaderboard: updateDto.showOnLeaderboard ?? false,
+          allowMentionsOrTags: updateDto.allowMentionsOrTags ?? true,
+          showOnlineStatus: updateDto.showOnlineStatus ?? false,
+          pushNotifications: updateDto.pushNotifications ?? true,
+          eventReminders: updateDto.eventReminders ?? true,
+          leaderboardUpdates: updateDto.leaderboardUpdates ?? false,
+          newFollowerAlerts: updateDto.newFollowerAlerts ?? false,
+        },
+      });
+    }
+
+    return {
+      showOnLeaderboard: settings.showOnLeaderboard,
+      allowMentionsOrTags: settings.allowMentionsOrTags,
+      showOnlineStatus: settings.showOnlineStatus,
+      pushNotifications: settings.pushNotifications,
+      eventReminders: settings.eventReminders,
+      leaderboardUpdates: settings.leaderboardUpdates,
+      newFollowerAlerts: settings.newFollowerAlerts,
     };
   }
 }
