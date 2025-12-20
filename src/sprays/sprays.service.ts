@@ -85,7 +85,7 @@ export class SpraysService {
     // Validate event exists and is LIVE
     const event = await this.databaseService.event.findUnique({
       where: { id: eventId },
-      select: { id: true, status: true, minSprayAmount: true },
+      select: { id: true, status: true, minSprayAmount: true, title: true },
     });
 
     if (!event) {
@@ -423,6 +423,7 @@ export class SpraysService {
       // Emit to event room with full user details
       this.liveGateway.emitSprayCreated(eventId, {
         eventId,
+        eventName: event.title,
         spray: {
           id: result.spray.id,
           totalAmount: result.spray.totalAmount.toString(),
