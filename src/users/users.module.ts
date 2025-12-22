@@ -6,6 +6,7 @@ import { EmailService } from './email.service.js';
 import { ProviderModule } from '../provider/provider.module.js';
 import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 import { JwtModule } from '@nestjs/jwt';
+import { CacheModule } from '../cache/cache.module.js';
 import { config } from 'dotenv';
 config();
 
@@ -14,6 +15,7 @@ config();
     DatabaseModule,
     ProviderModule,
     CustomerKycModule,
+    CacheModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '7d' }, // 7 days - suitable for mobile apps

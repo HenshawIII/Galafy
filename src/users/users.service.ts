@@ -2,11 +2,14 @@ import { Injectable, BadRequestException, NotFoundException, UnauthorizedExcepti
 import { DatabaseService } from '../database/database.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
 import { UserSettingsDto, UpdateUserSettingsDto } from './dto/user-settings.dto.js';
+import { SearchUserDto } from './dto/search-user.dto.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
+import { CacheService } from '../cache/cache.service.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
+import type { Prisma } from '../../generated/prisma/client.js';
 
 @Injectable()
 export class UsersService {
@@ -16,6 +19,7 @@ export class UsersService {
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
     private readonly providerService: ProviderService,
+    private readonly cacheService: CacheService,
     private readonly customerKycService: CustomerKycService,
   ) {}
 
@@ -444,6 +448,9 @@ export class UsersService {
       data,
     });
 
+    // Invalidate user cache
+    await this.cacheService.invalidateUserCache(id);
+
     // Remove password from response
     const { password, ...userWithoutPassword } = updatedUser;
     return userWithoutPassword;
@@ -504,6 +511,9 @@ export class UsersService {
       data: updateData,
     });
 
+    // Invalidate user cache
+    await this.cacheService.invalidateUserCache(userId);
+
     // Remove sensitive data from response
     const { password, refreshToken, refreshTokenExpiresAt, verificationCode, passwordResetOtp, ...userWithoutSensitiveData } = updatedUser;
     return userWithoutSensitiveData;
@@ -511,8 +521,16 @@ export class UsersService {
 
   /**
    * Get user details with customer information and KYC status
+   * Cached for 15 minutes
    */
   async getUserDetails(userId: string) {
+    // Check cache first
+    const cacheKey = this.cacheService.getUserKey(userId, 'details');
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     // Find user with customer relation including wallets, bank accounts, and settings
     const user = await this.databaseService.user.findUnique({
       where: { id: userId },
@@ -596,13 +614,18 @@ export class UsersService {
       };
     }
 
-    return {
+    const result = {
       ...customerDetails,
       kycStatus,
       wallets: customer.wallets || [],
       bankAccounts: customer.bankAccounts || [],
       settings,
     };
+
+    // Cache for 15 minutes (900 seconds)
+    await this.cacheService.set(cacheKey, result, 900);
+
+    return result;
   }
 
   /**
@@ -675,7 +698,7 @@ export class UsersService {
       });
     }
 
-    return {
+    const result = {
       showOnLeaderboard: settings.showOnLeaderboard,
       allowMentionsOrTags: settings.allowMentionsOrTags,
       showOnlineStatus: settings.showOnlineStatus,
@@ -683,6 +706,76 @@ export class UsersService {
       eventReminders: settings.eventReminders,
       leaderboardUpdates: settings.leaderboardUpdates,
       newFollowerAlerts: settings.newFollowerAlerts,
+    };
+
+    // Invalidate user cache since settings are part of user details
+    await this.cacheService.invalidateUserCache(userId);
+
+    return result;
+  }
+
+  /**
+   * Search users by username
+   * Uses indexed queries for performance
+   */
+  async searchUsers(searchDto: SearchUserDto) {
+    const page = searchDto.page || 1;
+    const pageSize = searchDto.pageSize || 20;
+    const skip = (page - 1) * pageSize;
+
+    const where: Prisma.UserWhereInput = {};
+
+    // Search by username (case-insensitive partial match)
+    if (searchDto.query && searchDto.query.trim()) {
+      where.username = {
+        contains: searchDto.query.trim(),
+        mode: 'insensitive', // Case-insensitive search
+      };
+    } else {
+      // If no query provided, return empty result
+      return {
+        users: [],
+        total: 0,
+        page,
+        pageSize,
+        totalPages: 0,
+      };
+    }
+
+    // Only return verified users with usernames
+    where.isVerified = true;
+    where.username = {
+      ...where.username,
+      not: null, // Ensure username is not null
+    };
+
+    const [users, total] = await Promise.all([
+      this.databaseService.user.findMany({
+        where,
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          profilePicture: true,
+          email: true,
+          createdAt: true,
+        },
+        orderBy: {
+          username: 'asc', // Sort alphabetically by username
+        },
+        skip,
+        take: pageSize,
+      }),
+      this.databaseService.user.count({ where }),
+    ]);
+
+    return {
+      users,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
     };
   }
 }

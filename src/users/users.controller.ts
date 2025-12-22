@@ -1,8 +1,9 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards, Request, BadRequestException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiQuery } from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
 import { UserSettingsDto, UpdateUserSettingsDto } from './dto/user-settings.dto.js';
+import { SearchUserDto } from './dto/search-user.dto.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Public } from '../auth/public.decorator.js';
@@ -171,6 +172,39 @@ export class UsersController {
       throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
     }
     return this.usersService.updateUserSettings(userId, updateUserSettingsDto);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search users by username' })
+  @ApiQuery({ name: 'query', required: false, description: 'Search query for username (case-insensitive)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number, description: 'Items per page (default: 20, max: 100)' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Users found successfully',
+    schema: {
+      example: {
+        users: [
+          {
+            id: 'uuid',
+            username: 'johndoe',
+            firstName: 'John',
+            lastName: 'Doe',
+            profilePicture: 'https://example.com/profile.jpg',
+            email: 'john@example.com',
+            createdAt: '2024-01-01T00:00:00Z'
+          }
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+        totalPages: 1
+      }
+    }
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  searchUsers(@Query(ValidationPipe) searchDto: SearchUserDto) {
+    return this.usersService.searchUsers(searchDto);
   }
 
   // @Post()

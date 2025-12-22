@@ -9,6 +9,8 @@ import { DatabaseService } from '../database/database.service.js';
 import { CreateSprayDto } from './dto/create-spray.dto.js';
 import { LiveGateway } from '../live/live.gateway.js';
 import { ProviderService } from '../provider/provider.service.js';
+import { CacheService } from '../cache/cache.service.js';
+import { EventsService } from '../events/events.service.js';
 import { EventStatus } from '../../generated/prisma/enums.js';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -33,6 +35,8 @@ export class SpraysService {
     private readonly databaseService: DatabaseService,
     private readonly liveGateway: LiveGateway,
     private readonly providerService: ProviderService,
+    private readonly cacheService: CacheService,
+    private readonly eventsService: EventsService,
   ) {}
 
   /**
@@ -456,9 +460,26 @@ export class SpraysService {
         walletId: receiverWallet.id,
         availableBalance: result.receiverBalance.toString(),
       });
+
+      // Fetch and emit updated leaderboard
+      try {
+        const leaderboard = await this.eventsService.getEventLeaderboard(eventId);
+        this.liveGateway.emitLeaderboardUpdate(eventId, leaderboard);
+      } catch (leaderboardError: any) {
+        // Log error but don't fail the request - leaderboard is optional
+        this.logger.warn(`Failed to emit leaderboard update: ${leaderboardError.message}`);
+      }
     } catch (error: any) {
       // Log error but don't fail the request - spray was successful
       this.logger.error(`Failed to emit WebSocket events: ${error.message}`);
+    }
+
+    // Invalidate event leaderboard cache (new spray changes leaderboard)
+    try {
+      await this.cacheService.del(this.cacheService.getEventKey(eventId, 'leaderboard'));
+    } catch (error: any) {
+      // Log error but don't fail the request
+      this.logger.warn(`Failed to invalidate leaderboard cache: ${error.message}`);
     }
 
     return {

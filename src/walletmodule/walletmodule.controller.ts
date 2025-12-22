@@ -9,12 +9,17 @@ import {
   ValidationPipe,
   UseGuards,
   Request,
+  Res,
+  Header,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { WalletmoduleService } from './walletmodule.service.js';
+import { WalletExportService } from './services/wallet-export.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
+import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
 import { SetPayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payout-security.dto.js';
 
@@ -24,7 +29,10 @@ import { SetPayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payo
 @ApiBearerAuth('bearer')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
 export class WalletmoduleController {
-  constructor(private readonly walletmoduleService: WalletmoduleService) {}
+  constructor(
+    private readonly walletmoduleService: WalletmoduleService,
+    private readonly walletExportService: WalletExportService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new wallet for the authenticated user (requires Tier 1+)' })
@@ -91,6 +99,42 @@ export class WalletmoduleController {
       page,
       limit,
     );
+  }
+
+  @Get('account/:accountNumber/export')
+  @ApiOperation({ summary: 'Export wallet transaction history as CSV or PDF' })
+  @ApiParam({ name: 'accountNumber', description: 'Wallet account number', example: '9719913297' })
+  @ApiQuery({ name: 'format', required: true, description: 'Export format', enum: ['csv', 'pdf'], example: 'csv' })
+  @ApiQuery({ name: 'startDate', required: true, description: 'Start date (YYYY-MM-DD)', example: '2025-01-01' })
+  @ApiQuery({ name: 'endDate', required: true, description: 'End date (YYYY-MM-DD)', example: '2025-01-31' })
+  @ApiResponse({ status: 200, description: 'File exported successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid date range or format' })
+  @ApiResponse({ status: 404, description: 'Wallet not found or no transactions found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - You do not have permission to export this wallet' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async exportWalletHistory(
+    @Request() req: any,
+    @Param('accountNumber') accountNumber: string,
+    @Query(ValidationPipe) query: ExportWalletHistoryDto,
+    @Res() res: Response,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+
+    const { buffer, filename, mimeType } = await this.walletExportService.exportWalletHistory(
+      accountNumber,
+      userId,
+      query.format,
+      query.startDate,
+      query.endDate,
+    );
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    res.send(buffer);
   }
 
   @Put('transfer/wallet-to-wallet')

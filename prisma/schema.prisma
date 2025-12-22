@@ -147,6 +147,8 @@ model User {
   eventParticipants EventParticipant[]
   // Events this user hosts
   hostedEvents      Event[]            @relation("UserHostedEvents")
+
+  @@index([username]) // Index for username search
 }
 
 model UserSettings {
@@ -440,6 +442,9 @@ model Event {
 
   @@index([hostUserId])
   @@index([status, startsAt])
+  @@index([title]) // Index for event title search
+  @@index([location]) // Index for location filter
+  @@index([startsAt]) // Index for date/time filter
 }
 
 model EventParticipant {

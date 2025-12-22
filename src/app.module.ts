@@ -3,9 +3,12 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { UsersModule } from './users/users.module.js';
 import { DatabaseModule } from './database/database.module.js';
+import { CacheModule } from './cache/cache.module.js';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerRedisStorage } from './cache/throttler-redis.storage.js';
 import { ScheduleModule } from '@nestjs/schedule';
 import {APP_GUARD} from '@nestjs/core';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { AuthModule } from './auth/auth.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { CustomerKycModule } from './customer-kyc/customer-kyc.module.js';
@@ -20,13 +23,21 @@ import { SpraysModule } from './sprays/sprays.module.js';
 @Module({
   imports: [
     ScheduleModule.forRoot(), // Enable scheduled tasks
+    CacheModule, // Redis cache module (global)
     UsersModule, 
     DatabaseModule, 
-    ThrottlerModule.forRoot([{
-      name: 'short',
-      ttl: 60000,
-      limit: 5,
-    }]), 
+    ThrottlerModule.forRootAsync({
+      imports: [CacheModule],
+      useFactory: (cacheManager: any) => ({
+        storage: new ThrottlerRedisStorage(cacheManager),
+        throttlers: [{
+          name: 'short',
+          ttl: 60000, // 60 seconds
+          limit: 10, // 10 requests per 60 seconds
+        }],
+      }),
+      inject: [CACHE_MANAGER],
+    }), 
     AuthModule, 
     NotificationsModule, 
     CustomerKycModule, 

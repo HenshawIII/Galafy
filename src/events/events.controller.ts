@@ -26,6 +26,7 @@ import {
 import { EventsService } from './events.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
+import { SearchEventDto } from './dto/search-event.dto.js';
 import { VerifyPerformerDto } from './dto/verify-performer.dto.js';
 import { EventStatus, EventVisibility, EventRole } from '../../generated/prisma/enums.js';
 
@@ -80,6 +81,54 @@ export class EventsController {
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search events by title with filters' })
+  @ApiQuery({ name: 'query', required: false, description: 'Search query for event title (case-insensitive)' })
+  @ApiQuery({ name: 'location', required: false, description: 'Filter by location (case-insensitive)' })
+  @ApiQuery({ name: 'status', enum: EventStatus, required: false, description: 'Filter by event status' })
+  @ApiQuery({ name: 'visibility', enum: EventVisibility, required: false, description: 'Filter by visibility' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'Filter events starting from this date (ISO 8601)' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'Filter events starting before this date (ISO 8601)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number, description: 'Items per page (default: 20, max: 100)' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Events found successfully',
+    schema: {
+      example: {
+        events: [
+          {
+            id: 'uuid',
+            code: 'ABC123',
+            title: 'Concert Event',
+            location: 'Lagos',
+            category: 'Music',
+            status: 'LIVE',
+            visibility: 'PUBLIC',
+            startsAt: '2024-12-25T18:00:00Z',
+            hostUser: {
+              id: 'uuid',
+              username: 'hostuser',
+              firstName: 'Host',
+              lastName: 'User'
+            },
+            participantCount: 50,
+            sprayCount: 120,
+            createdAt: '2024-01-01T00:00:00Z'
+          }
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+        totalPages: 1
+      }
+    }
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  searchEvents(@Query(ValidationPipe) searchDto: SearchEventDto) {
+    return this.eventsService.searchEvents(searchDto);
   }
 
   @Get('my-events')

@@ -8,6 +8,7 @@ import {
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
+import { CacheService } from '../cache/cache.service.js';
 import {
   CreateWalletDto,
   GetWalletByIdDto,
@@ -30,6 +31,7 @@ export class WalletmoduleService {
     private readonly databaseService: DatabaseService,
     private readonly providerService: ProviderService,
     private readonly payoutSecurityService: PayoutSecurityService,
+    private readonly cacheService: CacheService,
   ) {}
 
   /**
@@ -685,6 +687,7 @@ export class WalletmoduleService {
 
   /**
    * Get wallet transaction history
+   * Cached for 30 seconds (transaction history changes frequently)
    */
   async getWalletHistory(
     accountNumber: string,
@@ -693,6 +696,15 @@ export class WalletmoduleService {
     page?: number,
     pageSize?: number,
   ) {
+    // Generate cache key from all parameters
+    const cacheKey = `wallet:history:${accountNumber}:${fromDate}:${toDate}:${page || 1}:${pageSize || 20}`;
+
+    // Check cache first
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const wallet = await this.databaseService.wallet.findFirst({
       where: { virtualAccountNumber: accountNumber },
     });
@@ -713,6 +725,9 @@ export class WalletmoduleService {
       page,
       pageSize,
     );
+
+    // Cache for 30 seconds (transaction history changes frequently)
+    await this.cacheService.set(cacheKey, history, 30);
 
     return history;
   }

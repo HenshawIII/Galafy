@@ -7,16 +7,22 @@ import {
   Logger,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
+import { CacheService } from '../cache/cache.service.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
+import { SearchEventDto } from './dto/search-event.dto.js';
 import { EventStatus, EventRole, EventVisibility, KycTier } from '../../generated/prisma/enums.js';
 import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
+import type { Prisma } from '../../generated/prisma/client.js';
 
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly cacheService: CacheService,
+  ) {}
 
   /**
    * Generate a unique event code
@@ -332,6 +338,10 @@ export class EventsService {
   /**
    * Get all events with optional filters
    */
+  /**
+   * Get all events with optional filters
+   * Cached for 1 minute (changes frequently with new events and status updates)
+   */
   async findAll(filters?: {
     status?: EventStatus;
     visibility?: EventVisibility;
@@ -340,6 +350,22 @@ export class EventsService {
     page?: number;
     pageSize?: number;
   }) {
+    // Generate cache key from all filter parameters
+    const cacheKey = `events:list:${JSON.stringify({
+      status: filters?.status || 'all',
+      visibility: filters?.visibility || 'all',
+      category: filters?.category || 'all',
+      hostUserId: filters?.hostUserId || 'all',
+      page: filters?.page || 1,
+      pageSize: filters?.pageSize || 20,
+    })}`;
+
+    // Check cache first
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const page = filters?.page || 1;
     const pageSize = filters?.pageSize || 20;
     const skip = (page - 1) * pageSize;
@@ -476,7 +502,7 @@ export class EventsService {
       };
     });
 
-    return {
+    const result = {
       events: transformedEvents,
       pagination: {
         page,
@@ -485,12 +511,25 @@ export class EventsService {
         totalPages: Math.ceil(total / pageSize),
       },
     };
+
+    // Cache for 1 minute (60 seconds) - events list changes frequently
+    await this.cacheService.set(cacheKey, result, 60);
+
+    return result;
   }
 
   /**
-   * Get a single event by ID
+   * Get event by ID
+   * Cached for 30 minutes
    */
   async findOne(id: string) {
+    // Check cache first
+    const cacheKey = this.cacheService.getEventKey(id, 'details');
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const event = await this.databaseService.event.findUnique({
       where: { id },
       include: {
@@ -535,6 +574,9 @@ export class EventsService {
     if (!event) {
       throw new NotFoundException(`Event with ID ${id} not found`);
     }
+
+    // Cache for 30 minutes (1800 seconds)
+    await this.cacheService.set(cacheKey, event, 1800);
 
     return event;
   }
@@ -673,6 +715,9 @@ export class EventsService {
       },
     });
 
+    // Invalidate event cache
+    await this.cacheService.invalidateEventCache(eventId);
+
     return updatedEvent;
   }
 
@@ -696,6 +741,9 @@ export class EventsService {
     await this.databaseService.event.delete({
       where: { id: eventId },
     });
+
+    // Invalidate event cache
+    await this.cacheService.invalidateEventCache(eventId);
 
     return { message: 'Event deleted successfully' };
   }
@@ -1060,7 +1108,18 @@ export class EventsService {
    * Get leaderboard for an event
    * Returns aggregated sprays per user, sorted by total amount descending
    */
+  /**
+   * Get event leaderboard
+   * Cached for 30 seconds (changes frequently with new sprays)
+   */
   async getEventLeaderboard(eventId: string) {
+    // Check cache first
+    const cacheKey = this.cacheService.getEventKey(eventId, 'leaderboard');
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     // Verify event exists
     const event = await this.databaseService.event.findUnique({
       where: { id: eventId },
@@ -1160,11 +1219,121 @@ export class EventsService {
         rank: index + 1,
       }));
 
-    return {
+    const result = {
       eventId: event.id,
       eventTitle: event.title,
       leaderboard,
       totalParticipants: leaderboard.length,
+    };
+
+    // Cache for 30 seconds (leaderboard changes frequently with new sprays)
+    await this.cacheService.set(cacheKey, result, 30);
+
+    return result;
+  }
+
+  /**
+   * Search events by title with filters
+   * Uses indexed queries for performance
+   */
+  async searchEvents(searchDto: SearchEventDto) {
+    const page = searchDto.page || 1;
+    const pageSize = searchDto.pageSize || 20;
+    const skip = (page - 1) * pageSize;
+
+    const where: Prisma.EventWhereInput = {};
+
+    // Search by title (case-insensitive partial match)
+    if (searchDto.query && searchDto.query.trim()) {
+      where.title = {
+        contains: searchDto.query.trim(),
+        mode: 'insensitive', // Case-insensitive search
+      };
+    }
+
+    // Filter by location (case-insensitive partial match)
+    if (searchDto.location && searchDto.location.trim()) {
+      where.location = {
+        contains: searchDto.location.trim(),
+        mode: 'insensitive',
+      };
+    }
+
+    // Filter by status
+    if (searchDto.status) {
+      where.status = searchDto.status;
+    }
+
+    // Filter by visibility
+    if (searchDto.visibility) {
+      where.visibility = searchDto.visibility;
+    }
+
+    // Filter by date/time range
+    if (searchDto.startDate || searchDto.endDate) {
+      where.startsAt = {};
+      if (searchDto.startDate) {
+        where.startsAt.gte = new Date(searchDto.startDate);
+      }
+      if (searchDto.endDate) {
+        where.startsAt.lte = new Date(searchDto.endDate);
+      }
+    }
+
+    const [events, total] = await Promise.all([
+      this.databaseService.event.findMany({
+        where,
+        include: {
+          hostUser: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+              username: true,
+              profilePicture: true,
+            },
+          },
+          _count: {
+            select: {
+              participants: true,
+              sprays: true,
+            },
+          },
+        },
+        orderBy: {
+          startsAt: 'asc', // Sort by start date (upcoming first)
+        },
+        skip,
+        take: pageSize,
+      }),
+      this.databaseService.event.count({ where }),
+    ]);
+
+    // Format events for response
+    const formattedEvents = events.map((event) => ({
+      id: event.id,
+      code: event.code,
+      title: event.title,
+      location: event.location,
+      category: event.category,
+      description: event.description,
+      imageUrl: event.imageUrl,
+      status: event.status,
+      visibility: event.visibility,
+      startsAt: event.startsAt,
+      hostUser: event.hostUser,
+      participantCount: event._count.participants,
+      sprayCount: event._count.sprays,
+      createdAt: event.createdAt,
+    }));
+
+    return {
+      events: formattedEvents,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
     };
   }
 }

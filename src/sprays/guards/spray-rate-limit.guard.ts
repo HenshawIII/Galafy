@@ -1,17 +1,20 @@
 import { Injectable, ExecutionContext, CanActivate, HttpException, HttpStatus } from '@nestjs/common';
+import { CacheService } from '../../cache/cache.service.js';
 
 /**
- * Simple in-memory rate limiter for spray creation
- * Limits to 5 sprays per second per user
- * Can be moved to Redis later for distributed systems
+ * Redis-based rate limiter for spray creation
+ * Limits to 10 sprays per second per user
+ * Uses Redis for distributed rate limiting across multiple instances
  */
 @Injectable()
 export class SprayRateLimitGuard implements CanActivate {
-  private readonly requestStore = new Map<string, number[]>();
-  private readonly maxRequests = 5;
-  private readonly windowMs = 1000; // 1 second
+  private readonly maxRequests = 10;
+  private readonly windowMs = 1000; // 1 second in milliseconds
+  private readonly cacheKeyPrefix = 'spray:rate:';
 
-  canActivate(context: ExecutionContext): boolean {
+  constructor(private readonly cacheService: CacheService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const userId = request.user?.id;
 
@@ -19,45 +22,57 @@ export class SprayRateLimitGuard implements CanActivate {
       return true; // Let JWT guard handle authentication
     }
 
-    const key = `spray:${userId}`;
+    const key = `${this.cacheKeyPrefix}${userId}`;
     const now = Date.now();
     const windowStart = now - this.windowMs;
 
-    // Get existing requests in the window
-    const requests = this.requestStore.get(key) || [];
+    try {
+      // Get current count from Redis
+      const cached = await this.cacheService.get<{ count: number; resetAt: number }>(key);
 
-    // Filter requests within the time window
-    const recentRequests = requests.filter((timestamp) => timestamp > windowStart);
-
-    if (recentRequests.length >= this.maxRequests) {
-      throw new HttpException(
-        'Rate limit exceeded: Maximum 5 sprays per second allowed',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    // Add current request
-    recentRequests.push(now);
-    this.requestStore.set(key, recentRequests);
-
-    // Clean up old entries asynchronously
-    this.cleanup(key, now);
-
-    return true;
-  }
-
-  private cleanup(key: string, now: number): void {
-    setTimeout(() => {
-      const requests = this.requestStore.get(key);
-      if (requests) {
-        const filtered = requests.filter((timestamp) => timestamp > now - this.windowMs);
-        if (filtered.length === 0) {
-          this.requestStore.delete(key);
+      if (cached) {
+        // Check if we're still in the same window
+        if (cached.resetAt > now) {
+          // Still in the same window, check count
+          if (cached.count >= this.maxRequests) {
+            throw new HttpException(
+              'Rate limit exceeded: Maximum 10 sprays per second allowed',
+              HttpStatus.TOO_MANY_REQUESTS,
+            );
+          }
+          // Increment count
+          await this.cacheService.set(
+            key,
+            { count: cached.count + 1, resetAt: cached.resetAt },
+            Math.ceil((cached.resetAt - now) / 1000), // TTL in seconds
+          );
         } else {
-          this.requestStore.set(key, filtered);
+          // Window expired, start new window
+          await this.cacheService.set(
+            key,
+            { count: 1, resetAt: now + this.windowMs },
+            Math.ceil(this.windowMs / 1000), // TTL in seconds (1 second)
+          );
         }
+      } else {
+        // No existing entry, start new window
+        await this.cacheService.set(
+          key,
+          { count: 1, resetAt: now + this.windowMs },
+          Math.ceil(this.windowMs / 1000), // TTL in seconds (1 second)
+        );
       }
-    }, this.windowMs * 2); // Clean up after 2 seconds
+
+      return true;
+    } catch (error: any) {
+      // If it's our rate limit exception, re-throw it
+      if (error instanceof HttpException && error.getStatus() === HttpStatus.TOO_MANY_REQUESTS) {
+        throw error;
+      }
+      // For Redis errors, log and allow the request (fail open)
+      console.error('Redis rate limit error:', error.message);
+      return true;
+    }
   }
 }
 
