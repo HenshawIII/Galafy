@@ -755,6 +755,7 @@ export class EventsService {
     // Check if event exists
     const event = await this.databaseService.event.findUnique({
       where: { id: eventId },
+      select: { id: true, hostUserId: true },
     });
 
     if (!event) {
@@ -777,6 +778,13 @@ export class EventsService {
     if (existingParticipant) {
       // Update role if different
       if (existingParticipant.role !== joinEventDto.role) {
+        // Prevent host from changing their role from CELEBRANT
+        if (event.hostUserId === userId && existingParticipant.role === EventRole.CELEBRANT) {
+          throw new ForbiddenException(
+            'Event host cannot change their role from CELEBRANT. The host must remain as the celebrant.',
+          );
+        }
+
         // Check KYC tier for new role
         await this.checkKycTierForRole(userId, joinEventDto.role);
         
@@ -1105,11 +1113,8 @@ export class EventsService {
   }
 
   /**
-   * Get leaderboard for an event
-   * Returns aggregated sprays per user, sorted by total amount descending
-   */
-  /**
    * Get event leaderboard
+   * Returns aggregated sprays per sprayer (user who sent sprays), sorted by total amount sprayed in descending order
    * Cached for 30 seconds (changes frequently with new sprays)
    */
   async getEventLeaderboard(eventId: string) {
@@ -1130,11 +1135,11 @@ export class EventsService {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
-    // Get all sprays for this event with receiver wallet and user info
+    // Get all sprays for this event with sprayer wallet and user info
     const sprays = await this.databaseService.spray.findMany({
       where: { eventId },
       include: {
-        receiverWallet: {
+        sprayerWallet: {
           include: {
             customer: {
               include: {
@@ -1152,9 +1157,12 @@ export class EventsService {
           },
         },
       },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
 
-    // Group by receiver and sum amounts
+    // Group by sprayer and sum amounts
     const leaderboardMap = new Map<
       string,
       {
@@ -1165,16 +1173,18 @@ export class EventsService {
         lastName: string | null;
         totalAmount: Decimal;
         sprayCount: number;
+        firstSprayAt: Date;
+        lastSprayAt: Date;
       }
     >();
 
     for (const spray of sprays) {
-      const receiverWallet = spray.receiverWallet;
-      const customer = receiverWallet.customer;
+      const sprayerWallet = spray.sprayerWallet;
+      const customer = sprayerWallet.customer;
       const user = customer.user;
 
       if (!user) {
-        this.logger.warn(`User not found for receiver wallet ${receiverWallet.id}`);
+        this.logger.warn(`User not found for sprayer wallet ${sprayerWallet.id}`);
         continue;
       }
 
@@ -1184,6 +1194,13 @@ export class EventsService {
       if (existing) {
         existing.totalAmount = existing.totalAmount.plus(spray.totalAmount);
         existing.sprayCount += 1;
+        // Update last spray timestamp (sprays are ordered by createdAt desc, so first one is latest)
+        if (spray.createdAt > existing.lastSprayAt) {
+          existing.lastSprayAt = spray.createdAt;
+        }
+        if (spray.createdAt < existing.firstSprayAt) {
+          existing.firstSprayAt = spray.createdAt;
+        }
       } else {
         leaderboardMap.set(userId, {
           userId: user.id,
@@ -1193,6 +1210,8 @@ export class EventsService {
           lastName: user.lastName,
           totalAmount: spray.totalAmount,
           sprayCount: 1,
+          firstSprayAt: spray.createdAt,
+          lastSprayAt: spray.createdAt,
         });
       }
     }
@@ -1207,6 +1226,8 @@ export class EventsService {
         lastName: entry.lastName,
         totalAmount: entry.totalAmount.toString(),
         sprayCount: entry.sprayCount,
+        firstSprayAt: entry.firstSprayAt.toISOString(),
+        lastSprayAt: entry.lastSprayAt.toISOString(),
         rank: 0, // Will be set after sorting
       }))
       .sort((a, b) => {

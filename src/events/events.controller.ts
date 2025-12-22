@@ -330,7 +330,7 @@ export class EventsController {
   @ApiOperation({
     summary: 'Get event leaderboard',
     description:
-      'Returns aggregated sprays per user in an event, sorted by total amount received in descending order.',
+      'Returns aggregated sprays per user in an event, sorted by total amount sprayed in descending order.',
   })
   @ApiParam({
     name: 'id',
@@ -357,8 +357,10 @@ export class EventsController {
               email: { type: 'string' },
               firstName: { type: 'string', nullable: true },
               lastName: { type: 'string', nullable: true },
-              totalAmount: { type: 'string', description: 'Total amount received as decimal string' },
-              sprayCount: { type: 'number', description: 'Number of sprays received' },
+              totalAmount: { type: 'string', description: 'Total amount sprayed as decimal string' },
+              sprayCount: { type: 'number', description: 'Number of times user has sprayed' },
+              firstSprayAt: { type: 'string', description: 'ISO timestamp of first spray' },
+              lastSprayAt: { type: 'string', description: 'ISO timestamp of most recent spray' },
             },
           },
         },
