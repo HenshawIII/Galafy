@@ -429,4 +429,60 @@ export class NotificationsService {
       },
     });
   }
+
+  /**
+   * Check if user has push notifications enabled
+   */
+  async isPushNotificationEnabled(userId: string): Promise<boolean> {
+    const settings = await this.databaseService.userSettings.findUnique({
+      where: { userId },
+      select: { pushNotifications: true },
+    });
+
+    // Default to true if settings don't exist
+    return settings?.pushNotifications ?? true;
+  }
+
+  /**
+   * Check if user has event reminders enabled
+   */
+  async isEventReminderEnabled(userId: string): Promise<boolean> {
+    const settings = await this.databaseService.userSettings.findUnique({
+      where: { userId },
+      select: { eventReminders: true },
+    });
+
+    // Default to true if settings don't exist
+    return settings?.eventReminders ?? true;
+  }
+
+  /**
+   * Send notification to user if enabled (respects user preferences)
+   */
+  async sendNotificationIfEnabled(
+    userId: string,
+    notification: SendMessageDto['notification'],
+    checkReminders: boolean = false,
+  ) {
+    // Check if push notifications are enabled
+    const pushEnabled = await this.isPushNotificationEnabled(userId);
+    if (!pushEnabled) {
+      return { skipped: true, reason: 'Push notifications disabled' };
+    }
+
+    // If checking reminders, also verify event reminders are enabled
+    if (checkReminders) {
+      const remindersEnabled = await this.isEventReminderEnabled(userId);
+      if (!remindersEnabled) {
+        return { skipped: true, reason: 'Event reminders disabled' };
+      }
+    }
+
+    // Send the notification
+    try {
+      return await this.sendMessage({ userId, notification });
+    } catch (error: any) {
+      return { skipped: false, error: error.message };
+    }
+  }
 }

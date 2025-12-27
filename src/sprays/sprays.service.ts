@@ -4,6 +4,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { CreateSprayDto } from './dto/create-spray.dto.js';
@@ -11,7 +13,9 @@ import { LiveGateway } from '../live/live.gateway.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { EventsService } from '../events/events.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { EventStatus } from '../../generated/prisma/enums.js';
+import { EventRole } from '../events/dto/join-event.dto.js';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
@@ -37,6 +41,8 @@ export class SpraysService {
     private readonly providerService: ProviderService,
     private readonly cacheService: CacheService,
     private readonly eventsService: EventsService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -131,7 +137,7 @@ export class SpraysService {
       );
     }
 
-    // Get receiver participant
+    // Get receiver participant (include role for notification check)
     let receiverParticipant;
     if (createSprayDto.receiverParticipantId) {
       receiverParticipant = await this.databaseService.eventParticipant.findUnique({
@@ -468,6 +474,43 @@ export class SpraysService {
       } catch (leaderboardError: any) {
         // Log error but don't fail the request - leaderboard is optional
         this.logger.warn(`Failed to emit leaderboard update: ${leaderboardError.message}`);
+      }
+
+      // Send push notification to celebrant/performer if they were sprayed
+      if (
+        receiverParticipant.role === EventRole.CELEBRANT ||
+        receiverParticipant.role === EventRole.PERFORMER
+      ) {
+        try {
+          const sprayerName =
+            sprayerUser?.username ||
+            sprayerUser?.profilePicture ||
+            'Someone';
+          
+          await this.notificationsService.sendNotificationIfEnabled(
+            receiverParticipant.userId,
+            {
+              notification: {
+                title: 'You were sprayed!',
+                body: `${sprayerName} sprayed you ${result.spray.totalAmount.toString()}`,
+              },
+              data: {
+                type: 'SPRAY_RECEIVED',
+                eventId: eventId,
+                eventTitle: event.title,
+                sprayId: result.spray.id,
+                amount: result.spray.totalAmount.toString(),
+                sprayerId: userId,
+                sprayerName: sprayerName,
+              },
+            },
+          );
+        } catch (notificationError: any) {
+          // Log error but don't fail the request - notification is optional
+          this.logger.warn(
+            `Failed to send spray notification: ${notificationError.message}`,
+          );
+        }
       }
     } catch (error: any) {
       // Log error but don't fail the request - spray was successful

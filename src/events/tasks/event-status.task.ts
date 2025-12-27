@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '../../database/database.service.js';
 import { EventStatus } from '../../../generated/prisma/enums.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 /**
  * Scheduled task to automatically update event status from SCHEDULED to LIVE
@@ -11,7 +12,11 @@ import { EventStatus } from '../../../generated/prisma/enums.js';
 export class EventStatusTask {
   private readonly logger = new Logger(EventStatusTask.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   /**
    * Runs every 15 minutes to check for events that should go live
@@ -46,15 +51,40 @@ export class EventStatusTask {
 
       this.logger.log(`Found ${eventsToGoLive.length} event(s) that should go live`);
 
-      // Update each event to LIVE status
-      const updatePromises = eventsToGoLive.map((event) =>
-        this.databaseService.event.update({
+      // Update each event to LIVE status and send notifications
+      for (const event of eventsToGoLive) {
+        await this.databaseService.event.update({
           where: { id: event.id },
           data: { status: EventStatus.LIVE },
-        }),
-      );
+        });
 
-      await Promise.all(updatePromises);
+        // Get all participants and send notifications
+        const participants = await this.databaseService.eventParticipant.findMany({
+          where: { eventId: event.id },
+          select: { userId: true },
+        });
+
+        // Send notifications to all participants
+        for (const participant of participants) {
+          await this.notificationsService.sendNotificationIfEnabled(
+            participant.userId,
+            {
+              notification: {
+                title: 'Event is Live!',
+                body: `${event.title} has started`,
+              },
+              data: {
+                type: 'EVENT_LIVE',
+                eventId: event.id,
+                eventCode: event.code,
+                eventTitle: event.title,
+                startsAt: event.startsAt.toISOString(),
+              },
+            },
+            true, // Check event reminders preference
+          );
+        }
+      }
 
       this.logger.log(
         `Successfully updated ${eventsToGoLive.length} event(s) to LIVE status: ${eventsToGoLive.map((e) => e.code).join(', ')}`,
