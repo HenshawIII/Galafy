@@ -5,9 +5,41 @@ import { normalizeToKobo } from './money.util.js';
 const logger = new Logger('FeeUtil');
 
 // Read fee percentages from environment variables and parse as Decimal
-const ADMIN_PAYOUT_FEE = new Decimal(process.env.ADMIN_PAYOUT_FEE || '0.03');
-const ADMIN_FUNDING_FEE = new Decimal(process.env.ADMIN_FUNDING_FEE || '0.10');
-const ADMIN_FUNDING_FEE_100KABOVE = new Decimal(process.env.ADMIN_FUNDING_FEE_100KABOVE || '0.07');
+// Normalize to ensure values are in decimal format (0.03 for 3%, not 3)
+// If value is >= 1, assume it's a percentage and convert to decimal (e.g., 10 -> 0.10)
+function normalizeFeePercentage(envValue: string | undefined, defaultValue: string): Decimal {
+  const value = envValue || defaultValue;
+  const decimal = new Decimal(value);
+  
+  // If value is >= 1, assume it's a percentage (e.g., 10 means 10%) and convert to decimal (0.10)
+  if (decimal.gte(new Decimal('1'))) {
+    logger.warn(
+      `Fee percentage ${value} appears to be in percentage format (>= 1). ` +
+      `Converting to decimal format: ${decimal.div(100).toString()}. ` +
+      `Please use decimal format in env (e.g., 0.10 for 10%, not 10)`,
+    );
+    return decimal.div(100).toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
+  }
+  
+  // Ensure it's normalized to 4 decimal places and < 10 (for DECIMAL(5,4) constraint)
+  const normalized = decimal.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
+  if (normalized.gte(new Decimal('10'))) {
+    logger.error(
+      `Fee percentage ${value} exceeds maximum allowed value (9.9999). ` +
+      `Please use decimal format (e.g., 0.10 for 10%, not 10)`,
+    );
+    throw new Error(
+      `Invalid fee percentage: ${value}. Must be less than 10. ` +
+      `Use decimal format (e.g., 0.10 for 10%, not 10)`,
+    );
+  }
+  
+  return normalized;
+}
+
+const ADMIN_PAYOUT_FEE = normalizeFeePercentage(process.env.ADMIN_PAYOUT_FEE, '0.03');
+const ADMIN_FUNDING_FEE = normalizeFeePercentage(process.env.ADMIN_FUNDING_FEE, '0.10');
+const ADMIN_FUNDING_FEE_100KABOVE = normalizeFeePercentage(process.env.ADMIN_FUNDING_FEE_100KABOVE, '0.07');
 const FUNDING_THRESHOLD = new Decimal('100000.00');
 
 // Log fee configuration on module load

@@ -15,6 +15,7 @@ import { config } from 'dotenv';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { calculateFundingFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
+import { ProviderService } from '../provider/provider.service.js';
 config();
 
 @Injectable()
@@ -25,6 +26,7 @@ export class WebhooksService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly organizationWalletService: OrganizationWalletService,
+    private readonly providerService: ProviderService,
   ) {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     if (!this.apiKey) {
@@ -105,18 +107,62 @@ export class WebhooksService {
         const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
 
         // Re-fetch user wallet with lock to get latest balances
+        // Need virtualAccountNumber for wallet-to-wallet transfer
         const lockedUserWallet = await tx.wallet.findUnique({
           where: { id: wallet.id },
-          select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true, customerId: true },
+          select: { 
+            id: true, 
+            availableBalance: true, 
+            ledgerBalance: true, 
+            currencyId: true, 
+            customerId: true,
+            virtualAccountNumber: true,
+          },
         });
 
         if (!lockedUserWallet) {
           throw new NotFoundException('User wallet not found after lock');
         }
 
+        if (!lockedUserWallet.virtualAccountNumber) {
+          throw new BadRequestException('User wallet does not have a virtual account number');
+        }
+
         // Generate internal references
         const userTransactionRef = `INFLOW-${randomUUID()}`;
+        const feeTransferRef = `FEE-TRANSFER-${randomUUID()}`;
         const groupReference = `GRP-${randomUUID()}`;
+
+        // Step 1: Credit user wallet with grossAmount (to match provider state)
+        // Provider has already credited the user wallet with grossAmount via the webhook
+        const newUserAvailableBalanceAfterCredit = normalizeToKobo(lockedUserWallet.availableBalance.plus(grossAmount));
+        const newUserLedgerBalanceAfterCredit = normalizeToKobo(lockedUserWallet.ledgerBalance.plus(grossAmount));
+
+        // Step 2: Execute wallet-to-wallet transfer: user wallet → org wallet for adminFee
+        // This syncs our provider records with our database
+        const feeTransferResponse = await this.providerService.walletToWalletTransfer({
+          fromWalletId: lockedUserWallet.virtualAccountNumber,
+          toWalletId: adminWalletAccountNumber,
+          amount: adminFee.toNumber(),
+          currencyId: wallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+          description: `Admin fee from funding: ${data.reference}`,
+          reference: feeTransferRef,
+        });
+
+        if (!feeTransferResponse.success) {
+          this.logger.error(
+            `Failed to transfer admin fee to organization wallet: ${feeTransferResponse.message}. ` +
+            `User wallet has been credited with grossAmount but fee transfer failed.`,
+          );
+          throw new BadRequestException(
+            `Failed to transfer admin fee to organization wallet: ${feeTransferResponse.message}`,
+          );
+        }
+
+        // Step 3: Update user wallet balance: grossAmount - adminFee = netAmount
+        // After the transfer, user wallet should have netAmount
+        const finalUserAvailableBalance = normalizeToKobo(newUserAvailableBalanceAfterCredit.minus(adminFee));
+        const finalUserLedgerBalance = normalizeToKobo(newUserLedgerBalanceAfterCredit.minus(adminFee));
 
         // Create Transaction record for user wallet (net amount)
         // Transaction table only tracks user-facing transactions
@@ -140,6 +186,8 @@ export class WebhooksService {
               grossAmount: grossAmount.toString(),
               feePercentage: feePercentage.toString(),
               feeType: 'funding',
+              feeTransferReference: feeTransferRef,
+              feeTransferResponse: feeTransferResponse.data,
             },
           },
         });
@@ -159,13 +207,29 @@ export class WebhooksService {
         });
 
         // Create AdminFee record (separate table for fee tracking)
+        // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
+        // feePercentage should be between 0 and 1 (e.g., 0.10 for 10%), so we ensure it's properly formatted
+        const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
+        
+        // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
+        if (normalizedFeePercentage.gte(new Decimal('10'))) {
+          this.logger.error(
+            `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
+            `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.10 for 10%), not percentage (e.g., 10).`,
+          );
+          throw new BadRequestException(
+            `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
+            `Fee percentage must be less than 10. Please check ADMIN_FUNDING_FEE environment variable.`,
+          );
+        }
+
         await tx.adminFee.create({
           data: {
             walletId: wallet.id,
             customerId: lockedUserWallet.customerId,
             amount: adminFee, // The fee amount
             feeType: 'funding',
-            feePercentage: feePercentage,
+            feePercentage: normalizedFeePercentage,
             relatedTransactionId: userTransaction.id, // Link to user's inflow transaction
             fundingTransactionId: fundingTransaction.id, // Link to funding transaction
             status: 'COLLECTED',
@@ -178,22 +242,47 @@ export class WebhooksService {
               threshold: grossAmount.lte(new Decimal('100000.00')) ? 'below_100k' : 'above_100k',
               senderName: data.senderName,
               senderBank: data.senderBank,
+              feeTransferReference: feeTransferRef,
+              feeTransferResponse: feeTransferResponse.data,
             },
           },
         });
 
-        // Update user wallet balance (net amount)
-        const newUserAvailableBalance = normalizeToKobo(lockedUserWallet.availableBalance.plus(netAmount));
-        const newUserLedgerBalance = normalizeToKobo(lockedUserWallet.ledgerBalance.plus(netAmount));
-
-        // Update user wallet
+        // Update user wallet balance (net amount after fee transfer)
         await tx.wallet.update({
           where: { id: wallet.id },
           data: {
-            availableBalance: newUserAvailableBalance,
-            ledgerBalance: newUserLedgerBalance,
+            availableBalance: finalUserAvailableBalance,
+            ledgerBalance: finalUserLedgerBalance,
           },
         });
+
+        // Try to update org wallet balance if it exists in our database
+        const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
+        if (orgWallet) {
+          // Lock org wallet
+          await tx.$queryRaw`
+            SELECT id FROM "Wallet" WHERE id = ${orgWallet.id} FOR UPDATE
+          `;
+
+          const lockedOrgWallet = await tx.wallet.findUnique({
+            where: { id: orgWallet.id },
+            select: { id: true, availableBalance: true, ledgerBalance: true },
+          });
+
+          if (lockedOrgWallet) {
+            const newOrgAvailableBalance = normalizeToKobo(lockedOrgWallet.availableBalance.plus(adminFee));
+            const newOrgLedgerBalance = normalizeToKobo(lockedOrgWallet.ledgerBalance.plus(adminFee));
+
+            await tx.wallet.update({
+              where: { id: orgWallet.id },
+              data: {
+                availableBalance: newOrgAvailableBalance,
+                ledgerBalance: newOrgLedgerBalance,
+              },
+            });
+          }
+        }
 
         // Store webhook event
         await tx.providerWebhookEvent.create({

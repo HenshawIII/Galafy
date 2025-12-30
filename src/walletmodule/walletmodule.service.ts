@@ -827,13 +827,29 @@ export class WalletmoduleService {
         });
 
         // Create AdminFee record (separate table for fee tracking)
+        // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
+        // feePercentage should be between 0 and 1 (e.g., 0.03 for 3%), so we ensure it's properly formatted
+        const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
+        
+        // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
+        if (normalizedFeePercentage.gte(new Decimal('10'))) {
+          this.logger.error(
+            `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
+            `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.03 for 3%), not percentage (e.g., 3).`,
+          );
+          throw new BadRequestException(
+            `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
+            `Fee percentage must be less than 10. Please check ADMIN_PAYOUT_FEE environment variable.`,
+          );
+        }
+
         await tx.adminFee.create({
           data: {
             walletId: fromWallet.id,
             customerId: fromWallet.customerId,
             amount: fee, // 3% fee
             feeType: 'payout',
-            feePercentage: feePercentage,
+            feePercentage: normalizedFeePercentage,
             relatedTransactionId: userDebitTransaction.id, // Link to user's payout transaction
             payoutTransactionId: payoutTransaction.id, // Link to payout transaction
             status: 'COLLECTED',
