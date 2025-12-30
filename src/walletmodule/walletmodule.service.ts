@@ -21,7 +21,11 @@ import { InitiatePayoutDto } from './dto/payout-security.dto.js';
 import { PayoutSecurityService } from './services/payout-security.service.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
+import { normalizeToKobo } from '../common/utils/money.util.js';
+import { calculatePayoutFee } from '../common/utils/fee.util.js';
+import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 
 @Injectable()
 export class WalletmoduleService {
@@ -32,6 +36,7 @@ export class WalletmoduleService {
     private readonly providerService: ProviderService,
     private readonly payoutSecurityService: PayoutSecurityService,
     private readonly cacheService: CacheService,
+    private readonly organizationWalletService: OrganizationWalletService,
   ) {}
 
   /**
@@ -315,8 +320,11 @@ export class WalletmoduleService {
       throw new BadRequestException('Destination wallet does not have a virtual account number');
     }
 
-    // Check sufficient balance
-    if (Number(fromWallet.availableBalance) < transferDto.amount) {
+    // Convert amount from string to Decimal and normalize to kobo precision
+    const amount = normalizeToKobo(transferDto.amount);
+
+    // Check sufficient balance using Decimal comparison
+    if (fromWallet.availableBalance.lt(amount)) {
       throw new BadRequestException('Insufficient balance');
     }
 
@@ -328,7 +336,7 @@ export class WalletmoduleService {
     const providerResponse = await this.providerService.walletToWalletTransfer({
       fromWalletId: fromWallet.virtualAccountNumber,
       toWalletId: toWallet.virtualAccountNumber,
-      amount: transferDto.amount,
+      amount: amount.toNumber(), // Convert to number for provider API
       currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       description: transferDto.description,
       reference: internalReference,
@@ -338,11 +346,11 @@ export class WalletmoduleService {
       throw new BadRequestException(providerResponse.message || 'Transfer failed');
     }
 
-    // Update wallet balances (we'll sync with provider later, but update optimistically)
-    const fromAvailableBalance = Number(fromWallet.availableBalance) - transferDto.amount;
-    const fromLedgerBalance = Number(fromWallet.ledgerBalance) - transferDto.amount;
-    const toAvailableBalance = Number(toWallet.availableBalance) + transferDto.amount;
-    const toLedgerBalance = Number(toWallet.ledgerBalance) + transferDto.amount;
+    // Update wallet balances using Decimal methods
+    const fromAvailableBalance = normalizeToKobo(fromWallet.availableBalance.minus(amount));
+    const fromLedgerBalance = normalizeToKobo(fromWallet.ledgerBalance.minus(amount));
+    const toAvailableBalance = normalizeToKobo(toWallet.availableBalance.plus(amount));
+    const toLedgerBalance = normalizeToKobo(toWallet.ledgerBalance.plus(amount));
 
     // Create Transaction records for both wallets
     // DEBIT transaction for sender
@@ -352,7 +360,7 @@ export class WalletmoduleService {
         type: TransactionType.SPRAY,
         direction: TransactionDirection.DEBIT,
         status: TransactionStatus.SUCCESS,
-        amount: transferDto.amount,
+        amount,
         currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         reference: internalReference,
         externalReference: null, // Wallet-to-wallet (sprays) only use internal reference
@@ -368,7 +376,7 @@ export class WalletmoduleService {
         type: TransactionType.SPRAY,
         direction: TransactionDirection.CREDIT,
         status: TransactionStatus.SUCCESS,
-        amount: transferDto.amount,
+        amount,
         currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         reference: `SPRAY-CREDIT-${randomUUID()}`, // Unique reference for credit side
         externalReference: null,
@@ -385,7 +393,7 @@ export class WalletmoduleService {
         receiverWalletId: toWallet.id,
         transactionId: debitTransaction.id, // Link to the debit transaction
         transactionGroupReference: groupReference,
-        totalAmount: transferDto.amount,
+        totalAmount: amount,
         note: transferDto.description,
         metadata: {
           creditTransactionId: creditTransaction.id,
@@ -450,8 +458,11 @@ export class WalletmoduleService {
       throw new BadRequestException('Wallet does not have a virtual account number');
     }
 
-    // Check sufficient balance
-    if (Number(fromWallet.availableBalance) < transferDto.amount) {
+    // Convert amount from string to Decimal and normalize to kobo precision
+    const amount = normalizeToKobo(transferDto.amount);
+
+    // Check sufficient balance using Decimal comparison
+    if (fromWallet.availableBalance.lt(amount)) {
       throw new BadRequestException('Insufficient balance');
     }
 
@@ -492,14 +503,14 @@ export class WalletmoduleService {
       sourceAccountNumber: fromWallet.virtualAccountNumber,
       sourceAccountName: sourceAccountName,
       remarks: transferDto.description || 'Fast wallet transfer',
-      amount: transferDto.amount,
+      amount: amount.toNumber(), // Convert to number for provider API
       currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       customerTransactionReference: transactionReference,
     });
 
-    // Update wallet balance
-    const newAvailableBalance = Number(fromWallet.availableBalance) - transferDto.amount;
-    const newLedgerBalance = Number(fromWallet.ledgerBalance) - transferDto.amount;
+    // Update wallet balance using Decimal methods
+    const newAvailableBalance = normalizeToKobo(fromWallet.availableBalance.minus(amount));
+    const newLedgerBalance = normalizeToKobo(fromWallet.ledgerBalance.minus(amount));
 
     await this.databaseService.wallet.update({
       where: { id: fromWallet.id },
@@ -548,8 +559,11 @@ export class WalletmoduleService {
       throw new BadRequestException('Wallet does not have a virtual account number');
     }
 
-    // Check sufficient balance
-    if (Number(fromWallet.availableBalance) < initiateDto.amount) {
+    // Convert amount from string to Decimal and normalize to kobo precision
+    const amount = normalizeToKobo(initiateDto.amount);
+
+    // Check sufficient balance using Decimal comparison
+    if (fromWallet.availableBalance.lt(amount)) {
       throw new BadRequestException('Insufficient balance');
     }
 
@@ -582,7 +596,7 @@ export class WalletmoduleService {
       fromWalletId: initiateDto.fromWalletId,
       bankCode: initiateDto.bankCode,
       toAccountNumber: initiateDto.toAccountNumber,
-      amount: initiateDto.amount,
+      amount: amount.toString(),
       description: initiateDto.description,
       recipientName: destinationAccountName,
       currencyId: initiateDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
@@ -605,6 +619,7 @@ export class WalletmoduleService {
 
   /**
    * Confirm payout - Step 2: Verify OTP and PIN, execute payout
+   * Implements fee-based payout: 3% fee to organization wallet, 97% to customer
    */
   async confirmPayout(userId: string, otp: string, pin: string) {
     // Verify OTP
@@ -622,67 +637,242 @@ export class WalletmoduleService {
       throw new BadRequestException('No pending payout found. Please initiate a payout first.');
     }
 
-    // Find wallet again to get latest balance
-    const fromWallet = await this.databaseService.wallet.findFirst({
-      where: { virtualAccountNumber: payoutData.fromWalletId },
-      include: {
-        customer: {
+    // Convert amount from string to Decimal and normalize to kobo precision
+    const grossAmount = normalizeToKobo(payoutData.amount as string | number);
+
+    // Calculate payout fee (3%)
+    const { fee, netAmount, feePercentage } = calculatePayoutFee(grossAmount);
+
+    // Use database transaction for atomicity
+    const result = await this.databaseService.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        // Find user wallet
+        const fromWallet = await tx.wallet.findFirst({
+          where: { virtualAccountNumber: payoutData.fromWalletId },
           include: {
-            user: true,
+            customer: {
+              include: {
+                user: true,
+              },
+            },
           },
-        },
+        });
+
+        if (!fromWallet) {
+          throw new NotFoundException('Source wallet not found');
+        }
+
+        if (!fromWallet.virtualAccountNumber) {
+          throw new BadRequestException('Wallet does not have a virtual account number');
+        }
+
+        // Lock user wallet
+        await tx.$queryRaw`
+          SELECT id FROM "Wallet" WHERE id = ${fromWallet.id} FOR UPDATE
+        `;
+
+        // Re-fetch with lock to get latest balance
+        const lockedUserWallet = await tx.wallet.findUnique({
+          where: { id: fromWallet.id },
+          select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
+        });
+
+        if (!lockedUserWallet) {
+          throw new NotFoundException('User wallet not found after lock');
+        }
+
+        // Re-check balance (in case it changed)
+        if (lockedUserWallet.availableBalance.lt(grossAmount)) {
+          throw new BadRequestException('Insufficient balance');
+        }
+
+        // Get admin wallet account number (for tracking purposes)
+        const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
+
+        // Generate transaction references
+        const userTransactionRef = `PAYOUT-${randomUUID()}`;
+        const providerTransactionRef = randomUUID();
+
+        // Step 1: Transfer full amount from user wallet to organization wallet (wallet-to-wallet)
+        // Execute with provider - use account number directly
+        const userToOrgProviderResponse = await this.providerService.walletToWalletTransfer({
+          fromWalletId: fromWallet.virtualAccountNumber,
+          toWalletId: adminWalletAccountNumber, // Use account number directly from env
+          amount: grossAmount.toNumber(),
+          currencyId: fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+          description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
+          reference: userTransactionRef,
+        });
+
+        if (!userToOrgProviderResponse.success) {
+          throw new BadRequestException(
+            `Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`,
+          );
+        }
+
+        // Create DEBIT transaction for user wallet (full amount)
+        // Transaction table only tracks user-facing transactions
+        const userDebitTransaction = await tx.transaction.create({
+          data: {
+            walletId: fromWallet.id,
+            type: TransactionType.PAYOUT,
+            direction: TransactionDirection.DEBIT,
+            status: TransactionStatus.SUCCESS,
+            amount: grossAmount,
+            currencyId: fromWallet.currencyId,
+            reference: userTransactionRef,
+            externalReference: null,
+            narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'}`,
+            metadata: {
+              fee: fee.toString(),
+              netAmount: netAmount.toString(),
+              feePercentage: feePercentage.toString(),
+              feeType: 'payout',
+              destinationAccount: payoutData.toAccountNumber,
+              destinationBank: payoutData.bankCode,
+            },
+          },
+        });
+
+        // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
+        // Get destination account name if not provided
+        let destinationAccountName = payoutData.recipientName as string;
+        if (!destinationAccountName) {
+          try {
+            const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
+              payoutData.bankCode as string,
+              payoutData.toAccountNumber as string,
+            );
+            destinationAccountName = nameEnquiry.accountName;
+          } catch (error) {
+            this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
+            destinationAccountName = 'Unknown';
+          }
+        }
+
+        // Get source account name
+        const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
+          ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
+          : null;
+        const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
+          ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
+          : null;
+        const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
+
+        // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
+        // Execute inter-bank transfer from organization wallet
+        // Use admin wallet account number directly from env
+        const orgToBankProviderResponse = await this.providerService.interBankTransfer({
+          destinationBankCode: payoutData.bankCode as string,
+          destinationAccountNumber: payoutData.toAccountNumber as string,
+          destinationAccountName: destinationAccountName,
+          sourceAccountNumber: adminWalletAccountNumber, // Use account number directly from env
+          sourceAccountName: sourceAccountName,
+          remarks: (payoutData.description as string) || 'Wallet payout',
+          amount: netAmount.toNumber(), // Transfer net amount (97%)
+          currencyId: payoutData.currencyId as string,
+          customerTransactionReference: providerTransactionRef,
+        });
+
+        // Update user wallet balance (deduct full amount)
+        const newUserAvailableBalance = normalizeToKobo(lockedUserWallet.availableBalance.minus(grossAmount));
+        const newUserLedgerBalance = normalizeToKobo(lockedUserWallet.ledgerBalance.minus(grossAmount));
+
+        // Update user wallet
+        await tx.wallet.update({
+          where: { id: fromWallet.id },
+          data: {
+            availableBalance: newUserAvailableBalance,
+            ledgerBalance: newUserLedgerBalance,
+          },
+        });
+
+        // Find or create bank account record
+        let bankAccount = await tx.bankAccount.findFirst({
+          where: {
+            customerId: fromWallet.customerId,
+            accountNumber: payoutData.toAccountNumber as string,
+            bankCode: payoutData.bankCode as string,
+          },
+        });
+
+        if (!bankAccount) {
+          bankAccount = await tx.bankAccount.create({
+            data: {
+              customerId: fromWallet.customerId,
+              accountName: destinationAccountName,
+              accountNumber: payoutData.toAccountNumber as string,
+              bankCode: payoutData.bankCode as string,
+              isVerified: true,
+            },
+          });
+        }
+
+        // Create PayoutTransaction record
+        const payoutTransaction = await tx.payoutTransaction.create({
+          data: {
+            walletId: fromWallet.id,
+            bankAccountId: bankAccount.id,
+            amount: grossAmount, // Full amount requested
+            fee, // 3% fee
+            status: 'PENDING', // Will be updated by webhook
+            transactionId: userDebitTransaction.id, // Link to user debit transaction
+            providerTransactionRef, // Link to provider transaction
+            providerPayload: {
+              userToOrgTransfer: userToOrgProviderResponse.data,
+              orgToBankTransfer: orgToBankProviderResponse,
+              netAmount: netAmount.toString(),
+            },
+          },
+        });
+
+        // Create AdminFee record (separate table for fee tracking)
+        await tx.adminFee.create({
+          data: {
+            walletId: fromWallet.id,
+            customerId: fromWallet.customerId,
+            amount: fee, // 3% fee
+            feeType: 'payout',
+            feePercentage: feePercentage,
+            relatedTransactionId: userDebitTransaction.id, // Link to user's payout transaction
+            payoutTransactionId: payoutTransaction.id, // Link to payout transaction
+            status: 'COLLECTED',
+            grossAmount: grossAmount,
+            netAmount: netAmount,
+            adminWalletAccountNumber: adminWalletAccountNumber,
+            metadata: {
+              destinationAccount: payoutData.toAccountNumber,
+              destinationBank: payoutData.bankCode,
+              recipientName: destinationAccountName,
+              providerTransactionRef: providerTransactionRef,
+              userToOrgTransfer: userToOrgProviderResponse.data,
+              orgToBankTransfer: orgToBankProviderResponse,
+            },
+          },
+        });
+
+        this.logger.log(
+          `Payout confirmed: ${grossAmount.toString()} (Fee: ${fee.toString()}, Net: ${netAmount.toString()}) from wallet ${fromWallet.id} to ${payoutData.toAccountNumber}`,
+        );
+
+        return {
+          success: true,
+          message: orgToBankProviderResponse.message || 'Payout initiated successfully',
+          transactionRef: providerTransactionRef,
+          fromWalletId: fromWallet.id,
+          toAccountNumber: payoutData.toAccountNumber,
+          amount: grossAmount.toString(),
+          fee: fee.toString(),
+          netAmount: netAmount.toString(),
+          payoutTransactionId: payoutTransaction.id,
+        };
       },
-    });
-
-    if (!fromWallet) {
-      throw new NotFoundException('Source wallet not found');
-    }
-
-    if (!fromWallet.virtualAccountNumber) {
-      throw new BadRequestException('Wallet does not have a virtual account number');
-    }
-
-    // Re-check balance (in case it changed)
-    if (Number(fromWallet.availableBalance) < payoutData.amount) {
-      throw new BadRequestException('Insufficient balance');
-    }
-
-    // Generate transaction reference
-    const transactionReference = randomUUID();
-
-    // Execute inter-bank transfer with provider
-    const providerResponse = await this.providerService.interBankTransfer({
-      destinationBankCode: payoutData.bankCode as string,
-      destinationAccountNumber: payoutData.toAccountNumber as string,
-      destinationAccountName: (payoutData.recipientName as string) || 'Unknown',
-      sourceAccountNumber: fromWallet.virtualAccountNumber,
-      sourceAccountName: (payoutData.sourceAccountName as string) || 'Unknown',
-      remarks: (payoutData.description as string) || 'Wallet payout',
-      amount: payoutData.amount as number,
-      currencyId: payoutData.currencyId as string,
-      customerTransactionReference: transactionReference,
-    });
-
-    // Update wallet balance
-    const newAvailableBalance = Number(fromWallet.availableBalance) - payoutData.amount;
-    const newLedgerBalance = Number(fromWallet.ledgerBalance) - payoutData.amount;
-
-    await this.databaseService.wallet.update({
-      where: { id: fromWallet.id },
-      data: {
-        availableBalance: new Decimal(newAvailableBalance),
-        ledgerBalance: new Decimal(newLedgerBalance),
+      {
+        timeout: 15000, // 15 second timeout for payout transaction
       },
-    });
+    );
 
-    return {
-      success: true,
-      message: providerResponse.message || 'Payout completed successfully',
-      transactionRef: providerResponse.transactionRef,
-      fromWalletId: fromWallet.id,
-      toAccountNumber: payoutData.toAccountNumber,
-      amount: payoutData.amount,
-    };
+    return result;
   }
 
   /**

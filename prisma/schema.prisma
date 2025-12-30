@@ -236,6 +236,9 @@ model Customer {
   // KYC workflow requests
   kycRequests KycRequest[]
 
+  // Admin fees
+  adminFees AdminFee[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -347,9 +350,9 @@ model Wallet {
   walletClassificationId String?
   currencyId             String // provider's currency UUID
 
-  availableBalance Decimal  @default(0)
-  ledgerBalance    Decimal  @default(0)
-  overdraft        Decimal? @default(0)
+  availableBalance Decimal  @default(0) @db.Decimal(19, 2)
+  ledgerBalance    Decimal  @default(0) @db.Decimal(19, 2)
+  overdraft        Decimal? @default(0) @db.Decimal(19, 2)
 
   isInternal Boolean @default(false)
   isDefault  Boolean @default(false)
@@ -368,6 +371,7 @@ model Wallet {
   fundings          FundingTransaction[]
   payouts           PayoutTransaction[]
   eventParticipants EventParticipant[]
+  adminFees         AdminFee[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -383,7 +387,7 @@ model Transaction {
   direction TransactionDirection
   status    TransactionStatus    @default(PENDING)
 
-  amount     Decimal
+  amount     Decimal @db.Decimal(19, 2)
   currencyId String // same as wallet.currencyId
 
   groupReference    String?
@@ -397,6 +401,9 @@ model Transaction {
   fundingTransaction FundingTransaction? @relation("FundingTransactionOnTransaction")
   payoutTransaction  PayoutTransaction?  @relation("PayoutTransactionOnTransaction")
   spray              Spray?              @relation("SprayOnTransaction")
+  
+  // Admin fees linked to this transaction
+  adminFees          AdminFee[]          @relation("AdminFeeOnTransaction")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -421,8 +428,8 @@ model Event {
 
   // Event settings
   goLiveInstantly      Boolean  @default(false)
-  sprayGoal            Decimal?
-  minSprayAmount        Decimal?
+  sprayGoal            Decimal? @db.Decimal(19, 2)
+  minSprayAmount        Decimal? @db.Decimal(19, 2)
   enableLeaderboard    Boolean  @default(true)
   anonSprayersAllowed  Boolean  @default(true)
   taggedPerformer      String?
@@ -487,7 +494,7 @@ model Spray {
 
   transactionGroupReference String? @unique
 
-  totalAmount Decimal
+  totalAmount Decimal @db.Decimal(19, 2)
   note        String?
   metadata    Json?
 
@@ -525,8 +532,8 @@ model FundingTransaction {
   walletId String
   wallet   Wallet @relation(fields: [walletId], references: [id])
 
-  amount Decimal
-  fee    Decimal @default(0)
+  amount Decimal @db.Decimal(19, 2)
+  fee    Decimal @default(0) @db.Decimal(19, 2)
 
   channel FundingChannel
   status  FundingStatus  @default(PENDING)
@@ -537,6 +544,9 @@ model FundingTransaction {
 
   providerReference String? @unique
   providerPayload   Json?
+
+  // Admin fee tracking
+  adminFee AdminFee?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -551,8 +561,8 @@ model PayoutTransaction {
   bankAccountId String
   bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
 
-  amount Decimal
-  fee    Decimal @default(0)
+  amount Decimal @db.Decimal(19, 2)
+  fee    Decimal @default(0) @db.Decimal(19, 2)
 
   status PayoutStatus @default(PENDING)
 
@@ -565,10 +575,65 @@ model PayoutTransaction {
 
   providerPayload Json?
 
+  // Admin fee tracking
+  adminFee AdminFee?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([providerTransactionRef])
+}
+
+// =====================
+// ADMIN FEES
+// =====================
+
+model AdminFee {
+  id String @id @default(uuid())
+
+  // Link to customer/wallet (who paid the fee)
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  // Fee details
+  amount      Decimal @db.Decimal(19, 2) // The fee amount
+  feeType     String  // 'funding' | 'payout'
+  feePercentage Decimal? @db.Decimal(5, 4) // e.g., 0.03 for 3%, 0.10 for 10%
+  
+  // Link to the related user transaction (for reference)
+  // This is the transaction that triggered the fee
+  relatedTransactionId String?
+  relatedTransaction   Transaction? @relation("AdminFeeOnTransaction", fields: [relatedTransactionId], references: [id])
+
+  // Link to domain-specific transactions (optional, for detailed tracking)
+  fundingTransactionId String? @unique
+  fundingTransaction   FundingTransaction? @relation(fields: [fundingTransactionId], references: [id])
+
+  payoutTransactionId String? @unique
+  payoutTransaction   PayoutTransaction? @relation(fields: [payoutTransactionId], references: [id])
+
+  // Status tracking
+  status String @default("COLLECTED") // 'COLLECTED' | 'REFUNDED' | 'REVERSED'
+
+  // Metadata
+  grossAmount Decimal? @db.Decimal(19, 2) // Original amount before fee deduction
+  netAmount   Decimal? @db.Decimal(19, 2) // Amount after fee deduction
+  adminWalletAccountNumber String? // Which admin wallet received the fee
+  
+  metadata Json? // Additional context (provider references, etc.)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([walletId])
+  @@index([customerId])
+  @@index([feeType])
+  @@index([relatedTransactionId])
+  @@index([createdAt])
+  @@index([status])
 }
 
 // =====================

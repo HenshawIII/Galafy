@@ -7,11 +7,12 @@ import { PayoutSecurityService } from './services/payout-security.service.js';
 import { WalletExportService } from './services/wallet-export.service.js';
 import { UsersModule } from '../users/users.module.js';
 import { CacheModule } from '../cache/cache.module.js';
+import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 
 @Module({
   imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule],
   controllers: [WalletmoduleController],
-  providers: [WalletmoduleService, PayoutSecurityService, WalletExportService],
+  providers: [WalletmoduleService, PayoutSecurityService, WalletExportService, OrganizationWalletService],
   exports: [WalletmoduleService],
 })
 export class WalletmoduleModule {}

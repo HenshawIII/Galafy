@@ -4,6 +4,7 @@ import { ProviderService } from '../../provider/provider.service.js';
 import { DatabaseService } from '../../database/database.service.js';
 import * as csv from 'fast-csv';
 import PDFDocument from 'pdfkit';
+import { toDisplayAmount } from '../../common/utils/money.util.js';
 
 interface TransactionData {
   id: string;
@@ -292,8 +293,8 @@ export class WalletExportService {
       customerName: wallet.customer.user?.firstName && wallet.customer.user?.lastName
         ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
         : undefined,
-      availableBalance: wallet.availableBalance ? Number(wallet.availableBalance) : undefined,
-      ledgerBalance: wallet.ledgerBalance ? Number(wallet.ledgerBalance) : undefined,
+      availableBalance: wallet.availableBalance ? toDisplayAmount(wallet.availableBalance) : undefined,
+      ledgerBalance: wallet.ledgerBalance ? toDisplayAmount(wallet.ledgerBalance) : undefined,
     };
 
     // Generate file based on format
@@ -314,6 +315,7 @@ export class WalletExportService {
     return { buffer, filename, mimeType };
   }
 }
+
 
 
 

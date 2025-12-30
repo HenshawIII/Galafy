@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, Min, IsUUID, MaxLength } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsNotEmpty, IsOptional, IsDecimal, Min, IsUUID, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class WalletToWalletTransferDto {
@@ -13,11 +13,26 @@ export class WalletToWalletTransferDto {
   @IsNotEmpty({ message: 'To wallet account number is required' })
   toWalletId: string;
 
-  @ApiProperty({ example: 1000.50, description: 'Transfer amount', minimum: 0.01 })
-  @IsNumber({}, { message: 'Amount must be a number' })
-  @Type(() => Number)
-  @Min(0.01, { message: 'Amount must be greater than 0' })
-  amount: number;
+  @ApiProperty({ 
+    example: '1000.50', 
+    description: 'Transfer amount (max 2 decimal places for kobo precision)', 
+    minimum: 0.01 
+  })
+  @IsString({ message: 'Amount must be a string' })
+  @IsNotEmpty({ message: 'Amount is required' })
+  @IsDecimal({ decimal_digits: '0,2' }, { 
+    message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)' 
+  })
+  @Transform(({ value }) => {
+    // Normalize to string with 2 decimal places
+    if (typeof value === 'number') {
+      return value.toFixed(2);
+    }
+    const num = parseFloat(value);
+    if (isNaN(num)) return value;
+    return num.toFixed(2);
+  })
+  amount: string;
 
   @ApiPropertyOptional({ example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9', description: 'Currency ID' })
   @IsOptional()
@@ -52,11 +67,26 @@ export class FastWalletTransferDto {
   @IsNotEmpty({ message: 'Bank code is required' })
   bankCode: string;
 
-  @ApiProperty({ example: 1000.50, description: 'Transfer amount', minimum: 0.01 })
-  @IsNumber({}, { message: 'Amount must be a number' })
-  @Type(() => Number)
-  @Min(0.01, { message: 'Amount must be greater than 0' })
-  amount: number;
+  @ApiProperty({ 
+    example: '1000.50', 
+    description: 'Transfer amount (max 2 decimal places for kobo precision)', 
+    minimum: 0.01 
+  })
+  @IsString({ message: 'Amount must be a string' })
+  @IsNotEmpty({ message: 'Amount is required' })
+  @IsDecimal({ decimal_digits: '0,2' }, { 
+    message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)' 
+  })
+  @Transform(({ value }) => {
+    // Normalize to string with 2 decimal places
+    if (typeof value === 'number') {
+      return value.toFixed(2);
+    }
+    const num = parseFloat(value);
+    if (isNaN(num)) return value;
+    return num.toFixed(2);
+  })
+  amount: string;
 
   @ApiPropertyOptional({ example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9', description: 'Currency ID' })
   @IsOptional()

@@ -1,4 +1,5 @@
-import { IsString, IsNotEmpty, Length, Matches, IsNumber, Min, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, Length, Matches, IsDecimal, IsOptional } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SetPayoutPinDto {
@@ -31,10 +32,26 @@ export class InitiatePayoutDto {
   @IsNotEmpty()
   toAccountNumber: string;
 
-  @ApiProperty({ description: 'Transfer amount', example: 1000.50, minimum: 0.01 })
-  @IsNumber()
-  @Min(0.01)
-  amount: number;
+  @ApiProperty({ 
+    description: 'Transfer amount (max 2 decimal places for kobo precision)', 
+    example: '1000.50', 
+    minimum: 0.01 
+  })
+  @IsString({ message: 'Amount must be a string' })
+  @IsNotEmpty({ message: 'Amount is required' })
+  @IsDecimal({ decimal_digits: '0,2' }, { 
+    message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)' 
+  })
+  @Transform(({ value }) => {
+    // Normalize to string with 2 decimal places
+    if (typeof value === 'number') {
+      return value.toFixed(2);
+    }
+    const num = parseFloat(value);
+    if (isNaN(num)) return value;
+    return num.toFixed(2);
+  })
+  amount: string;
 
   @ApiPropertyOptional({ description: 'Transfer description', example: 'Payment for services' })
   @IsString()
