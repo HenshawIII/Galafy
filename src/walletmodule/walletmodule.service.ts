@@ -26,6 +26,9 @@ import { TransactionType, TransactionDirection, TransactionStatus } from '../../
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
+import { WalletRiskService } from '../common/services/wallet-risk.service.js';
+import { AmlLoggingService } from '../common/services/aml-logging.service.js';
+import { DeviceAbuseDetectionService, DeviceInfo } from '../common/services/device-abuse-detection.service.js';
 
 @Injectable()
 export class WalletmoduleService {
@@ -37,6 +40,9 @@ export class WalletmoduleService {
     private readonly payoutSecurityService: PayoutSecurityService,
     private readonly cacheService: CacheService,
     private readonly organizationWalletService: OrganizationWalletService,
+    private readonly walletRiskService: WalletRiskService,
+    private readonly amlLoggingService: AmlLoggingService,
+    private readonly deviceAbuseDetectionService: DeviceAbuseDetectionService,
   ) {}
 
   /**
@@ -46,7 +52,11 @@ export class WalletmoduleService {
   /**
    * Create wallet by userId
    */
-  async createWalletByUserId(userId: string, createWalletDto: CreateWalletDto) {
+  async createWalletByUserId(
+    userId: string,
+    createWalletDto: CreateWalletDto,
+    deviceInfo?: DeviceInfo,
+  ) {
     // Find customer by userId
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
@@ -66,6 +76,24 @@ export class WalletmoduleService {
     // Check if customer is at least Tier 1
     if (customer.tier === KycTier.Tier_0) {
       throw new BadRequestException('Customer must be at least Tier 1 to create a wallet');
+    }
+
+    // Detect device/IP abuse before creating wallet
+    let abuseResult;
+    if (deviceInfo) {
+      abuseResult = await this.deviceAbuseDetectionService.detectAbuse(
+        userId,
+        customer.id,
+        deviceInfo,
+      );
+
+      // Log warning if abuse detected (but don't block - let compliance review)
+      if (abuseResult.isAbuse) {
+        this.logger.warn(
+          `⚠️ Wallet creation flagged for abuse detection: User ${userId}, ` +
+            `Reasons: ${abuseResult.reasons.join(', ')}`,
+        );
+      }
     }
 
     // Generate wallet ID (UUID) - Prisma will auto-generate with @default(uuid())
@@ -147,6 +175,17 @@ export class WalletmoduleService {
         },
       },
     });
+
+    // Record wallet creation event with device information
+    if (deviceInfo) {
+      await this.deviceAbuseDetectionService.recordWalletCreation(
+        wallet.id,
+        userId,
+        customer.id,
+        deviceInfo,
+        abuseResult,
+      );
+    }
 
     return wallet;
   }
@@ -323,6 +362,9 @@ export class WalletmoduleService {
     // Convert amount from string to Decimal and normalize to kobo precision
     const amount = normalizeToKobo(transferDto.amount);
 
+    // Check wallet freeze status (hard freeze blocks all transactions)
+    await this.walletRiskService.checkWalletFreezeStatus(fromWallet.id, true);
+
     // Check sufficient balance using Decimal comparison
     if (fromWallet.availableBalance.lt(amount)) {
       throw new BadRequestException('Insufficient balance');
@@ -420,7 +462,7 @@ export class WalletmoduleService {
       }),
     ]);
 
-    return {
+    const result = {
       success: true,
       message: providerResponse.message,
       fromWalletId: fromWallet.virtualAccountNumber,
@@ -432,6 +474,16 @@ export class WalletmoduleService {
       groupReference: groupReference,
       data: providerResponse.data,
     };
+
+    // Recalculate risk scores for both wallets (outside transaction to avoid blocking)
+    this.walletRiskService.updateWalletRiskScore(fromWallet.id).catch((error) => {
+      this.logger.error(`Failed to update risk score for sender wallet: ${error.message}`);
+    });
+    this.walletRiskService.updateWalletRiskScore(toWallet.id).catch((error) => {
+      this.logger.error(`Failed to update risk score for receiver wallet: ${error.message}`);
+    });
+
+    return result;
   }
 
   /**
@@ -686,6 +738,63 @@ export class WalletmoduleService {
           throw new BadRequestException('Insufficient balance');
         }
 
+        // Check wallet freeze status (soft freeze blocks payouts, hard freeze blocks all)
+        // For payouts, we check with blockAllTransactions=false to allow soft freeze to block
+        const wallet = await tx.wallet.findUnique({
+          where: { id: fromWallet.id },
+          select: { riskStatus: true, riskScore: true },
+        });
+
+        if (wallet?.riskStatus === 'HARD_FREEZE') {
+          // Log AML transaction block
+          this.amlLoggingService.logTransactionBlocked(
+            fromWallet.id,
+            'N/A', // Transaction ID not yet created
+            'PAYOUT',
+            'DEBIT',
+            grossAmount,
+            `Hard freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
+            wallet.riskStatus,
+            wallet.riskScore?.toNumber(),
+            fromWallet.customerId,
+            userId,
+            {
+              destinationAccount: payoutData.toAccountNumber,
+              destinationBank: payoutData.bankCode,
+            },
+          );
+
+          throw new BadRequestException(
+            `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
+            `All transactions are blocked. Please contact support.`,
+          );
+        }
+
+        if (wallet?.riskStatus === 'SOFT_FREEZE') {
+          // Log AML transaction block
+          this.amlLoggingService.logTransactionBlocked(
+            fromWallet.id,
+            'N/A', // Transaction ID not yet created
+            'PAYOUT',
+            'DEBIT',
+            grossAmount,
+            `Soft freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
+            wallet.riskStatus,
+            wallet.riskScore?.toNumber(),
+            fromWallet.customerId,
+            userId,
+            {
+              destinationAccount: payoutData.toAccountNumber,
+              destinationBank: payoutData.bankCode,
+            },
+          );
+
+          throw new BadRequestException(
+            `Wallet is soft frozen due to elevated risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
+            `Payouts are blocked. Please contact support.`,
+          );
+        }
+
         // Get admin wallet account number (for tracking purposes)
         const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
 
@@ -887,6 +996,11 @@ export class WalletmoduleService {
         timeout: 15000, // 15 second timeout for payout transaction
       },
     );
+
+    // Recalculate risk score after payout (outside transaction to avoid blocking)
+    this.walletRiskService.updateWalletRiskScore(result.fromWalletId).catch((error) => {
+      this.logger.error(`Failed to update risk score after payout: ${error.message}`);
+    });
 
     return result;
   }

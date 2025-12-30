@@ -63,5 +63,26 @@ export class CreateWalletDto {
   @IsOptional()
   @IsString({ message: 'Mobile number must be a string' })
   mobNum?: string;
+
+  // Device information (optional, for abuse detection)
+  @ApiPropertyOptional({ example: 'device-token-123', description: 'Device token from NotificationDevice' })
+  @IsOptional()
+  @IsString({ message: 'Device token must be a string' })
+  deviceToken?: string;
+
+  @ApiPropertyOptional({ example: 'fingerprint-hash-123', description: 'Browser fingerprint (client-generated)' })
+  @IsOptional()
+  @IsString({ message: 'Browser fingerprint must be a string' })
+  browserFingerprint?: string;
+
+  @ApiPropertyOptional({ example: 'iOS 17.0', description: 'Operating system' })
+  @IsOptional()
+  @IsString({ message: 'OS must be a string' })
+  os?: string;
+
+  @ApiPropertyOptional({ example: 'Chrome 120.0', description: 'Browser name and version' })
+  @IsOptional()
+  @IsString({ message: 'Browser must be a string' })
+  browser?: string;
 }
 

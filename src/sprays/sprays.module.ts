@@ -8,6 +8,9 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { SpraysController } from './sprays.controller.js';
 import { SpraysService } from './sprays.service.js';
 import { SprayRateLimitGuard } from './guards/spray-rate-limit.guard.js';
+import { WalletRiskService } from '../common/services/wallet-risk.service.js';
+import { SprayAnomalyService } from './services/spray-anomaly.service.js';
+import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 
 @Module({
   imports: [
@@ -19,7 +22,7 @@ import { SprayRateLimitGuard } from './guards/spray-rate-limit.guard.js';
     forwardRef(() => NotificationsModule),
   ],
   controllers: [SpraysController],
-  providers: [SpraysService, SprayRateLimitGuard],
+  providers: [SpraysService, SprayRateLimitGuard, WalletRiskService, SprayAnomalyService, AmlLoggingService],
   exports: [SpraysService],
 })
 export class SpraysModule {}

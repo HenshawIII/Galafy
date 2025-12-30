@@ -15,6 +15,7 @@ import { config } from 'dotenv';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { calculateFundingFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
+import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 config();
 
@@ -27,6 +28,7 @@ export class WebhooksService {
     private readonly databaseService: DatabaseService,
     private readonly organizationWalletService: OrganizationWalletService,
     private readonly providerService: ProviderService,
+    private readonly walletRiskService: WalletRiskService,
   ) {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     if (!this.apiKey) {
@@ -60,10 +62,21 @@ export class WebhooksService {
     const grossAmount = normalizeToKobo(data.amount);
     const providerFee = normalizeToKobo(data.fee || 0);
 
+    // Find wallet first to get wallet ID for risk score update
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: data.accountNumber },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException(`Wallet not found for account number: ${data.accountNumber}`);
+    }
+
+    const walletId = wallet.id;
+
     // Use database transaction with row locks for concurrency and idempotency
     const result = await this.databaseService.$transaction(
       async (tx: Prisma.TransactionClient) => {
-        // Find wallet by account number
+        // Re-fetch wallet within transaction for locking
         const wallet = await tx.wallet.findFirst({
           where: { virtualAccountNumber: data.accountNumber },
           include: { customer: true },
@@ -311,6 +324,12 @@ export class WebhooksService {
       },
     );
 
+    // Recalculate risk score after transaction (outside transaction to avoid blocking)
+    // This runs asynchronously so it doesn't slow down the webhook response
+    this.walletRiskService.updateWalletRiskScore(walletId).catch((error) => {
+      this.logger.error(`Failed to update risk score after inflow: ${error.message}`);
+    });
+
     return result;
   }
 
@@ -321,10 +340,23 @@ export class WebhooksService {
   async handlePayoutWebhook(webhookDto: PayoutWebhookDto) {
     const { data } = webhookDto;
 
+    // Find payout transaction first to get wallet ID for risk score update
+    const payoutTransaction = await this.databaseService.payoutTransaction.findUnique({
+      where: { providerTransactionRef: data.paymentReference },
+      select: { walletId: true },
+    });
+
+    if (!payoutTransaction) {
+      this.logger.warn(`Payout transaction not found for reference: ${data.paymentReference}`);
+      throw new NotFoundException(`Payout transaction not found for reference: ${data.paymentReference}`);
+    }
+
+    const walletId = payoutTransaction.walletId;
+
     // Use database transaction for atomicity
     const result = await this.databaseService.$transaction(
       async (tx: Prisma.TransactionClient) => {
-        // Find payout transaction by provider reference
+        // Re-fetch payout transaction within transaction
         const payoutTransaction = await tx.payoutTransaction.findUnique({
           where: { providerTransactionRef: data.paymentReference },
           include: {
@@ -473,6 +505,11 @@ export class WebhooksService {
         timeout: 10000,
       },
     );
+
+    // Recalculate risk score after payout webhook (outside transaction to avoid blocking)
+    this.walletRiskService.updateWalletRiskScore(walletId).catch((error) => {
+      this.logger.error(`Failed to update risk score after payout webhook: ${error.message}`);
+    });
 
     return result;
   }

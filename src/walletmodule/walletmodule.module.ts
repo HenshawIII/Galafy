@@ -8,11 +8,14 @@ import { WalletExportService } from './services/wallet-export.service.js';
 import { UsersModule } from '../users/users.module.js';
 import { CacheModule } from '../cache/cache.module.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
+import { WalletRiskService } from '../common/services/wallet-risk.service.js';
+import { AmlLoggingService } from '../common/services/aml-logging.service.js';
+import { DeviceAbuseDetectionService } from '../common/services/device-abuse-detection.service.js';
 
 @Module({
   imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule],
   controllers: [WalletmoduleController],
-  providers: [WalletmoduleService, PayoutSecurityService, WalletExportService, OrganizationWalletService],
+  providers: [WalletmoduleService, PayoutSecurityService, WalletExportService, OrganizationWalletService, WalletRiskService, AmlLoggingService, DeviceAbuseDetectionService],
   exports: [WalletmoduleService],
 })
 export class WalletmoduleModule {}

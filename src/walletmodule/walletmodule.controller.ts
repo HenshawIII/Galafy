@@ -11,6 +11,7 @@ import {
   Request,
   Res,
   Header,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -22,6 +23,8 @@ import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
 import { SetPayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payout-security.dto.js';
+import { extractDeviceInfo } from '../common/utils/request.util.js';
+import type { Request as ExpressRequest } from 'express';
 
 @ApiTags('wallets')
 @Controller('wallets')
@@ -42,13 +45,18 @@ export class WalletmoduleController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async createWallet(
     @Request() req: any,
+    @Req() expressReq: ExpressRequest,
     @Body(ValidationPipe) createWalletDto: CreateWalletDto,
   ) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
-    return this.walletmoduleService.createWalletByUserId(userId, createWalletDto);
+
+    // Extract device information from request
+    const deviceInfo = extractDeviceInfo(expressReq, createWalletDto);
+
+    return this.walletmoduleService.createWalletByUserId(userId, createWalletDto, deviceInfo);
   }
 
   @Get()

@@ -20,6 +20,9 @@ import { TransactionType, TransactionDirection, TransactionStatus } from '../../
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { WalletRiskService } from '../common/services/wallet-risk.service.js';
+import { SprayAnomalyService } from './services/spray-anomaly.service.js';
+import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 
 export interface SprayResult {
   spray: any;
@@ -43,6 +46,9 @@ export class SpraysService {
     private readonly eventsService: EventsService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly walletRiskService: WalletRiskService,
+    private readonly sprayAnomalyService: SprayAnomalyService,
+    private readonly amlLoggingService: AmlLoggingService,
   ) {}
 
   /**
@@ -275,6 +281,19 @@ export class SpraysService {
           throw new BadRequestException('Insufficient balance');
         }
 
+        // Check wallet freeze status (hard freeze blocks all transactions)
+        const wallet = await tx.wallet.findUnique({
+          where: { id: sprayerWallet.id },
+          select: { riskStatus: true, riskScore: true },
+        });
+
+        if (wallet?.riskStatus === 'HARD_FREEZE') {
+          throw new BadRequestException(
+            `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
+            `All transactions are blocked. Please contact support.`,
+          );
+        }
+
         return locked;
       },
       {
@@ -405,6 +424,32 @@ export class SpraysService {
         timeout: 10000, // 10 seconds timeout
       },
     );
+
+    // Recalculate risk scores for both wallets (outside transaction to avoid blocking)
+    this.walletRiskService.updateWalletRiskScore(sprayerWallet.id).catch((error) => {
+      this.logger.error(`Failed to update risk score for sprayer wallet: ${error.message}`);
+    });
+    this.walletRiskService.updateWalletRiskScore(receiverWallet.id).catch((error) => {
+      this.logger.error(`Failed to update risk score for receiver wallet: ${error.message}`);
+    });
+
+    // Detect anomalies (async, non-blocking)
+    const spray = result.spray;
+    if (spray && spray.transactionId) {
+      this.sprayAnomalyService
+        .detectAnomalies(
+          spray.id,
+          spray.transactionId,
+          sprayerWallet.id,
+          receiverWallet.id,
+          amount,
+          eventId,
+          spray.createdAt,
+        )
+        .catch((error) => {
+          this.logger.error(`Failed to detect anomalies for spray ${spray.id}: ${error.message}`);
+        });
+    }
 
     // Compute event totals
     const eventTotals = await this.computeEventTotals(eventId);

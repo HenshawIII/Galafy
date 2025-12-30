@@ -70,14 +70,14 @@ export class OrganizationWalletService {
     this.cachedWallet = wallet;
     this.cacheTimestamp = now;
 
-    if (!wallet) {
-      this.logger.warn(
-        `Admin wallet record not found in database for account: ${this.adminWalletAccountNumber}. ` +
-        `This is okay - the wallet is managed by the provider. We'll use the account number directly for transfers.`,
-      );
-    } else {
-      this.logger.log(`Admin wallet record found: ${wallet.id} (Account: ${this.adminWalletAccountNumber})`);
-    }
+    // if (!wallet) {
+    //   this.logger.warn(
+    //     `Admin wallet record not found in database for account: ${this.adminWalletAccountNumber}. ` +
+    //     `This is okay - the wallet is managed by the provider. We'll use the account number directly for transfers.`,
+    //   );
+    // } else {
+    //   this.logger.log(`Admin wallet record found: ${wallet.id} (Account: ${this.adminWalletAccountNumber})`);
+    // }
 
     return wallet;
   }

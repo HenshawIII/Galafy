@@ -158,15 +158,15 @@ model UserSettings {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Privacy Settings
-  showOnLeaderboard  Boolean @default(false)
+  showOnLeaderboard   Boolean @default(false)
   allowMentionsOrTags Boolean @default(true)
   showOnlineStatus    Boolean @default(false)
 
   // Notification Settings
-  pushNotifications   Boolean @default(true)
-  eventReminders      Boolean @default(true)
-  leaderboardUpdates  Boolean @default(false)
-  newFollowerAlerts   Boolean @default(false)
+  pushNotifications  Boolean @default(true)
+  eventReminders     Boolean @default(true)
+  leaderboardUpdates Boolean @default(false)
+  newFollowerAlerts  Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -187,6 +187,9 @@ model NotificationDevice {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Relations
+  walletCreationEvents WalletCreationEvent[]
 }
 
 // =====================
@@ -364,14 +367,21 @@ model Wallet {
   virtualBankCode      String?
   virtualBankName      String?
 
+  // Risk scoring fields
+  riskScore          Decimal?  @db.Decimal(5, 2) // Current risk score (0-100)
+  riskStatus         String    @default("NORMAL") // NORMAL, SOFT_FREEZE, HARD_FREEZE
+  riskScoreUpdatedAt DateTime?
+  riskMetadata       Json? // Store component scores and calculation details
+
   // Relations
   transactions      Transaction[]
-  spraysAsSprayer   Spray[]              @relation("SpraySprayerWallet")
-  spraysAsReceiver  Spray[]              @relation("SprayReceiverWallet")
+  spraysAsSprayer   Spray[]               @relation("SpraySprayerWallet")
+  spraysAsReceiver  Spray[]               @relation("SprayReceiverWallet")
   fundings          FundingTransaction[]
   payouts           PayoutTransaction[]
   eventParticipants EventParticipant[]
   adminFees         AdminFee[]
+  creationEvents    WalletCreationEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -401,9 +411,9 @@ model Transaction {
   fundingTransaction FundingTransaction? @relation("FundingTransactionOnTransaction")
   payoutTransaction  PayoutTransaction?  @relation("PayoutTransactionOnTransaction")
   spray              Spray?              @relation("SprayOnTransaction")
-  
+
   // Admin fees linked to this transaction
-  adminFees          AdminFee[]          @relation("AdminFeeOnTransaction")
+  adminFees AdminFee[] @relation("AdminFeeOnTransaction")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -427,12 +437,12 @@ model Event {
   imagePath   String?
 
   // Event settings
-  goLiveInstantly      Boolean  @default(false)
-  sprayGoal            Decimal? @db.Decimal(19, 2)
-  minSprayAmount        Decimal? @db.Decimal(19, 2)
-  enableLeaderboard    Boolean  @default(true)
-  anonSprayersAllowed  Boolean  @default(true)
-  taggedPerformer      String?
+  goLiveInstantly     Boolean  @default(false)
+  sprayGoal           Decimal? @db.Decimal(19, 2)
+  minSprayAmount      Decimal? @db.Decimal(19, 2)
+  enableLeaderboard   Boolean  @default(true)
+  anonSprayersAllowed Boolean  @default(true)
+  taggedPerformer     String?
 
   // Scheduling
   hostUserId String
@@ -599,30 +609,30 @@ model AdminFee {
   customer   Customer @relation(fields: [customerId], references: [id])
 
   // Fee details
-  amount      Decimal @db.Decimal(19, 2) // The fee amount
-  feeType     String  // 'funding' | 'payout'
+  amount        Decimal  @db.Decimal(19, 2) // The fee amount
+  feeType       String // 'funding' | 'payout'
   feePercentage Decimal? @db.Decimal(5, 4) // e.g., 0.03 for 3%, 0.10 for 10%
-  
+
   // Link to the related user transaction (for reference)
   // This is the transaction that triggered the fee
   relatedTransactionId String?
   relatedTransaction   Transaction? @relation("AdminFeeOnTransaction", fields: [relatedTransactionId], references: [id])
 
   // Link to domain-specific transactions (optional, for detailed tracking)
-  fundingTransactionId String? @unique
+  fundingTransactionId String?             @unique
   fundingTransaction   FundingTransaction? @relation(fields: [fundingTransactionId], references: [id])
 
-  payoutTransactionId String? @unique
+  payoutTransactionId String?            @unique
   payoutTransaction   PayoutTransaction? @relation(fields: [payoutTransactionId], references: [id])
 
   // Status tracking
   status String @default("COLLECTED") // 'COLLECTED' | 'REFUNDED' | 'REVERSED'
 
   // Metadata
-  grossAmount Decimal? @db.Decimal(19, 2) // Original amount before fee deduction
-  netAmount   Decimal? @db.Decimal(19, 2) // Amount after fee deduction
+  grossAmount              Decimal? @db.Decimal(19, 2) // Original amount before fee deduction
+  netAmount                Decimal? @db.Decimal(19, 2) // Amount after fee deduction
   adminWalletAccountNumber String? // Which admin wallet received the fee
-  
+
   metadata Json? // Additional context (provider references, etc.)
 
   createdAt DateTime @default(now())
@@ -689,4 +699,50 @@ model KycRequest {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// =====================
+// WALLET CREATION TRACKING
+// =====================
+
+model WalletCreationEvent {
+  id String @id @default(uuid())
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  userId     String
+  customerId String
+
+  // Device identification
+  deviceToken String? // Link to NotificationDevice.deviceToken
+  deviceId    String? // Reference to NotificationDevice.id
+  device      NotificationDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  // Network information
+  ipAddress String? // IP address from request
+  userAgent String? // Browser/OS information from User-Agent header
+
+  // Browser fingerprint (can be sent from client)
+  browserFingerprint String? // Client-side generated fingerprint
+  os                 String? // Operating system
+  browser            String? // Browser name/version
+
+  // Abuse detection flags
+  isFlagged         Boolean @default(false) // Flagged for review
+  flagReason        String? // Reason for flagging
+  deviceWalletCount Int? // Number of wallets from this device at creation time
+  ipWalletCount     Int? // Number of wallets from this IP at creation time
+
+  // Metadata
+  metadata Json? // Additional context (request headers, etc.)
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceToken])
+  @@index([ipAddress])
+  @@index([userId])
+  @@index([walletId])
+  @@index([isFlagged])
+  @@index([createdAt])
 }
