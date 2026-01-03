@@ -16,6 +16,7 @@ import {
   GetWalletHistoryDto,
   WalletToWalletTransferDto,
   FastWalletTransferDto,
+  UpdateBankAccountDto,
 } from './dto/index.js';
 import { InitiatePayoutDto } from './dto/payout-security.dto.js';
 import { PayoutSecurityService } from './services/payout-security.service.js';
@@ -29,6 +30,7 @@ import { OrganizationWalletService } from '../common/services/organization-walle
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { DeviceAbuseDetectionService, DeviceInfo } from '../common/services/device-abuse-detection.service.js';
+import { EmailService } from '../users/email.service.js';
 
 @Injectable()
 export class WalletmoduleService {
@@ -43,6 +45,7 @@ export class WalletmoduleService {
     private readonly walletRiskService: WalletRiskService,
     private readonly amlLoggingService: AmlLoggingService,
     private readonly deviceAbuseDetectionService: DeviceAbuseDetectionService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -1002,6 +1005,34 @@ export class WalletmoduleService {
       this.logger.error(`Failed to update risk score after payout: ${error.message}`);
     });
 
+    // Send email notification for withdrawal request (PENDING status)
+    if (result.success) {
+      // Fetch wallet with user info for email
+      const walletWithUser = await this.databaseService.wallet.findUnique({
+        where: { id: result.fromWalletId },
+        include: {
+          customer: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
+
+      if (walletWithUser?.customer?.user?.email) {
+        this.emailService.sendWithdrawalStatusAlert(
+          walletWithUser.customer.user.email,
+          result.amount,
+          'PENDING',
+          result.toAccountNumber,
+          result.transactionRef,
+          'Your withdrawal request has been submitted and is being processed.',
+        ).catch((error) => {
+          this.logger.error(`Failed to send withdrawal request email: ${error.message}`);
+        });
+      }
+    }
+
     return result;
   }
 
@@ -1057,5 +1088,107 @@ export class WalletmoduleService {
    */
   async setPayoutPin(userId: string, pin: string): Promise<void> {
     await this.payoutSecurityService.setPayoutPin(userId, pin);
+  }
+
+  /**
+   * Update bank account details for a user
+   */
+  async updateBankAccount(userId: string, updateDto: UpdateBankAccountDto): Promise<any> {
+    // Find customer by userId
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      include: {
+        user: true,
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    // Get destination account name if not provided (via name enquiry)
+    let accountName = updateDto.accountName;
+    if (!accountName) {
+      try {
+        const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
+          updateDto.bankCode,
+          updateDto.accountNumber,
+        );
+        accountName = nameEnquiry.accountName;
+      } catch (error) {
+        this.logger.warn(`Name enquiry failed: ${error.message}. Proceeding without account name.`);
+        accountName = 'Unknown';
+      }
+    }
+
+    // Find existing bank account for this customer
+    const existingBankAccount = await this.databaseService.bankAccount.findFirst({
+      where: {
+        customerId: customer.id,
+        accountNumber: updateDto.accountNumber,
+        bankCode: updateDto.bankCode,
+      },
+    });
+
+    let oldAccountNumber: string | null = null;
+    let bankAccount;
+
+    if (existingBankAccount) {
+      // Update existing bank account
+      oldAccountNumber = existingBankAccount.accountNumber;
+      bankAccount = await this.databaseService.bankAccount.update({
+        where: { id: existingBankAccount.id },
+        data: {
+          accountName,
+          accountNumber: updateDto.accountNumber,
+          bankCode: updateDto.bankCode,
+          isDefault: updateDto.isDefault ?? existingBankAccount.isDefault,
+        },
+      });
+    } else {
+      // Create new bank account
+      // If setting as default, unset other default accounts
+      if (updateDto.isDefault) {
+        await this.databaseService.bankAccount.updateMany({
+          where: {
+            customerId: customer.id,
+            isDefault: true,
+          },
+          data: {
+            isDefault: false,
+          },
+        });
+      }
+
+      bankAccount = await this.databaseService.bankAccount.create({
+        data: {
+          customerId: customer.id,
+          accountName,
+          accountNumber: updateDto.accountNumber,
+          bankCode: updateDto.bankCode,
+          isDefault: updateDto.isDefault ?? false,
+          isVerified: true,
+        },
+      });
+    }
+
+    // Send email notification (don't await to avoid blocking)
+    if (customer.user?.email) {
+      this.emailService.sendBankAccountChangeAlert(
+        customer.user.email,
+        oldAccountNumber || 'N/A',
+        updateDto.accountNumber,
+        updateDto.bankCode,
+        'success',
+      ).catch((error) => {
+        this.logger.error(`Failed to send bank account change email: ${error.message}`);
+      });
+    }
+
+    return {
+      success: true,
+      message: existingBankAccount ? 'Bank account updated successfully' : 'Bank account added successfully',
+      bankAccount,
+    };
   }
 }

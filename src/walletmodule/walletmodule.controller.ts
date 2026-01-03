@@ -23,6 +23,7 @@ import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
 import { SetPayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payout-security.dto.js';
+import { UpdateBankAccountDto } from './dto/update-bank-account.dto.js';
 import { extractDeviceInfo } from '../common/utils/request.util.js';
 import type { Request as ExpressRequest } from 'express';
 
@@ -241,5 +242,23 @@ export class WalletmoduleController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.walletmoduleService.confirmPayout(userId, confirmDto.otp, confirmDto.pin);
+  }
+
+  @Put('bank-account')
+  @ApiOperation({ summary: 'Update or add bank account details' })
+  @ApiBody({ type: UpdateBankAccountDto })
+  @ApiResponse({ status: 200, description: 'Bank account updated successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid bank account details' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async updateBankAccount(
+    @Request() req: any,
+    @Body(ValidationPipe) updateDto: UpdateBankAccountDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.updateBankAccount(userId, updateDto);
   }
 }

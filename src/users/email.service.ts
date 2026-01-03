@@ -147,5 +147,130 @@ export class EmailService {
       throw new Error(`Failed to send payout OTP email: ${error.message}`);
     }
   }
+
+  async sendWalletFundingAlert(
+    email: string,
+    amount: string,
+    accountNumber: string,
+    reference: string,
+  ): Promise<void> {
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'Wallet Funding Successful',
+      text: `Your wallet has been funded with ${amount}. Account: ${accountNumber}, Reference: ${reference}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #28a745;">Wallet Funding Successful</h2>
+          <p>Your wallet has been successfully funded.</p>
+          <div style="background-color: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 5px;">
+            <p style="margin: 5px 0;"><strong>Amount:</strong> ${amount}</p>
+            <p style="margin: 5px 0;"><strong>Account Number:</strong> ${accountNumber}</p>
+            <p style="margin: 5px 0;"><strong>Transaction Reference:</strong> ${reference}</p>
+          </div>
+          <p>If you did not initiate this funding, please contact support immediately.</p>
+        </div>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Wallet funding alert email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending wallet funding alert email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      // Don't throw - email failure shouldn't break the funding process
+    }
+  }
+
+  async sendWithdrawalStatusAlert(
+    email: string,
+    amount: string,
+    status: string,
+    accountNumber: string,
+    reference: string,
+    message?: string,
+  ): Promise<void> {
+    const statusColor = status.toLowerCase() === 'success' ? '#28a745' : status.toLowerCase() === 'failed' ? '#dc3545' : '#ffc107';
+    const statusText = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: `Withdrawal ${statusText}`,
+      text: `Your withdrawal request of ${amount} has been ${statusText.toLowerCase()}. Account: ${accountNumber}, Reference: ${reference}${message ? `. Message: ${message}` : ''}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: ${statusColor};">Withdrawal ${statusText}</h2>
+          <p>Your withdrawal request has been ${statusText.toLowerCase()}.</p>
+          <div style="background-color: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 5px;">
+            <p style="margin: 5px 0;"><strong>Amount:</strong> ${amount}</p>
+            <p style="margin: 5px 0;"><strong>Status:</strong> <span style="color: ${statusColor}; font-weight: bold;">${statusText}</span></p>
+            <p style="margin: 5px 0;"><strong>Account Number:</strong> ${accountNumber}</p>
+            <p style="margin: 5px 0;"><strong>Transaction Reference:</strong> ${reference}</p>
+            ${message ? `<p style="margin: 5px 0;"><strong>Message:</strong> ${message}</p>` : ''}
+          </div>
+          ${status.toLowerCase() === 'failed' ? '<p style="color: #dc3545;">If you believe this is an error, please contact support.</p>' : ''}
+        </div>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Withdrawal status alert email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending withdrawal status alert email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      // Don't throw - email failure shouldn't break the withdrawal process
+    }
+  }
+
+  async sendBankAccountChangeAlert(
+    email: string,
+    oldAccountNumber: string,
+    newAccountNumber: string,
+    bankCode: string,
+    status: string,
+  ): Promise<void> {
+    const statusColor = status.toLowerCase() === 'approved' || status.toLowerCase() === 'success' ? '#28a745' : status.toLowerCase() === 'pending' ? '#ffc107' : '#dc3545';
+    const statusText = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'Bank Account Change Request',
+      text: `Your bank account change request has been ${statusText.toLowerCase()}. Old Account: ${oldAccountNumber}, New Account: ${newAccountNumber}, Bank Code: ${bankCode}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Bank Account Change Request</h2>
+          <p>Your bank account change request has been ${statusText.toLowerCase()}.</p>
+          <div style="background-color: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 5px;">
+            <p style="margin: 5px 0;"><strong>Status:</strong> <span style="color: ${statusColor}; font-weight: bold;">${statusText}</span></p>
+            <p style="margin: 5px 0;"><strong>Previous Account:</strong> ${oldAccountNumber}</p>
+            <p style="margin: 5px 0;"><strong>New Account:</strong> ${newAccountNumber}</p>
+            <p style="margin: 5px 0;"><strong>Bank Code:</strong> ${bankCode}</p>
+          </div>
+          ${status.toLowerCase() === 'pending' ? '<p>Your request is being reviewed. You will be notified once it is processed.</p>' : ''}
+          ${status.toLowerCase() === 'rejected' ? '<p style="color: #dc3545;">If you believe this is an error, please contact support.</p>' : ''}
+          <p>If you did not request this change, please contact support immediately.</p>
+        </div>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Bank account change alert email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending bank account change alert email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      // Don't throw - email failure shouldn't break the account update process
+    }
+  }
 }
 

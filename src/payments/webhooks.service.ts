@@ -17,6 +17,7 @@ import { calculateFundingFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { ProviderService } from '../provider/provider.service.js';
+import { EmailService } from '../users/email.service.js';
 config();
 
 @Injectable()
@@ -29,6 +30,7 @@ export class WebhooksService {
     private readonly organizationWalletService: OrganizationWalletService,
     private readonly providerService: ProviderService,
     private readonly walletRiskService: WalletRiskService,
+    private readonly emailService: EmailService,
   ) {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     if (!this.apiKey) {
@@ -79,7 +81,13 @@ export class WebhooksService {
         // Re-fetch wallet within transaction for locking
         const wallet = await tx.wallet.findFirst({
           where: { virtualAccountNumber: data.accountNumber },
-          include: { customer: true },
+          include: { 
+            customer: {
+              include: {
+                user: true,
+              },
+            },
+          },
         });
 
         if (!wallet) {
@@ -330,6 +338,33 @@ export class WebhooksService {
       this.logger.error(`Failed to update risk score after inflow: ${error.message}`);
     });
 
+    // Send email notification for wallet funding (outside transaction to avoid blocking)
+    if (result.status === 'success' && !result.isDuplicate) {
+      // Fetch user email from database
+      const walletWithUser = await this.databaseService.wallet.findUnique({
+        where: { id: walletId },
+        include: {
+          customer: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
+
+      if (walletWithUser?.customer?.user?.email && walletWithUser.virtualAccountNumber) {
+        const amountFormatted = grossAmount.toFixed(2);
+        this.emailService.sendWalletFundingAlert(
+          walletWithUser.customer.user.email,
+          amountFormatted,
+          walletWithUser.virtualAccountNumber,
+          data.reference,
+        ).catch((error) => {
+          this.logger.error(`Failed to send wallet funding email: ${error.message}`);
+        });
+      }
+    }
+
     return result;
   }
 
@@ -361,7 +396,16 @@ export class WebhooksService {
           where: { providerTransactionRef: data.paymentReference },
           include: {
             transaction: true,
-            wallet: true,
+            wallet: {
+              include: {
+                customer: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+            bankAccount: true,
           },
         });
 
@@ -510,6 +554,44 @@ export class WebhooksService {
     this.walletRiskService.updateWalletRiskScore(walletId).catch((error) => {
       this.logger.error(`Failed to update risk score after payout webhook: ${error.message}`);
     });
+
+    // Send email notification for withdrawal status (outside transaction to avoid blocking)
+    if (result.status === 'success') {
+      // Fetch payout transaction with user info for email
+      const payoutWithUser = await this.databaseService.payoutTransaction.findUnique({
+        where: { providerTransactionRef: data.paymentReference },
+        include: {
+          wallet: {
+            include: {
+              customer: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          bankAccount: true,
+        },
+      });
+
+      if (payoutWithUser?.wallet?.customer?.user?.email) {
+        const amountFormatted = payoutWithUser.amount.toFixed(2);
+        const accountNumber = payoutWithUser.bankAccount?.accountNumber || 'N/A';
+        const status = data.status;
+        const message = data.deliveryStatusMessage || undefined;
+
+        this.emailService.sendWithdrawalStatusAlert(
+          payoutWithUser.wallet.customer.user.email,
+          amountFormatted,
+          status,
+          accountNumber,
+          data.paymentReference,
+          message,
+        ).catch((error) => {
+          this.logger.error(`Failed to send withdrawal status email: ${error.message}`);
+        });
+      }
+    }
 
     return result;
   }
