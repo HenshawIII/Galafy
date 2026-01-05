@@ -227,6 +227,18 @@ export class WebhooksService {
           },
         });
 
+        // Log funding transaction
+        this.logger.log(
+          `💰 FUNDING TRANSACTION: GrossAmount=${grossAmount.toString()}, ` +
+          `NetAmount=${netAmount.toString()}, AdminFee=${adminFee.toString()}, ` +
+          `ProviderFee=${providerFee.toString()}, ` +
+          `WalletId=${wallet.id}, AccountNumber=${data.accountNumber}, ` +
+          `TxId=${userTransaction.id}, FundingTxId=${fundingTransaction.id}, ` +
+          `ProviderRef=${data.reference}, InternalRef=${userTransactionRef}, ` +
+          `SenderName="${data.senderName}", SenderBank="${data.senderBank}", ` +
+          `Description="${data.description || 'Inflow payment'}"`,
+        );
+
         // Create AdminFee record (separate table for fee tracking)
         // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
         // feePercentage should be between 0 and 1 (e.g., 0.10 for 10%), so we ensure it's properly formatted
@@ -315,6 +327,7 @@ export class WebhooksService {
           },
         });
 
+        // Additional summary log (keeping existing log for backward compatibility)
         this.logger.log(
           `INFLOW webhook processed: ${data.reference} - Gross: ${grossAmount.toString()}, Fee: ${adminFee.toString()}, Net: ${netAmount.toString()} to wallet ${wallet.id}`,
         );

@@ -447,6 +447,16 @@ export class WalletmoduleService {
       },
     });
 
+    // Log spray transaction
+    this.logger.log(
+      `💰 SPRAY TRANSACTION: Amount=${amount.toString()}, ` +
+      `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
+      `To=${toWallet.virtualAccountNumber} (${toWallet.id}), ` +
+      `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
+      `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
+      `Reference=${internalReference}, Description="${transferDto.description || 'Wallet to wallet transfer'}"`,
+    );
+
     // Update wallet balances
     await Promise.all([
       this.databaseService.wallet.update({
@@ -822,6 +832,15 @@ export class WalletmoduleService {
           );
         }
 
+        // Log PAYOUT LEG 1: User wallet → Organization wallet
+        this.logger.log(
+          `💸 PAYOUT LEG 1 (User→Org): Amount=${grossAmount.toString()}, ` +
+          `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
+          `To=${adminWalletAccountNumber}, ` +
+          `Reference=${userTransactionRef}, ` +
+          `ProviderResponse=${JSON.stringify(userToOrgProviderResponse.data)}`,
+        );
+
         // Create DEBIT transaction for user wallet (full amount)
         // Transaction table only tracks user-facing transactions
         const userDebitTransaction = await tx.transaction.create({
@@ -885,6 +904,18 @@ export class WalletmoduleService {
           currencyId: payoutData.currencyId as string,
           customerTransactionReference: providerTransactionRef,
         });
+
+        // Log PAYOUT LEG 2: Organization wallet → External bank
+        this.logger.log(
+          `💸 PAYOUT LEG 2 (Org→Bank): NetAmount=${netAmount.toString()}, ` +
+          `GrossAmount=${grossAmount.toString()}, Fee=${fee.toString()}, ` +
+          `From=${adminWalletAccountNumber}, ` +
+          `To=${payoutData.toAccountNumber} (${payoutData.bankCode}), ` +
+          `RecipientName="${destinationAccountName}", ` +
+          `ProviderRef=${providerTransactionRef}, ` +
+          `UserTxId=${userDebitTransaction.id}, ` +
+          `ProviderResponse=${JSON.stringify(orgToBankProviderResponse)}`,
+        );
 
         // Update user wallet balance (deduct full amount)
         const newUserAvailableBalance = normalizeToKobo(lockedUserWallet.availableBalance.minus(grossAmount));
@@ -979,8 +1010,16 @@ export class WalletmoduleService {
           },
         });
 
+        // Log complete payout transaction
         this.logger.log(
-          `Payout confirmed: ${grossAmount.toString()} (Fee: ${fee.toString()}, Net: ${netAmount.toString()}) from wallet ${fromWallet.id} to ${payoutData.toAccountNumber}`,
+          `✅ PAYOUT CONFIRMED: GrossAmount=${grossAmount.toString()}, ` +
+          `Fee=${fee.toString()}, NetAmount=${netAmount.toString()}, ` +
+          `WalletId=${fromWallet.id}, ` +
+          `ToAccount=${payoutData.toAccountNumber}, ` +
+          `BankCode=${payoutData.bankCode}, ` +
+          `PayoutTxId=${payoutTransaction.id}, ` +
+          `UserTxId=${userDebitTransaction.id}, ` +
+          `ProviderRef=${providerTransactionRef}`,
         );
 
         return {

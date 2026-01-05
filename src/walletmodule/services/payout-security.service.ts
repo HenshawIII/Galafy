@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, UnauthorizedException, Logger } from '
 import { DatabaseService } from '../../database/database.service.js';
 import * as bcrypt from 'bcrypt';
 import { EmailService } from '../../users/email.service.js';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class PayoutSecurityService {
@@ -164,10 +165,11 @@ export class PayoutSecurityService {
     }
 
     // Clear pending payout data
+    // Note: Use type assertion to set JSON field to null in Prisma
     await this.databaseService.user.update({
       where: { id: userId },
       data: {
-        pendingPayoutData: undefined,
+        pendingPayoutData: null as any,
       },
     });
 

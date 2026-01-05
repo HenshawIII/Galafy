@@ -328,6 +328,18 @@ export class PaymentsService {
         },
       });
 
+      // Log payout transaction (legacy direct inter-bank transfer)
+      this.logger.log(
+        `💸 PAYOUT TRANSACTION (Direct): Amount=${transferDto.amount.toString()}, ` +
+        `WalletId=${sourceWallet.id}, AccountNumber=${transferDto.sourceAccountNumber}, ` +
+        `ToAccount=${transferDto.destinationAccountNumber}, ` +
+        `BankCode=${transferDto.destinationBankCode}, ` +
+        `RecipientName="${transferDto.destinationAccountName}", ` +
+        `TxId=${transaction.id}, PayoutTxId=${payoutTransaction.id}, ` +
+        `InternalRef=${internalReference}, ProviderRef=${result.transactionRef}, ` +
+        `Status=PENDING, Remarks="${transferDto.remarks || 'N/A'}"`,
+      );
+
       return {
         ...result,
         payoutTransactionId: payoutTransaction.id,

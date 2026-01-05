@@ -414,6 +414,17 @@ export class SpraysService {
           },
         });
 
+        // Log spray transaction (event-based)
+        this.logger.log(
+          `💰 SPRAY TRANSACTION (Event): Amount=${amount.toString()}, ` +
+          `EventId=${eventId}, EventTitle="${event.title}", ` +
+          `From=${sprayerWallet.virtualAccountNumber || sprayerWallet.id}, ` +
+          `To=${receiverWallet.virtualAccountNumber || receiverWallet.id}, ` +
+          `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
+          `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
+          `Reference=${idempotencyKey}, Note="${createSprayDto.note || 'N/A'}"`,
+        );
+
         return {
           spray,
           sprayerBalance: newSprayerAvailableBalance,

@@ -158,6 +158,7 @@ export class WalletmoduleController {
 
   @Put('payout')
   @ApiOperation({ summary: 'Wallet payout to external bank account' })
+  @ApiExcludeEndpoint()
   @ApiBody({ schema: {  properties: { fromWalletId: { type: 'string' }, toAccountNumber: { type: 'string' },bankCode: { type: 'string' }, amount: { type: 'number' } ,description: { type: 'string' },recipientName: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'Payout initiated successfully' })
   @ApiResponse({ status: 400, description: 'Insufficient balance or payout failed' })
