@@ -164,7 +164,7 @@ export class PayoutSecurityService {
       return null;
     }
 
-    // Clear pending payout data
+    // Clear pending payout data and field
     // Note: Use type assertion to set JSON field to null in Prisma
     await this.databaseService.user.update({
       where: { id: userId },
