@@ -353,7 +353,7 @@ export class WebhooksService {
 
     // Send email notification for wallet funding (outside transaction to avoid blocking)
     if (result.status === 'success' && !result.isDuplicate) {
-      // Fetch user email from database
+      // Fetch user email and funding transaction from database
       const walletWithUser = await this.databaseService.wallet.findUnique({
         where: { id: walletId },
         include: {
@@ -362,16 +362,33 @@ export class WebhooksService {
               user: true,
             },
           },
+          fundings: {
+            where: {
+              providerReference: data.reference,
+            },
+            orderBy: {
+              createdAt: 'desc',
+            },
+            take: 1,
+          },
         },
       });
 
       if (walletWithUser?.customer?.user?.email && walletWithUser.virtualAccountNumber) {
         const amountFormatted = grossAmount.toFixed(2);
+        const fundingTransaction = walletWithUser.fundings?.[0];
+        const firstName = walletWithUser.customer.user.firstName || walletWithUser.customer.firstName || undefined;
+        const paymentMethod = fundingTransaction?.channel || 'BANK_TRANSFER';
+        const fundingDate = fundingTransaction?.createdAt || new Date();
+
         this.emailService.sendWalletFundingAlert(
           walletWithUser.customer.user.email,
           amountFormatted,
           walletWithUser.virtualAccountNumber,
           data.reference,
+          firstName,
+          paymentMethod,
+          fundingDate,
         ).catch((error) => {
           this.logger.error(`Failed to send wallet funding email: ${error.message}`);
         });
@@ -592,6 +609,8 @@ export class WebhooksService {
         const accountNumber = payoutWithUser.bankAccount?.accountNumber || 'N/A';
         const status = data.status;
         const message = data.deliveryStatusMessage || undefined;
+        const firstName = payoutWithUser.wallet.customer.user.firstName || payoutWithUser.wallet.customer.firstName || undefined;
+        const requestDate = payoutWithUser.createdAt;
 
         this.emailService.sendWithdrawalStatusAlert(
           payoutWithUser.wallet.customer.user.email,
@@ -600,6 +619,9 @@ export class WebhooksService {
           accountNumber,
           data.paymentReference,
           message,
+          firstName,
+          undefined, // bankName - can be looked up from bankCode if needed
+          requestDate,
         ).catch((error) => {
           this.logger.error(`Failed to send withdrawal status email: ${error.message}`);
         });

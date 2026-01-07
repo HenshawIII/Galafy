@@ -1046,19 +1046,29 @@ export class WalletmoduleService {
 
     // Send email notification for withdrawal request (PENDING status)
     if (result.success) {
-      // Fetch wallet with user info for email
+      // Fetch wallet with user info and bank account for email
       const walletWithUser = await this.databaseService.wallet.findUnique({
         where: { id: result.fromWalletId },
         include: {
           customer: {
             include: {
               user: true,
+              bankAccounts: {
+                where: {
+                  accountNumber: result.toAccountNumber,
+                },
+                take: 1,
+              },
             },
           },
         },
       });
 
       if (walletWithUser?.customer?.user?.email) {
+        const firstName = walletWithUser.customer.user.firstName || walletWithUser.customer.firstName || undefined;
+        const bankAccount = walletWithUser.customer.bankAccounts?.[0];
+        const bankName = bankAccount?.accountName ? undefined : undefined; // Could look up from bankCode if needed
+        
         this.emailService.sendWithdrawalStatusAlert(
           walletWithUser.customer.user.email,
           result.amount,
@@ -1066,6 +1076,9 @@ export class WalletmoduleService {
           result.toAccountNumber,
           result.transactionRef,
           'Your withdrawal request has been submitted and is being processed.',
+          firstName,
+          bankName,
+          new Date(),
         ).catch((error) => {
           this.logger.error(`Failed to send withdrawal request email: ${error.message}`);
         });
@@ -1218,7 +1231,9 @@ export class WalletmoduleService {
         oldAccountNumber || 'N/A',
         updateDto.accountNumber,
         updateDto.bankCode,
-        'success',
+        'pending',
+        customer.user.firstName || customer.firstName || undefined,
+        new Date(),
       ).catch((error) => {
         this.logger.error(`Failed to send bank account change email: ${error.message}`);
       });
