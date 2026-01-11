@@ -1,11 +1,6 @@
 import { IsEnum, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-// import { EventRole } from '../../generated/prisma/enums.js';
-export enum EventRole {
-  ATTENDEE = 'ATTENDEE',
-  PERFORMER = 'PERFORMER',
-  CELEBRANT = 'CELEBRANT',
-}
+import { EventRole } from './event-enums.js';
 
 export class JoinEventDto {
   @ApiProperty({ 

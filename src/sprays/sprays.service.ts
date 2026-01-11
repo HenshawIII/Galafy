@@ -15,7 +15,7 @@ import { CacheService } from '../cache/cache.service.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { EventStatus } from '../../generated/prisma/enums.js';
-import { EventRole } from '../events/dto/join-event.dto.js';
+import { EventRole } from '../events/dto/event-enums.js';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';

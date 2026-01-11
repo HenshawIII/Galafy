@@ -1,18 +1,6 @@
 import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsDateString, IsEnum, IsNumber, Min, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-// import { EventRole } from '../../generated/prisma/enums.js';
-// import { EventVisibility } from '../../generated/prisma/enums.js';
-
-export enum EventVisibility {
-  PUBLIC = 'PUBLIC',
-  PRIVATE = 'PRIVATE',
-}
-
-export enum EventRole {
-  ATTENDEE = 'ATTENDEE',
-  PERFORMER = 'PERFORMER',
-  CELEBRANT = 'CELEBRANT',
-}
+import { EventRole, EventVisibility } from './event-enums.js';
 
 export class CreateEventDto {
   @ApiProperty({ description: 'Event title', example: 'Birthday Celebration' })
