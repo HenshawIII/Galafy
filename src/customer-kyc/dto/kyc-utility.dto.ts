@@ -1,5 +1,6 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEmail } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEmail, IsEnum } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DiscoCode } from './disco-code.enum.js';
 
 /**
  * DTO for creating customer and upgrading with BVN in one request
@@ -73,6 +74,15 @@ export class UpgradeWithNinAndAddressDto {
   @IsString({ message: 'Meter number must be a string' })
   @IsNotEmpty({ message: 'Meter number is required' })
   meterNumber: string;
+
+  @ApiProperty({ 
+    enum: DiscoCode,
+    description: 'Electricity Distribution Company (DISCO) code for Address verification',
+    example: DiscoCode.IKEJA 
+  })
+  @IsEnum(DiscoCode, { message: 'DiscoCode must be a valid DISCO code' })
+  @IsNotEmpty({ message: 'DiscoCode is required' })
+  discoCode: DiscoCode;
 
   // Bank account fields
   @ApiProperty({ example: '058', description: 'Bank code' })

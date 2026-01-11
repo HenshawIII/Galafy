@@ -1,5 +1,6 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsBoolean, IsInt, IsNumber } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsDateString, IsBoolean, IsInt, IsNumber, IsEnum } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DiscoCode } from './disco-code.enum.js';
 
 // NIN Verification DTOs
 export class CreateNinVerificationDto {
@@ -172,6 +173,15 @@ export class CreateAddressVerificationDto {
   @IsString({ message: 'Meter number must be a string' })
   @IsNotEmpty({ message: 'Meter number is required' })
   meterNumber: string;
+
+  @ApiProperty({ 
+    enum: DiscoCode,
+    description: 'Electricity Distribution Company (DISCO) code',
+    example: DiscoCode.IKEJA 
+  })
+  @IsEnum(DiscoCode, { message: 'DiscoCode must be a valid DISCO code' })
+  @IsNotEmpty({ message: 'DiscoCode is required' })
+  discoCode: DiscoCode;
 }
 
 export class AddressVerificationResponseDto {

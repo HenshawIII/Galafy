@@ -1,4 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsInt } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsDateString, IsInt, IsEnum } from 'class-validator';
+import { DiscoCode } from '../../customer-kyc/dto/disco-code.enum.js';
 
 // Provider API Request DTOs for KYC Operations
 
@@ -59,9 +60,13 @@ export class ProviderAddressVerificationRequestDto {
   @IsNotEmpty({ message: 'House address is required' })
   houseAddress: string;
 
-  @IsOptional()
   @IsString({ message: 'Meter number must be a string' })
-  meterNumber?: string;
+  @IsNotEmpty({ message: 'Meter number is required' })
+  meterNumber: string;
+
+  @IsEnum(DiscoCode, { message: 'DiscoCode must be a valid DISCO code' })
+  @IsNotEmpty({ message: 'DiscoCode is required' })
+  discoCode: DiscoCode;
 }
 
 // Provider API Response DTOs (matching the schema comments)

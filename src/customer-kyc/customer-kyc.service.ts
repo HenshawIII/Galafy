@@ -628,6 +628,7 @@ export class CustomerKycService {
       customerId: customer.providerCustomerId,
       houseAddress: addressDto.houseAddress,
       meterNumber: addressDto.meterNumber,
+      discoCode: addressDto.discoCode,
     });
 
     if (!providerResponse.data?.data) {
@@ -824,6 +825,7 @@ export class CustomerKycService {
         const addressDto: CreateAddressVerificationDto = {
           houseAddress: dto.houseAddress,
           meterNumber: dto.meterNumber,
+          discoCode: dto.discoCode,
         };
         results.addressVerification = await this.verifyAddress(customerId, addressDto);
         results.message += 'Address verification completed. ';

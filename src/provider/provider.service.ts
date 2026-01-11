@@ -392,6 +392,7 @@ export class ProviderService {
       customerId: requestDto.customerId,
       houseAddress: requestDto.houseAddress,
       meterNumber: requestDto.meterNumber,
+      discoCode: requestDto.discoCode,
     };
 
     const response = await this.makeRequest<ProviderAddressVerificationResponseDto>(
