@@ -28,6 +28,14 @@ export class UserSettingsDto {
 
   @ApiProperty({ 
     example: true, 
+    description: "Let others know you're ready to be celebrated at events",
+    default: true 
+  })
+  @IsBoolean({ message: 'visibleAtEvents must be a boolean' })
+  visibleAtEvents: boolean;
+
+  @ApiProperty({ 
+    example: true, 
     description: 'Enable push notifications',
     default: true 
   })
@@ -83,6 +91,14 @@ export class UpdateUserSettingsDto {
   @IsOptional()
   @IsBoolean({ message: 'showOnlineStatus must be a boolean' })
   showOnlineStatus?: boolean;
+
+  @ApiPropertyOptional({ 
+    example: true, 
+    description: "Let others know you're ready to be celebrated at events" 
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'visibleAtEvents must be a boolean' })
+  visibleAtEvents?: boolean;
 
   @ApiPropertyOptional({ 
     example: true, 

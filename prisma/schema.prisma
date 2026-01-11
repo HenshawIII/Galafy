@@ -161,6 +161,7 @@ model UserSettings {
   showOnLeaderboard   Boolean @default(false)
   allowMentionsOrTags Boolean @default(true)
   showOnlineStatus    Boolean @default(false)
+  visibleAtEvents     Boolean @default(true)
 
   // Notification Settings
   pushNotifications  Boolean @default(true)

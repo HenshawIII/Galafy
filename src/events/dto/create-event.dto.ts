@@ -1,10 +1,17 @@
 import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsDateString, IsEnum, IsNumber, Min, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+// import { EventRole } from '../../generated/prisma/enums.js';
 // import { EventVisibility } from '../../generated/prisma/enums.js';
 
 export enum EventVisibility {
   PUBLIC = 'PUBLIC',
   PRIVATE = 'PRIVATE',
+}
+
+export enum EventRole {
+  ATTENDEE = 'ATTENDEE',
+  PERFORMER = 'PERFORMER',
+  CELEBRANT = 'CELEBRANT',
 }
 
 export class CreateEventDto {
@@ -86,13 +93,23 @@ export class CreateEventDto {
   anonSprayersAllowed?: boolean;
 
   @ApiPropertyOptional({ 
-    description: 'Tagged performer (email or username)', 
+    description: 'Tagged performer (email or username). Only valid when role is CELEBRANT.', 
     example: 'performer@example.com' 
   })
   @IsString()
   @IsOptional()
   @MaxLength(255)
   taggedPerformer?: string;
+
+  @ApiPropertyOptional({ 
+    description: 'Role for event creator. Can be PERFORMER or CELEBRANT. Defaults to CELEBRANT if not specified. If PERFORMER, taggedPerformer field is invalid.',
+    enum: EventRole,
+    default: EventRole.CELEBRANT,
+    example: EventRole.CELEBRANT 
+  })
+  @IsEnum(EventRole)
+  @IsOptional()
+  role?: EventRole;
 
   @ApiPropertyOptional({ 
     description: 'Event visibility', 

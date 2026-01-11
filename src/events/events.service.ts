@@ -74,6 +74,23 @@ export class EventsService {
       throw new NotFoundException('User not found');
     }
 
+    // Determine role (default to CELEBRANT for backward compatibility)
+    const creatorRole = createEventDto.role || EventRole.CELEBRANT;
+
+    // Validate that role is PERFORMER or CELEBRANT (not ATTENDEE)
+    if (creatorRole === EventRole.ATTENDEE) {
+      throw new BadRequestException(
+        'ATTENDEE role is not allowed for event creators. Please use PERFORMER or CELEBRANT.'
+      );
+    }
+
+    // Validate that taggedPerformer is not provided when role is PERFORMER
+    if (creatorRole === EventRole.PERFORMER && createEventDto.taggedPerformer) {
+      throw new BadRequestException(
+        'taggedPerformer field is invalid when creating an event as PERFORMER. Only CELEBRANTs can tag performers.'
+      );
+    }
+
     // Check KYC tier from customer table
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
@@ -84,7 +101,7 @@ export class EventsService {
       throw new NotFoundException('Customer not found for this user');
     }
 
-    // Only Tier_2 and Tier_3 users can create events
+    // Only Tier_2 and Tier_3 users can create events (same requirement for both PERFORMER and CELEBRANT)
     if (customer.tier !== KycTier.Tier_2 && customer.tier !== KycTier.Tier_3) {
       throw new ForbiddenException(
         `You need at least KYC Tier_2 to create events. Your current tier is ${customer.tier}. Please complete your KYC verification to upgrade.`
@@ -135,7 +152,7 @@ export class EventsService {
         startsAt: startAt,
         enableLeaderboard: createEventDto.enableLeaderboard ?? true,
         anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? true,
-        taggedPerformer: createEventDto.taggedPerformer || null,
+        taggedPerformer: creatorRole === EventRole.PERFORMER ? null : (createEventDto.taggedPerformer || null),
         visibility: createEventDto.visibility || EventVisibility.PUBLIC,
       },
       include: {
@@ -170,7 +187,7 @@ export class EventsService {
       },
     });
 
-    // Automatically add host user as CELEBRANT
+    // Automatically add host user with the specified role (PERFORMER or CELEBRANT)
     // (Only Tier_2 and Tier_3 users can create events, so host is always eligible)
     // Get host's default wallet for receiving sprays
     let hostWalletId: string | null = null;
@@ -204,13 +221,13 @@ export class EventsService {
       data: {
         eventId: event.id,
         userId: userId,
-        role: EventRole.CELEBRANT,
+        role: creatorRole,
         walletId: hostWalletId,
       },
     });
 
-    // If taggedPerformer is provided, add them as a participant with PERFORMER role
-    if (createEventDto.taggedPerformer) {
+    // If taggedPerformer is provided (only valid when role is CELEBRANT), add them as a participant with PERFORMER role
+    if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
       const performerIdentifier = createEventDto.taggedPerformer.trim();
       const isEmail = performerIdentifier.includes('@');
       

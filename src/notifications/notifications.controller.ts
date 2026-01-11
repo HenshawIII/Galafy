@@ -9,6 +9,8 @@ import {
   Query,
   ValidationPipe,
   UseGuards,
+  Request,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint, ApiBody, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service.js';
@@ -30,22 +32,17 @@ export class NotificationsController {
 
   /**
    * Register a device token for push notifications
-   * Note: In production, userId should be extracted from JWT token
+   * User ID is extracted from the JWT token
    */
   @Post('devices/register')
   @ApiOperation({
     summary: 'Register a device for push notifications',
-    description: 'Registers a device token (FCM token) for receiving push notifications. If the device token already exists, it will be updated.',
+    description: 'Registers a device token (FCM token) for receiving push notifications. User ID is automatically extracted from the authentication token. If the device token already exists, it will be updated.',
   })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        userId: {
-          type: 'string',
-          example: 'user-uuid-123',
-          description: 'User ID (in production, this should be extracted from JWT token)',
-        },
         deviceToken: {
           type: 'string',
           example: 'fGhJkLmNoPqRsTuVwXyZ1234567890',
@@ -63,7 +60,7 @@ export class NotificationsController {
           description: 'App version (optional)',
         },
       },
-      required: ['userId', 'deviceToken', 'deviceType'],
+      required: ['deviceToken', 'deviceType'],
     },
   })
   @ApiResponse({
@@ -86,9 +83,13 @@ export class NotificationsController {
   @ApiResponse({ status: 400, description: 'Bad request - Invalid device token or device already registered to another user' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async registerDevice(
-    @Body(ValidationPipe) body: RegisterDeviceDto & { userId: string },
+    @Request() req: any,
+    @Body(ValidationPipe) registerDeviceDto: RegisterDeviceDto,
   ) {
-    const { userId, ...registerDeviceDto } = body;
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
     return this.notificationsService.registerDevice(userId, registerDeviceDto);
   }
 

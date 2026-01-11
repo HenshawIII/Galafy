@@ -584,6 +584,7 @@ export class UsersService {
         showOnLeaderboard: user.settings.showOnLeaderboard,
         allowMentionsOrTags: user.settings.allowMentionsOrTags,
         showOnlineStatus: user.settings.showOnlineStatus,
+        visibleAtEvents: user.settings.visibleAtEvents,
         pushNotifications: user.settings.pushNotifications,
         eventReminders: user.settings.eventReminders,
         leaderboardUpdates: user.settings.leaderboardUpdates,
@@ -597,6 +598,7 @@ export class UsersService {
           showOnLeaderboard: false,
           allowMentionsOrTags: true,
           showOnlineStatus: false,
+          visibleAtEvents: true,
           pushNotifications: true,
           eventReminders: true,
           leaderboardUpdates: false,
@@ -607,6 +609,7 @@ export class UsersService {
         showOnLeaderboard: defaultSettings.showOnLeaderboard,
         allowMentionsOrTags: defaultSettings.allowMentionsOrTags,
         showOnlineStatus: defaultSettings.showOnlineStatus,
+        visibleAtEvents: defaultSettings.visibleAtEvents,
         pushNotifications: defaultSettings.pushNotifications,
         eventReminders: defaultSettings.eventReminders,
         leaderboardUpdates: defaultSettings.leaderboardUpdates,
@@ -614,11 +617,44 @@ export class UsersService {
       };
     }
 
+    // Get banks list and create lookup map for bank names
+    let bankAccounts = customer.bankAccounts || [];
+    try {
+      const banksList = await this.getBanksList();
+      if (banksList.length > 0) {
+        // Create a map for efficient lookup: bankCode -> bankName
+        const bankMap = new Map<string, string>();
+        banksList.forEach(bank => {
+          bankMap.set(bank.code, bank.name);
+        });
+
+        // Enrich bank accounts with bankName
+        bankAccounts = bankAccounts.map(account => ({
+          ...account,
+          bankName: bankMap.get(account.bankCode) || null,
+        }));
+      } else {
+        // If banks list is empty, set bankName to null for all accounts
+        bankAccounts = bankAccounts.map(account => ({
+          ...account,
+          bankName: null,
+        }));
+      }
+    } catch (error: any) {
+      // If enrichment fails, return bank accounts without bankName (or with null)
+      // Log error but don't fail the request
+      console.error(`Failed to enrich bank accounts with bank names: ${error.message}`);
+      bankAccounts = bankAccounts.map(account => ({
+        ...account,
+        bankName: null,
+      }));
+    }
+
     const result = {
       ...customerDetails,
       kycStatus,
       wallets: customer.wallets || [],
-      bankAccounts: customer.bankAccounts || [],
+      bankAccounts,
       settings,
     };
 
@@ -626,6 +662,29 @@ export class UsersService {
     await this.cacheService.set(cacheKey, result, 900);
 
     return result;
+  }
+
+  /**
+   * Get banks list with caching
+   * Caches the banks list for 1 hour to avoid calling provider on every request
+   */
+  private async getBanksList(): Promise<Array<{ code: string; name: string }>> {
+    const cacheKey = 'banks-list';
+    const cached = await this.cacheService.get<Array<{ code: string; name: string }>>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const banks = await this.providerService.getBanks();
+      // Cache for 1 hour (3600 seconds)
+      await this.cacheService.set(cacheKey, banks, 3600);
+      return banks;
+    } catch (error: any) {
+      // Log error but return empty array - caller will handle gracefully
+      console.error(`Failed to fetch banks list: ${error.message}`);
+      return [];
+    }
   }
 
   /**
@@ -645,6 +704,7 @@ export class UsersService {
           showOnLeaderboard: false,
           allowMentionsOrTags: true,
           showOnlineStatus: false,
+          visibleAtEvents: true,
           pushNotifications: true,
           eventReminders: true,
           leaderboardUpdates: false,
@@ -657,6 +717,7 @@ export class UsersService {
       showOnLeaderboard: settings.showOnLeaderboard,
       allowMentionsOrTags: settings.allowMentionsOrTags,
       showOnlineStatus: settings.showOnlineStatus,
+      visibleAtEvents: settings.visibleAtEvents,
       pushNotifications: settings.pushNotifications,
       eventReminders: settings.eventReminders,
       leaderboardUpdates: settings.leaderboardUpdates,
@@ -690,6 +751,7 @@ export class UsersService {
           showOnLeaderboard: updateDto.showOnLeaderboard ?? false,
           allowMentionsOrTags: updateDto.allowMentionsOrTags ?? true,
           showOnlineStatus: updateDto.showOnlineStatus ?? false,
+          visibleAtEvents: updateDto.visibleAtEvents ?? true,
           pushNotifications: updateDto.pushNotifications ?? true,
           eventReminders: updateDto.eventReminders ?? true,
           leaderboardUpdates: updateDto.leaderboardUpdates ?? false,
@@ -702,6 +764,7 @@ export class UsersService {
       showOnLeaderboard: settings.showOnLeaderboard,
       allowMentionsOrTags: settings.allowMentionsOrTags,
       showOnlineStatus: settings.showOnlineStatus,
+      visibleAtEvents: settings.visibleAtEvents,
       pushNotifications: settings.pushNotifications,
       eventReminders: settings.eventReminders,
       leaderboardUpdates: settings.leaderboardUpdates,
