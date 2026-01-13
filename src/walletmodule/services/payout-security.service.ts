@@ -15,12 +15,22 @@ export class PayoutSecurityService {
   ) {}
 
   /**
-   * Set or update payout PIN for a user
+   * Set payout PIN for a user (first time setup only)
    */
   async setPayoutPin(userId: string, pin: string): Promise<void> {
     // Validate PIN format
     if (!/^\d{4}$/.test(pin)) {
       throw new BadRequestException('PIN must be exactly 4 digits');
+    }
+
+    // Check if PIN already exists
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { payoutPin: true },
+    });
+
+    if (user && user.payoutPin) {
+      throw new BadRequestException('Payout PIN already exists. Use the update endpoint to change your PIN.');
     }
 
     // Hash the PIN
@@ -33,6 +43,51 @@ export class PayoutSecurityService {
     });
 
     this.logger.log(`Payout PIN set for user ${userId}`);
+  }
+
+  /**
+   * Update payout PIN for a user (requires old PIN verification)
+   */
+  async updatePayoutPin(userId: string, oldPin: string, newPin: string): Promise<void> {
+    // Validate PIN formats
+    if (!/^\d{4}$/.test(oldPin)) {
+      throw new BadRequestException('Old PIN must be exactly 4 digits');
+    }
+    if (!/^\d{4}$/.test(newPin)) {
+      throw new BadRequestException('New PIN must be exactly 4 digits');
+    }
+
+    // Check if old and new PINs are the same
+    if (oldPin === newPin) {
+      throw new BadRequestException('New PIN must be different from the old PIN');
+    }
+
+    // Get user's current PIN
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { payoutPin: true },
+    });
+
+    if (!user || !user.payoutPin) {
+      throw new BadRequestException('Payout PIN has not been set. Please set your PIN first using the create endpoint.');
+    }
+
+    // Verify old PIN
+    const isOldPinValid = await bcrypt.compare(oldPin, user.payoutPin);
+    if (!isOldPinValid) {
+      throw new UnauthorizedException('Invalid old PIN. Please provide the correct current PIN.');
+    }
+
+    // Hash the new PIN
+    const hashedNewPin = await bcrypt.hash(newPin, 10);
+
+    // Update user with new hashed PIN
+    await this.databaseService.user.update({
+      where: { id: userId },
+      data: { payoutPin: hashedNewPin },
+    });
+
+    this.logger.log(`Payout PIN updated for user ${userId}`);
   }
 
   /**

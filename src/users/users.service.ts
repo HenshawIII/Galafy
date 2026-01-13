@@ -179,6 +179,14 @@ export class UsersService {
       },
     });
 
+    // Send welcome email after successful verification (don't fail verification if email fails)
+    try {
+      await this.emailService.sendWelcomeEmail(updatedUser.email, updatedUser.firstName || undefined);
+    } catch (emailError) {
+      // Log error but don't fail verification
+      console.error('Failed to send welcome email (verification still succeeded):', emailError.message);
+    }
+
     // Remove sensitive data from response
     const { password, verificationCode: _, ...userWithoutPassword } = updatedUser;
     return {

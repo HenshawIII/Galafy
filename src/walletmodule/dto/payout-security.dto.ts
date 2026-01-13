@@ -4,7 +4,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SetPayoutPinDto {
   @ApiProperty({ 
-    description: '4-digit PIN for payout verification', 
+    description: '4-digit PIN for payout verification (first time setup)', 
     example: '1234',
     minLength: 4,
     maxLength: 4
@@ -14,6 +14,32 @@ export class SetPayoutPinDto {
   @Length(4, 4, { message: 'PIN must be exactly 4 digits' })
   @Matches(/^\d+$/, { message: 'PIN must contain only digits' })
   pin: string;
+}
+
+export class UpdatePayoutPinDto {
+  @ApiProperty({ 
+    description: 'Current 4-digit PIN (required for verification)', 
+    example: '1234',
+    minLength: 4,
+    maxLength: 4
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Length(4, 4, { message: 'Old PIN must be exactly 4 digits' })
+  @Matches(/^\d+$/, { message: 'Old PIN must contain only digits' })
+  oldPin: string;
+
+  @ApiProperty({ 
+    description: 'New 4-digit PIN', 
+    example: '5678',
+    minLength: 4,
+    maxLength: 4
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Length(4, 4, { message: 'New PIN must be exactly 4 digits' })
+  @Matches(/^\d+$/, { message: 'New PIN must contain only digits' })
+  newPin: string;
 }
 
 export class InitiatePayoutDto {

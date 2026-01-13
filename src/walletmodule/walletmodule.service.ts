@@ -129,8 +129,8 @@ export class WalletmoduleService {
       walletGroupId: createWalletDto.walletGroupId || undefined,
       walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
       walletClassificationId: createWalletDto.walletClassificationId || undefined,
-      availableBalance: createWalletDto.availableBalance || 1000000,
-      ledgerBalance: createWalletDto.ledgerBalance || 1000000,
+      availableBalance: createWalletDto.availableBalance || 0,
+      ledgerBalance: createWalletDto.ledgerBalance || 0,
       overdraft: createWalletDto.overdraft || 0,
       isInternal: createWalletDto.isInternal || false,
       isDefault: createWalletDto.isDefault || true,
@@ -155,8 +155,8 @@ export class WalletmoduleService {
       where: { id: walletId },
       data: {
         providerWalletId: providerResponse.walletId,
-        availableBalance: providerResponse.virtualAccount ? 1000000 : (createWalletDto.availableBalance || 1000000),
-        ledgerBalance: providerResponse.virtualAccount ? 1000000 : (createWalletDto.ledgerBalance || 1000000),
+        availableBalance: providerResponse.virtualAccount ? 0 : (createWalletDto.availableBalance || 0),
+        ledgerBalance: providerResponse.virtualAccount ? 0 : (createWalletDto.ledgerBalance || 0),
         mobNum: providerResponse.mobNum || createWalletDto.mobNum,
         virtualAccountNumber: providerResponse.virtualAccount?.accountNumber,
         virtualBankCode: providerResponse.virtualAccount?.bankCode,
@@ -1136,10 +1136,17 @@ export class WalletmoduleService {
   }
 
   /**
-   * Set or update payout PIN for a user
+   * Set payout PIN for a user (first time setup only)
    */
   async setPayoutPin(userId: string, pin: string): Promise<void> {
     await this.payoutSecurityService.setPayoutPin(userId, pin);
+  }
+
+  /**
+   * Update payout PIN for a user (requires old PIN verification)
+   */
+  async updatePayoutPin(userId: string, oldPin: string, newPin: string): Promise<void> {
+    await this.payoutSecurityService.updatePayoutPin(userId, oldPin, newPin);
   }
 
   /**

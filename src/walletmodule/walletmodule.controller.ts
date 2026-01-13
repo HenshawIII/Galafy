@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Put,
   Body,
   Param,
@@ -22,7 +23,7 @@ import { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
-import { SetPayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payout-security.dto.js';
+import { SetPayoutPinDto, UpdatePayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payout-security.dto.js';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto.js';
 import { extractDeviceInfo } from '../common/utils/request.util.js';
 import type { Request as ExpressRequest } from 'express';
@@ -168,10 +169,10 @@ export class WalletmoduleController {
   }
 
   @Post('payout/set-pin')
-  @ApiOperation({ summary: 'Set or update payout PIN (4 digits)' })
+  @ApiOperation({ summary: 'Set payout PIN (first time setup only, 4 digits)' })
   @ApiBody({ type: SetPayoutPinDto })
   @ApiResponse({ status: 200, description: 'Payout PIN set successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid PIN format' })
+  @ApiResponse({ status: 400, description: 'Invalid PIN format or PIN already exists' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async setPayoutPin(
     @Request() req: any,
@@ -183,6 +184,25 @@ export class WalletmoduleController {
     }
     await this.walletmoduleService.setPayoutPin(userId, setPinDto.pin);
     return { success: true, message: 'Payout PIN set successfully' };
+  }
+
+  @Patch('payout/update-pin')
+  @ApiOperation({ summary: 'Update payout PIN (requires old PIN verification, 4 digits)' })
+  @ApiBody({ type: UpdatePayoutPinDto })
+  @ApiResponse({ status: 200, description: 'Payout PIN updated successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid PIN format or PIN not set' })
+  @ApiResponse({ status: 401, description: 'Invalid old PIN' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async updatePayoutPin(
+    @Request() req: any,
+    @Body(ValidationPipe) updatePinDto: UpdatePayoutPinDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    await this.walletmoduleService.updatePayoutPin(userId, updatePinDto.oldPin, updatePinDto.newPin);
+    return { success: true, message: 'Payout PIN updated successfully' };
   }
 
   @Post('payout/initiate')

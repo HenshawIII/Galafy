@@ -21,6 +21,104 @@ export class EmailService {
     // sgMail.setDataResidency('eu');
   }
 
+  async sendWelcomeEmail(email: string, firstName?: string): Promise<void> {
+    // Get user's first name or default greeting
+    const userName = firstName || 'there';
+    
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'Welcome to Galafy! 🎉',
+      text: `Hello ${userName}, Welcome to Galafy! We're thrilled to have you join our community. Get started by exploring events, connecting with performers, and much more. If you have any questions, feel free to reach out to our support team.`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+            <!-- Header with Galafy Logo -->
+            <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
+              <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
+                <span style="display: inline-block; width: 30px; height: 30px; background-color: #ffffff; border-radius: 4px; position: relative;">
+                  <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #007bff; font-weight: bold; font-size: 20px;">G</span>
+                </span>
+                Galafy
+              </div>
+            </div>
+            
+            <!-- Main Content -->
+            <div style="padding: 30px 20px;">
+              <!-- Greeting -->
+              <h1 style="color: #333333; font-size: 24px; font-weight: bold; margin: 0 0 15px 0;">Welcome, ${userName}! 🎉</h1>
+              
+              <!-- Main Message -->
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                We're thrilled to have you join the Galafy community! You're now part of an exciting platform where you can discover events, connect with performers, and create unforgettable experiences.
+              </p>
+              
+              <!-- Welcome Box (Light Blue) -->
+              <div style="background-color: #e7f3ff; border-left: 4px solid #007bff; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <div style="display: flex; align-items: center; margin-bottom: 15px;">
+                  <span style="font-size: 24px; margin-right: 10px;">✨</span>
+                  <h3 style="color: #333333; font-size: 18px; font-weight: bold; margin: 0;">Get Started</h3>
+                </div>
+                <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0;">
+                  Your account has been successfully created. To get the most out of Galafy, make sure to verify your email address using the code we sent you.
+                </p>
+              </div>
+              
+              <!-- Features Box (Light Green) -->
+              <div style="background-color: #d4edda; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="color: #333333; font-size: 16px; font-weight: bold; margin: 0 0 15px 0;">What you can do:</h3>
+                <ul style="color: #333333; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                  <li>Discover and attend amazing events</li>
+                  <li>Connect with performers and celebrants</li>
+                  <li>Send digital sprays and gifts</li>
+                  <li>Manage your wallet and transactions</li>
+                  <li>Build your profile and showcase your events</li>
+                </ul>
+              </div>
+              
+              <!-- Support Information Box (Light Yellow) -->
+              <div style="background-color: #fff3cd; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <div style="display: flex; align-items: flex-start;">
+                  <span style="font-size: 20px; margin-right: 10px; color: #ff9800;">💬</span>
+                  <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0;">
+                    Have questions? Our support team is here to help! Feel free to reach out anytime, and we'll be happy to assist you.
+                  </p>
+                </div>
+              </div>
+              
+              <!-- Closing -->
+              <p style="color: #333333; font-size: 14px; margin: 30px 0 0 0;">
+                Once again, welcome to Galafy! We can't wait to see what amazing experiences you'll create.
+              </p>
+              <p style="color: #333333; font-size: 14px; margin: 20px 0 0 0;">
+                Warm regards,<br>
+                The Galafy Team
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Welcome email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending welcome email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      // Don't throw - email failure shouldn't break the signup process
+    }
+  }
+
   async sendVerificationCode(email: string, code: string): Promise<void> {
     const msg = {
       to: email,
