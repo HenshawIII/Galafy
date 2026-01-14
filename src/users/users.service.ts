@@ -196,7 +196,7 @@ export class UsersService {
   }
 
   async login(loginDto: LoginDto) {
-    // Find user by email
+    // Find user by emaill
     const user = await this.databaseService.user.findUnique({
       where: { email: loginDto.email },
     });
@@ -625,22 +625,33 @@ export class UsersService {
       };
     }
 
-    // Get banks list and create lookup map for bank names
+    // Get banks list and enrich bank accounts with bank names
     let bankAccounts = customer.bankAccounts || [];
     try {
       const banksList = await this.getBanksList();
-      if (banksList.length > 0) {
-        // Create a map for efficient lookup: bankCode -> bankName
-        const bankMap = new Map<string, string>();
-        banksList.forEach(bank => {
-          bankMap.set(bank.code, bank.name);
-        });
+      
+      if (banksList && banksList.length > 0) {
+        // Helper function to normalize bank codes for comparison (remove leading zeros)
+        const normalizeBankCode = (code: string | number | null | undefined): string => {
+          if (code === null || code === undefined) return '';
+          return String(code).trim().replace(/^0+/, '') || '0';
+        };
 
-        // Enrich bank accounts with bankName
-        bankAccounts = bankAccounts.map(account => ({
-          ...account,
-          bankName: bankMap.get(account.bankCode) || null,
-        }));
+        // Enrich bank accounts with bankName using simple filter
+        bankAccounts = bankAccounts.map(account => {
+          const accountCode = normalizeBankCode(account.bankCode);
+          
+          // Filter banks list to find matching bank
+          const matchedBank = banksList.find(bank => {
+            const bankCode = normalizeBankCode(bank.bankcode);
+            return bankCode === accountCode;
+          });
+          
+          return {
+            ...account,
+            bankName: matchedBank ? matchedBank.bankname : null,
+          };
+        });
       } else {
         // If banks list is empty, set bankName to null for all accounts
         bankAccounts = bankAccounts.map(account => ({
@@ -676,9 +687,9 @@ export class UsersService {
    * Get banks list with caching
    * Caches the banks list for 1 hour to avoid calling provider on every request
    */
-  private async getBanksList(): Promise<Array<{ code: string; name: string }>> {
+  private async getBanksList(): Promise<Array<{ bankcode: string; bankname: string }>> {
     const cacheKey = 'banks-list';
-    const cached = await this.cacheService.get<Array<{ code: string; name: string }>>(cacheKey);
+    const cached = await this.cacheService.get<Array<{ bankcode: string; bankname: string }>>(cacheKey);
     if (cached) {
       return cached;
     }

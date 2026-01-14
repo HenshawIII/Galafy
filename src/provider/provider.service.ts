@@ -822,9 +822,9 @@ export class ProviderService {
   /**
    * Get banks available for payouts
    */
-  async getBanks(): Promise<Array<{ code: string; name: string }>> {
+  async getBanks(): Promise<Array<{ bankcode: string; bankname: string }>> {
     const response = await this.makePayoutRequest<{
-      data: Array<{ code: string; name: string }>;
+      data: Array<{ bankcode: string; bankname: string }>;
       statusCode: number;
       message: string;
       succeeded: boolean;
