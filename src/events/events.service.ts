@@ -91,6 +91,49 @@ export class EventsService {
       );
     }
 
+    // Validate taggedPerformer exists if provided (only valid when role is CELEBRANT)
+    if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
+      const performerIdentifier = createEventDto.taggedPerformer.trim();
+      const isEmail = performerIdentifier.includes('@');
+      
+      let performerUser;
+      if (isEmail) {
+        performerUser = await this.databaseService.user.findUnique({
+          where: { email: performerIdentifier },
+          select: { id: true },
+        });
+      } else {
+        performerUser = await this.databaseService.user.findUnique({
+          where: { username: performerIdentifier },
+          select: { id: true },
+        });
+      }
+
+      if (!performerUser) {
+        throw new NotFoundException(
+          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`
+        );
+      }
+
+      // Check if performer has required KYC tier
+      const performerCustomer = await this.databaseService.customer.findUnique({
+        where: { userId: performerUser.id },
+        select: { tier: true },
+      });
+
+      if (!performerCustomer) {
+        throw new BadRequestException(
+          `Tagged performer (${performerIdentifier}) does not have a customer record. They need to complete KYC registration.`
+        );
+      }
+
+      if (performerCustomer.tier !== KycTier.Tier_2 && performerCustomer.tier !== KycTier.Tier_3) {
+        throw new BadRequestException(
+          `Tagged performer (${performerIdentifier}) must have at least KYC Tier_2. Their current tier is ${performerCustomer.tier}.`
+        );
+      }
+    }
+
     // Check KYC tier from customer table
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
@@ -133,7 +176,7 @@ export class EventsService {
       ? new Date() 
       : new Date(createEventDto.startAt);
 
-    // Create event
+    // Create event with required fields
     const event = await this.databaseService.event.create({
       data: {
         code: eventCode!,
@@ -227,10 +270,12 @@ export class EventsService {
     });
 
     // If taggedPerformer is provided (only valid when role is CELEBRANT), add them as a participant with PERFORMER role
+    // Note: Validation already done above, so we can safely proceed with adding the participant
     if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
       const performerIdentifier = createEventDto.taggedPerformer.trim();
       const isEmail = performerIdentifier.includes('@');
       
+      // Lookup performer user (already validated above, so this should always succeed)
       let performerUser;
       if (isEmail) {
         performerUser = await this.databaseService.user.findUnique({
@@ -244,27 +289,10 @@ export class EventsService {
         });
       }
 
+      // Safety check (should never happen since we validated above, but defensive programming)
       if (!performerUser) {
         throw new NotFoundException(
           `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`
-        );
-      }
-
-      // Check if performer has required KYC tier
-      const performerCustomer = await this.databaseService.customer.findUnique({
-        where: { userId: performerUser.id },
-        select: { tier: true },
-      });
-
-      if (!performerCustomer) {
-        throw new BadRequestException(
-          `Tagged performer (${performerIdentifier}) does not have a customer record. They need to complete KYC registration.`
-        );
-      }
-
-      if (performerCustomer.tier !== KycTier.Tier_2 && performerCustomer.tier !== KycTier.Tier_3) {
-        throw new ForbiddenException(
-          `Tagged performer (${performerIdentifier}) has KYC Tier ${performerCustomer.tier}. Performer role requires Tier_2 or Tier_3.`
         );
       }
 
