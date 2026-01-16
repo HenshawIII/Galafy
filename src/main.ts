@@ -65,10 +65,17 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document);
   
+  // Expose OpenAPI JSON spec endpoint for Postman import
+  app.getHttpAdapter().get('/api/docs-json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(document);
+  });
+  
   await app.listen(port, '0.0.0.0');
   
   console.log(`Application is running on: ${baseUrl}/api`);
   console.log(`Swagger documentation available at: ${baseUrl}/api/docs`);
+  console.log(`OpenAPI JSON spec available at: ${baseUrl}/api/docs-json`);
   console.log(`WebSocket server available at: ws://localhost:${port}/live`);
 }
 bootstrap();
