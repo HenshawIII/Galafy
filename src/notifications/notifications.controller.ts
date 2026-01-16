@@ -433,4 +433,142 @@ export class NotificationsController {
   ) {
     return this.notificationsService.removeDevice(deviceId, userId);
   }
+
+  /**
+   * Get user's notifications
+   */
+  @Get()
+  @ApiOperation({
+    summary: 'Get user notifications',
+    description: 'Retrieves notifications for the authenticated user. Returns unread count and list of notifications sorted by creation date (newest first).',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Maximum number of notifications to return (default: 20)',
+    example: 20,
+  })
+  @ApiQuery({
+    name: 'offset',
+    required: false,
+    type: Number,
+    description: 'Number of notifications to skip (default: 0)',
+    example: 0,
+  })
+  @ApiQuery({
+    name: 'unreadOnly',
+    required: false,
+    type: Boolean,
+    description: 'If true, only return unread notifications',
+    example: false,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Notifications retrieved successfully',
+    schema: {
+      example: {
+        unread: 5,
+        notifications: [
+          {
+            id: 'notification-uuid',
+            message: 'Event Starting Soon!',
+            title: 'Event Starting Soon!',
+            type: 'EVENT_REMINDER_10MIN',
+            data: {
+              type: 'EVENT_REMINDER_10MIN',
+              eventId: 'event-uuid',
+              eventCode: 'ABC123',
+              eventTitle: 'Birthday Celebration',
+            },
+            unread: true,
+            createdAt: '2025-01-25T10:00:00.000Z',
+          },
+        ],
+      },
+    },
+  })
+  async getNotifications(
+    @Request() req: any,
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+    @Query('unreadOnly') unreadOnly?: boolean,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+
+    return this.notificationsService.getUserNotifications(
+      userId,
+      limit || 20,
+      offset || 0,
+      unreadOnly === true,
+    );
+  }
+
+  /**
+   * Mark a notification as read
+   */
+  @Patch(':id/read')
+  @ApiOperation({
+    summary: 'Mark a notification as read',
+    description: 'Marks a specific notification as read for the authenticated user.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Notification ID',
+    example: 'notification-uuid',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Notification marked as read successfully',
+    schema: {
+      example: {
+        id: 'notification-uuid',
+        read: true,
+        message: 'Notification marked as read',
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Notification not found' })
+  @ApiResponse({ status: 403, description: 'Notification does not belong to this user' })
+  async markNotificationAsRead(
+    @Request() req: any,
+    @Param('id') notificationId: string,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+
+    return this.notificationsService.markNotificationAsRead(notificationId, userId);
+  }
+
+  /**
+   * Mark all notifications as read
+   */
+  @Patch('read-all')
+  @ApiOperation({
+    summary: 'Mark all notifications as read',
+    description: 'Marks all unread notifications for the authenticated user as read.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'All notifications marked as read successfully',
+    schema: {
+      example: {
+        count: 5,
+        message: '5 notification(s) marked as read',
+      },
+    },
+  })
+  async markAllNotificationsAsRead(@Request() req: any) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+
+    return this.notificationsService.markAllNotificationsAsRead(userId);
+  }
 }

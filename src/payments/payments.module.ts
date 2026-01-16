@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PaymentsService } from './payments.service.js';
 import { PaymentsController } from './payments.controller.js';
 import { WebhooksService } from './webhooks.service.js';
@@ -9,9 +9,10 @@ import { OrganizationWalletService } from '../common/services/organization-walle
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { UsersModule } from '../users/users.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
-  imports: [DatabaseModule, ProviderModule, UsersModule],
+  imports: [DatabaseModule, ProviderModule, UsersModule, forwardRef(() => NotificationsModule)],
   controllers: [PaymentsController, WebhooksController],
   providers: [PaymentsService, WebhooksService, OrganizationWalletService, WalletRiskService, AmlLoggingService],
   exports: [PaymentsService, WebhooksService],

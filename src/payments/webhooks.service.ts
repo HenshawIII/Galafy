@@ -18,6 +18,8 @@ import { OrganizationWalletService } from '../common/services/organization-walle
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { EmailService } from '../users/email.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { Inject, forwardRef } from '@nestjs/common';
 config();
 
 @Injectable()
@@ -31,6 +33,8 @@ export class WebhooksService {
     private readonly providerService: ProviderService,
     private readonly walletRiskService: WalletRiskService,
     private readonly emailService: EmailService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
   ) {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     if (!this.apiKey) {
@@ -392,6 +396,35 @@ export class WebhooksService {
         ).catch((error) => {
           this.logger.error(`Failed to send wallet funding email: ${error.message}`);
         });
+
+        // Send push notification for inflow received
+        const walletOwnerUserId = walletWithUser.customer.userId;
+        if (walletOwnerUserId) {
+          try {
+            await this.notificationsService.sendNotificationIfEnabled(
+              walletOwnerUserId,
+              {
+                notification: {
+                  title: 'Wallet Funded',
+                  body: `You received ₦${amountFormatted} in your wallet`,
+                },
+                data: {
+                  type: 'INFLOW_RECEIVED',
+                  amount: amountFormatted,
+                  reference: data.reference,
+                  walletId: walletId,
+                  virtualAccountNumber: walletWithUser.virtualAccountNumber || '',
+                  paymentMethod: paymentMethod,
+                },
+              },
+            );
+          } catch (notificationError: any) {
+            // Log error but don't fail the webhook - notification is optional
+            this.logger.warn(
+              `Failed to send inflow push notification: ${notificationError.message}`,
+            );
+          }
+        }
       }
     }
 

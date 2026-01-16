@@ -141,6 +141,7 @@ model User {
 
   customer            Customer?
   notificationDevices NotificationDevice[]
+  notifications        Notification[]
   settings            UserSettings?
 
   // Events user participates in
@@ -191,6 +192,24 @@ model NotificationDevice {
 
   // Relations
   walletCreationEvents WalletCreationEvent[]
+}
+
+model Notification {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    String // Notification type: 'EVENT_REMINDER_10MIN', 'EVENT_STARTED', 'EVENT_REJOIN', 'SPRAY_RECEIVED', 'EVENT_PARTICIPANT_JOINED', 'INFLOW_RECEIVED', etc.
+  title   String
+  message String
+  data    Json?  // Additional data payload
+
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, read])
 }
 
 // =====================
@@ -451,6 +470,7 @@ model Event {
 
   status   EventStatus @default(DRAFT)
   startsAt DateTime
+  endsAt   DateTime?
 
   participants EventParticipant[]
   sprays       Spray[]
@@ -460,9 +480,11 @@ model Event {
 
   @@index([hostUserId])
   @@index([status, startsAt])
+  @@index([status, endsAt])
   @@index([title]) // Index for event title search
   @@index([location]) // Index for location filter
   @@index([startsAt]) // Index for date/time filter
+  @@index([endsAt]) // Index for end date filter
 }
 
 model EventParticipant {

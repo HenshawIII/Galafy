@@ -56,7 +56,7 @@ export class AuthService {
             
             const payload = ticket.getPayload();
             if (!payload) {
-                console.error('Google token verification returned no payload');
+                console.error('Google token verification returnd no payload');
                 throw new UnauthorizedException('Invalid token: No payload received');
             }
 

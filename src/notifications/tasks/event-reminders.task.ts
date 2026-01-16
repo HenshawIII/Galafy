@@ -30,6 +30,7 @@ export class EventRemindersTask {
 
     try {
       // Find events starting in approximately 10 minutes (within 1 minute window)
+      // Exclude events that have ended (endsAt is in the past)
       const events = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
@@ -37,11 +38,16 @@ export class EventRemindersTask {
             gte: new Date(tenMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before
             lte: new Date(tenMinutesFromNow.getTime() + 30 * 1000), // 30 seconds after
           },
+          OR: [
+            { endsAt: null }, // Events without an end date
+            { endsAt: { gt: now } }, // Events that haven't ended yet
+          ],
         },
         select: {
           id: true,
           title: true,
           startsAt: true,
+          endsAt: true,
           code: true,
         },
       });
@@ -100,6 +106,7 @@ export class EventRemindersTask {
 
     try {
       // Find events that just started (within 1 minute window)
+      // Exclude events that have ended (endsAt is in the past)
       const events = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
@@ -107,11 +114,16 @@ export class EventRemindersTask {
             gte: new Date(now.getTime() - 30 * 1000), // 30 seconds before now
             lte: new Date(now.getTime() + 30 * 1000), // 30 seconds after now
           },
+          OR: [
+            { endsAt: null }, // Events without an end date
+            { endsAt: { gt: now } }, // Events that haven't ended yet
+          ],
         },
         select: {
           id: true,
           title: true,
           startsAt: true,
+          endsAt: true,
           code: true,
         },
       });
@@ -123,6 +135,14 @@ export class EventRemindersTask {
       this.logger.log(`Found ${events.length} event(s) starting now`);
 
       for (const event of events) {
+        // Update event status to LIVE
+        await this.databaseService.event.update({
+          where: { id: event.id },
+          data: { status: EventStatus.LIVE },
+        });
+
+        this.logger.log(`Updated event ${event.code} status to LIVE`);
+
         // Get all participants
         const participants = await this.databaseService.eventParticipant.findMany({
           where: { eventId: event.id },
@@ -150,10 +170,124 @@ export class EventRemindersTask {
         }
       }
 
-      this.logger.log(`Sent start notifications for ${events.length} event(s)`);
+      this.logger.log(`Updated ${events.length} event(s) to LIVE and sent start notifications`);
     } catch (error: any) {
       this.logger.error(
         `Error sending start notifications: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  /**
+   * Runs every minute to check for events that should be LIVE and update their status
+   */
+  @Cron('* * * * *') // Every minute
+  async updateScheduledToLiveStatus(): Promise<void> {
+    this.logger.debug('Checking for events that should be LIVE...');
+
+    const now = new Date();
+
+    try {
+      // Find events with SCHEDULED status that should be LIVE (startsAt is in the past)
+      // Exclude events that have ended (endsAt is in the past)
+      const eventsToLive = await this.databaseService.event.findMany({
+        where: {
+          status: EventStatus.SCHEDULED,
+          startsAt: {
+            lte: now, // startsAt is in the past
+          },
+          OR: [
+            { endsAt: null }, // Events without an end date
+            { endsAt: { gt: now } }, // Events that haven't ended yet
+          ],
+        },
+        select: {
+          id: true,
+          code: true,
+          title: true,
+          startsAt: true,
+        },
+      });
+
+      if (eventsToLive.length === 0) {
+        return;
+      }
+
+      this.logger.log(`Found ${eventsToLive.length} event(s) that should be LIVE`);
+
+      // Update all events to LIVE status
+      const updatePromises = eventsToLive.map((event) =>
+        this.databaseService.event.update({
+          where: { id: event.id },
+          data: { status: EventStatus.LIVE },
+        }),
+      );
+
+      await Promise.all(updatePromises);
+
+      this.logger.log(
+        `Updated ${eventsToLive.length} event(s) to LIVE status: ${eventsToLive.map((e) => e.code).join(', ')}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Error updating scheduled events to LIVE status: ${error.message}`,
+        error.stack,
+      );
+    }
+  }
+
+  /**
+   * Runs every minute to check for events that have ended and update their status to ENDED
+   */
+  @Cron('* * * * *') // Every minute
+  async updateEndedEventsStatus(): Promise<void> {
+    this.logger.debug('Checking for events that have ended...');
+
+    const now = new Date();
+
+    try {
+      // Find events that have ended (endsAt is in the past) but are still LIVE or SCHEDULED
+      const endedEvents = await this.databaseService.event.findMany({
+        where: {
+          status: {
+            in: [EventStatus.LIVE, EventStatus.SCHEDULED],
+          },
+          endsAt: {
+            not: null,
+            lte: now, // endsAt is in the past
+          },
+        },
+        select: {
+          id: true,
+          code: true,
+          title: true,
+          endsAt: true,
+        },
+      });
+
+      if (endedEvents.length === 0) {
+        return;
+      }
+
+      this.logger.log(`Found ${endedEvents.length} event(s) that have ended`);
+
+      // Update all ended events to ENDED status
+      const updatePromises = endedEvents.map((event) =>
+        this.databaseService.event.update({
+          where: { id: event.id },
+          data: { status: EventStatus.ENDED },
+        }),
+      );
+
+      await Promise.all(updatePromises);
+
+      this.logger.log(
+        `Updated ${endedEvents.length} event(s) to ENDED status: ${endedEvents.map((e) => e.code).join(', ')}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Error updating ended events status: ${error.message}`,
         error.stack,
       );
     }

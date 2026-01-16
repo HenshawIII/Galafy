@@ -431,6 +431,54 @@ export class NotificationsService {
   }
 
   /**
+   * Get user notifications
+   */
+  async getUserNotifications(
+    userId: string,
+    limit: number = 20,
+    offset: number = 0,
+    unreadOnly: boolean = false,
+  ) {
+    // Get unread count
+    const unreadCount = await this.databaseService.notification.count({
+      where: {
+        userId,
+        read: false,
+      },
+    });
+
+    // Build where clause
+    const where: any = { userId };
+    if (unreadOnly) {
+      where.read = false;
+    }
+
+    // Get notifications
+    const notifications = await this.databaseService.notification.findMany({
+      where,
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: limit,
+      skip: offset,
+    });
+
+    // Format response
+    return {
+      unread: unreadCount,
+      notifications: notifications.map((notification) => ({
+        id: notification.id,
+        message: notification.message,
+        title: notification.title,
+        type: notification.type,
+        data: notification.data,
+        unread: !notification.read,
+        createdAt: notification.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
    * Check if user has push notifications enabled
    */
   async isPushNotificationEnabled(userId: string): Promise<boolean> {
@@ -457,6 +505,35 @@ export class NotificationsService {
   }
 
   /**
+   * Save notification to database
+   */
+  private async saveNotification(
+    userId: string,
+    notification: SendMessageDto['notification'],
+  ): Promise<void> {
+    try {
+      const type = notification.data?.type || 'UNKNOWN';
+      const title = notification.notification?.title || '';
+      const message = notification.notification?.body || '';
+      const data = notification.data || {};
+
+      await this.databaseService.notification.create({
+        data: {
+          userId,
+          type,
+          title,
+          message,
+          data,
+          read: false,
+        },
+      });
+    } catch (error: any) {
+      // Log error but don't fail the notification send
+      console.error(`Failed to save notification to database: ${error.message}`);
+    }
+  }
+
+  /**
    * Send notification to user if enabled (respects user preferences)
    */
   async sendNotificationIfEnabled(
@@ -478,11 +555,64 @@ export class NotificationsService {
       }
     }
 
+    // Save notification to database before sending push
+    await this.saveNotification(userId, notification);
+
     // Send the notification
     try {
       return await this.sendMessage({ userId, notification });
     } catch (error: any) {
       return { skipped: false, error: error.message };
     }
+  }
+
+  /**
+   * Mark a notification as read
+   */
+  async markNotificationAsRead(notificationId: string, userId: string) {
+    // Verify notification exists and belongs to user
+    const notification = await this.databaseService.notification.findUnique({
+      where: { id: notificationId },
+    });
+
+    if (!notification) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    if (notification.userId !== userId) {
+      throw new BadRequestException('Notification does not belong to this user');
+    }
+
+    // Mark as read
+    const updated = await this.databaseService.notification.update({
+      where: { id: notificationId },
+      data: { read: true },
+    });
+
+    return {
+      id: updated.id,
+      read: updated.read,
+      message: 'Notification marked as read',
+    };
+  }
+
+  /**
+   * Mark all notifications as read for a user
+   */
+  async markAllNotificationsAsRead(userId: string) {
+    const result = await this.databaseService.notification.updateMany({
+      where: {
+        userId,
+        read: false,
+      },
+      data: {
+        read: true,
+      },
+    });
+
+    return {
+      count: result.count,
+      message: `${result.count} notification(s) marked as read`,
+    };
   }
 }

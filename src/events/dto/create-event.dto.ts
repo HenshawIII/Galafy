@@ -62,6 +62,11 @@ export class CreateEventDto {
   @IsNotEmpty()
   startAt: string;
 
+  @ApiPropertyOptional({ description: 'Event end date and time (ISO 8601). If provided, must be after startAt.', example: '2025-12-25T22:00:00Z' })
+  @IsDateString()
+  @IsOptional()
+  endAt?: string;
+
   @ApiPropertyOptional({ 
     description: 'Enable leaderboard for this event', 
     example: true,

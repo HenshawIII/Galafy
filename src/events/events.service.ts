@@ -5,6 +5,8 @@ import {
   ForbiddenException,
   ConflictException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { CacheService } from '../cache/cache.service.js';
@@ -14,6 +16,7 @@ import { EventStatus, EventRole, EventVisibility, KycTier } from '../../generate
 import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 @Injectable()
 export class EventsService {
@@ -22,6 +25,8 @@ export class EventsService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -176,6 +181,15 @@ export class EventsService {
       ? new Date() 
       : new Date(createEventDto.startAt);
 
+    // Validate endAt if provided (must be after startAt)
+    let endAt: Date | null = null;
+    if (createEventDto.endAt) {
+      endAt = new Date(createEventDto.endAt);
+      if (endAt <= startAt) {
+        throw new BadRequestException('Event end date must be after start date');
+      }
+    }
+
     // Create event with required fields
     const event = await this.databaseService.event.create({
       data: {
@@ -193,6 +207,7 @@ export class EventsService {
         hostUserId: userId,
         status: status,
         startsAt: startAt,
+        endsAt: endAt,
         enableLeaderboard: createEventDto.enableLeaderboard ?? true,
         anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? true,
         taggedPerformer: creatorRole === EventRole.PERFORMER ? null : (createEventDto.taggedPerformer || null),
@@ -719,6 +734,16 @@ export class EventsService {
         : null;
     }
     if (dto.startAt !== undefined) updateData.startsAt = new Date(dto.startAt);
+    if (dto.endAt !== undefined) {
+      const newEndAt = dto.endAt ? new Date(dto.endAt) : null;
+      const currentStartAt = updateData.startsAt ? updateData.startsAt : event.startsAt;
+      
+      if (newEndAt && newEndAt <= currentStartAt) {
+        throw new BadRequestException('Event end date must be after start date');
+      }
+      
+      updateData.endsAt = newEndAt;
+    }
     if (dto.enableLeaderboard !== undefined) updateData.enableLeaderboard = dto.enableLeaderboard;
     if (dto.anonSprayersAllowed !== undefined) updateData.anonSprayersAllowed = dto.anonSprayersAllowed;
     if (dto.taggedPerformer !== undefined) updateData.taggedPerformer = dto.taggedPerformer || null;
@@ -943,6 +968,47 @@ export class EventsService {
         },
       },
     });
+
+    // Notify event host when someone joins (if joining user is not the host)
+    if (event.hostUserId !== userId) {
+      try {
+        // Get event details for notification
+        const eventDetails = await this.databaseService.event.findUnique({
+          where: { id: eventId },
+          select: { title: true, code: true },
+        });
+
+        // Get participant name
+        const participantName =
+          participant.user.username ||
+          `${participant.user.firstName || ''} ${participant.user.lastName || ''}`.trim() ||
+          'Someone';
+
+        await this.notificationsService.sendNotificationIfEnabled(
+          event.hostUserId,
+          {
+            notification: {
+              title: 'New Participant Joined',
+              body: `${participantName} joined your event "${eventDetails?.title || 'Event'}"`,
+            },
+            data: {
+              type: 'EVENT_PARTICIPANT_JOINED',
+              eventId: eventId,
+              eventCode: eventDetails?.code || '',
+              eventTitle: eventDetails?.title || '',
+              participantId: userId,
+              participantName: participantName,
+              participantRole: joinEventDto.role,
+            },
+          },
+        );
+      } catch (notificationError: any) {
+        // Log error but don't fail the join - notification is optional
+        this.logger.warn(
+          `Failed to send participant joined notification: ${notificationError.message}`,
+        );
+      }
+    }
 
     return participant;
   }

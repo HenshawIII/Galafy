@@ -19,6 +19,7 @@ export class RejoinNotificationsTask {
 
   /**
    * Runs every 5 minutes to check for users who left events >15 mins ago
+   * Throttled to send at most once per hour per user to prevent spam
    * Note: This tracks users who called leaveEvent() - we'll need to enhance this
    * to track websocket disconnections in the future
    */
@@ -28,6 +29,7 @@ export class RejoinNotificationsTask {
 
     const now = new Date();
     const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
     try {
       // Find all LIVE events
@@ -113,6 +115,25 @@ export class RejoinNotificationsTask {
         });
 
         for (const participant of participants) {
+          // Check if user received EVENT_REJOIN notification in the last hour (throttling)
+          const recentNotification = await this.databaseService.notification.findFirst({
+            where: {
+              userId: participant.userId,
+              type: 'EVENT_REJOIN',
+              createdAt: {
+                gte: oneHourAgo, // Within the last hour
+              },
+            },
+            orderBy: {
+              createdAt: 'desc',
+            },
+          });
+
+          // Skip if user received a rejoin notification in the last hour
+          if (recentNotification) {
+            continue;
+          }
+
           // Build notification body with custom message
           let notificationBody = `${event.title} is still ongoing. ${randomMessage}`;
 
