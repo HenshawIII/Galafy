@@ -41,7 +41,11 @@ async function bootstrap() {
   // Swagger/OpenAPI documentation setup
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Gala API')
-    .setDescription('API documentation for Gala payment and event management platform')
+    .setDescription(
+      `API documentation for Gala payment and event management platform
+
+**📥 Download OpenAPI Spec:** [JSON](/api/docs-json) (for Postman import)`,
+    )
     .setVersion('1.0')
     .addServer(baseUrl, 'Current server')
     .addTag('users', 'User management endpoints')
