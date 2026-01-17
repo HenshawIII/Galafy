@@ -516,11 +516,13 @@ export class SpraysService {
       this.liveGateway.emitBalanceUpdate(userId, {
         walletId: sprayerWallet.id,
         availableBalance: result.sprayerBalance.toString(),
+        eventBalance: eventTotals.totalAmount.toString(),
       });
 
       this.liveGateway.emitBalanceUpdate(receiverParticipant.userId, {
         walletId: receiverWallet.id,
         availableBalance: result.receiverBalance.toString(),
+        eventBalance: eventTotals.totalAmount.toString(),
       });
 
       // Fetch and emit updated leaderboard
