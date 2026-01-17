@@ -293,6 +293,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
           this.emitBalanceUpdate(client.user.id, {
             walletId: userWallet.walletId,
             availableBalance: userWallet.availableBalance,
+            eventBalance: accumulatedSprayTotal.toString(),
           });
         }
       } catch (walletError: any) {
