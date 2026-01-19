@@ -5,12 +5,14 @@ import { DatabaseModule } from '../database/database.module.js';
 import { EventStatusTask } from './tasks/event-status.task.js';
 import { CacheModule } from '../cache/cache.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { ConfigModule } from '../config/config.module.js';
 
 @Module({
   imports: [
     DatabaseModule,
     CacheModule,
     forwardRef(() => NotificationsModule),
+    ConfigModule,
   ],
   controllers: [EventsController],
   providers: [EventsService, EventStatusTask],

@@ -3,6 +3,7 @@ import { DatabaseService } from '../../database/database.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { config } from 'dotenv';
 import { AmlLoggingService } from '../../common/services/aml-logging.service.js';
+import { ConfigService } from '../../config/config.service.js';
 config();
 
 export type AnomalyType = 'REPEATED_RECIPIENT' | 'CIRCULAR_FLOW' | 'SMURFING';
@@ -28,31 +29,94 @@ export interface AnomalyFinding {
 export class SprayAnomalyService {
   private readonly logger = new Logger('ANOMALY');
   
-  // Configuration from environment variables
-  private readonly TIME_WINDOW_HOURS: number;
-  private readonly REPEATED_RECIPIENT_THRESHOLD: number;
-  private readonly SMURFING_TOTAL_THRESHOLD: Decimal;
-  private readonly SMURFING_COUNT_THRESHOLD: number;
-  private readonly SMURFING_AVG_PERCENT_THRESHOLD: number;
+  // Configuration - loaded lazily from config
+  private timeWindowHours: number | null = null;
+  private repeatedRecipientThreshold: number | null = null;
+  private smurfingTotalThreshold: Decimal | null = null;
+  private smurfingCountThreshold: number | null = null;
+  private smurfingAvgPercentThreshold: number | null = null;
+
+  // Fallback values
+  private readonly FALLBACK_TIME_WINDOW_HOURS = 24;
+  private readonly FALLBACK_REPEATED_RECIPIENT_THRESHOLD = 5;
+  private readonly FALLBACK_SMURFING_TOTAL_THRESHOLD = new Decimal('100000');
+  private readonly FALLBACK_SMURFING_COUNT_THRESHOLD = 10;
+  private readonly FALLBACK_SMURFING_AVG_PERCENT_THRESHOLD = 0.10;
 
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly amlLoggingService: AmlLoggingService,
+    private readonly configService: ConfigService,
   ) {
-    // Load configuration from environment variables
-    this.TIME_WINDOW_HOURS = parseInt(process.env.ANOMALY_TIME_WINDOW_HOURS || '24', 10);
-    this.REPEATED_RECIPIENT_THRESHOLD = parseInt(process.env.ANOMALY_REPEATED_RECIPIENT_THRESHOLD || '5', 10);
-    this.SMURFING_TOTAL_THRESHOLD = new Decimal(process.env.ANOMALY_SMURFING_TOTAL_THRESHOLD || '100000');
-    this.SMURFING_COUNT_THRESHOLD = parseInt(process.env.ANOMALY_SMURFING_COUNT_THRESHOLD || '10', 10);
-    this.SMURFING_AVG_PERCENT_THRESHOLD = parseFloat(process.env.ANOMALY_SMURFING_AVG_PERCENT_THRESHOLD || '0.10');
+    // Config will be loaded lazily on first use
+  }
 
-    this.logger.log(
-      `Anomaly detection configured: TimeWindow=${this.TIME_WINDOW_HOURS}h, ` +
-      `RepeatedRecipient=${this.REPEATED_RECIPIENT_THRESHOLD}, ` +
-      `SmurfingTotal=${this.SMURFING_TOTAL_THRESHOLD.toString()}, ` +
-      `SmurfingCount=${this.SMURFING_COUNT_THRESHOLD}, ` +
-      `SmurfingAvgPercent=${this.SMURFING_AVG_PERCENT_THRESHOLD}`,
-    );
+  /**
+   * Load anomaly detection configuration from database or use fallback
+   */
+  private async loadConfig(): Promise<{
+    TIME_WINDOW_HOURS: number;
+    REPEATED_RECIPIENT_THRESHOLD: number;
+    SMURFING_TOTAL_THRESHOLD: Decimal;
+    SMURFING_COUNT_THRESHOLD: number;
+    SMURFING_AVG_PERCENT_THRESHOLD: number;
+  }> {
+    // Use cached values if already loaded
+    if (this.timeWindowHours !== null) {
+      return {
+        TIME_WINDOW_HOURS: this.timeWindowHours,
+        REPEATED_RECIPIENT_THRESHOLD: this.repeatedRecipientThreshold!,
+        SMURFING_TOTAL_THRESHOLD: this.smurfingTotalThreshold!,
+        SMURFING_COUNT_THRESHOLD: this.smurfingCountThreshold!,
+        SMURFING_AVG_PERCENT_THRESHOLD: this.smurfingAvgPercentThreshold!,
+      };
+    }
+
+    try {
+      this.timeWindowHours = await this.configService.getConfig<number>(
+        'ANOMALY_TIME_WINDOW_HOURS',
+        this.FALLBACK_TIME_WINDOW_HOURS,
+      );
+      this.repeatedRecipientThreshold = await this.configService.getConfig<number>(
+        'ANOMALY_REPEATED_RECIPIENT_THRESHOLD',
+        this.FALLBACK_REPEATED_RECIPIENT_THRESHOLD,
+      );
+      this.smurfingTotalThreshold = await this.configService.getConfig<Decimal>(
+        'ANOMALY_SMURFING_TOTAL_THRESHOLD',
+        this.FALLBACK_SMURFING_TOTAL_THRESHOLD,
+      );
+      this.smurfingCountThreshold = await this.configService.getConfig<number>(
+        'ANOMALY_SMURFING_COUNT_THRESHOLD',
+        this.FALLBACK_SMURFING_COUNT_THRESHOLD,
+      );
+      this.smurfingAvgPercentThreshold = await this.configService.getConfig<number>(
+        'ANOMALY_SMURFING_AVG_PERCENT_THRESHOLD',
+        this.FALLBACK_SMURFING_AVG_PERCENT_THRESHOLD,
+      );
+
+      this.logger.log(
+        `Anomaly detection configured: TimeWindow=${this.timeWindowHours}h, ` +
+        `RepeatedRecipient=${this.repeatedRecipientThreshold}, ` +
+        `SmurfingTotal=${this.smurfingTotalThreshold.toString()}, ` +
+        `SmurfingCount=${this.smurfingCountThreshold}, ` +
+        `SmurfingAvgPercent=${this.smurfingAvgPercentThreshold}`,
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to load anomaly config, using fallback values: ${error.message}`);
+      this.timeWindowHours = this.FALLBACK_TIME_WINDOW_HOURS;
+      this.repeatedRecipientThreshold = this.FALLBACK_REPEATED_RECIPIENT_THRESHOLD;
+      this.smurfingTotalThreshold = this.FALLBACK_SMURFING_TOTAL_THRESHOLD;
+      this.smurfingCountThreshold = this.FALLBACK_SMURFING_COUNT_THRESHOLD;
+      this.smurfingAvgPercentThreshold = this.FALLBACK_SMURFING_AVG_PERCENT_THRESHOLD;
+    }
+
+    return {
+      TIME_WINDOW_HOURS: this.timeWindowHours,
+      REPEATED_RECIPIENT_THRESHOLD: this.repeatedRecipientThreshold,
+      SMURFING_TOTAL_THRESHOLD: this.smurfingTotalThreshold,
+      SMURFING_COUNT_THRESHOLD: this.smurfingCountThreshold,
+      SMURFING_AVG_PERCENT_THRESHOLD: this.smurfingAvgPercentThreshold,
+    };
   }
 
   /**
@@ -67,6 +131,7 @@ export class SprayAnomalyService {
     eventId?: string,
     sprayCreatedAt?: Date,
   ): Promise<AnomalyFinding[]> {
+    const config = await this.loadConfig();
     const findings: AnomalyFinding[] = [];
 
     try {
@@ -74,14 +139,15 @@ export class SprayAnomalyService {
       const repeatedRecipient = await this.detectRepeatedRecipient(
         sprayerWalletId,
         receiverWalletId,
-        this.TIME_WINDOW_HOURS,
+        config.TIME_WINDOW_HOURS,
+        config.REPEATED_RECIPIENT_THRESHOLD,
       );
       if (repeatedRecipient) {
         findings.push({
           sprayId,
           transactionId,
           anomalyType: 'REPEATED_RECIPIENT',
-          severity: this.calculateSeverity(repeatedRecipient.count, this.REPEATED_RECIPIENT_THRESHOLD),
+          severity: this.calculateSeverity(repeatedRecipient.count, config.REPEATED_RECIPIENT_THRESHOLD),
           details: {
             sprayerWalletId,
             receiverWalletId,
@@ -89,8 +155,8 @@ export class SprayAnomalyService {
             eventId,
             patternData: {
               count: repeatedRecipient.count,
-              timeWindowHours: this.TIME_WINDOW_HOURS,
-              threshold: this.REPEATED_RECIPIENT_THRESHOLD,
+              timeWindowHours: config.TIME_WINDOW_HOURS,
+              threshold: config.REPEATED_RECIPIENT_THRESHOLD,
               firstSprayAt: repeatedRecipient.firstSprayAt,
               lastSprayAt: repeatedRecipient.lastSprayAt,
             },
@@ -98,7 +164,7 @@ export class SprayAnomalyService {
           detectedAt: new Date().toISOString(),
           metadata: {
             detectionRule: 'repeated_recipient',
-            timeWindow: this.TIME_WINDOW_HOURS,
+            timeWindow: config.TIME_WINDOW_HOURS,
           },
         });
       }
@@ -107,7 +173,7 @@ export class SprayAnomalyService {
       const circularFlow = await this.detectCircularFlow(
         sprayerWalletId,
         receiverWalletId,
-        this.TIME_WINDOW_HOURS,
+        config.TIME_WINDOW_HOURS,
         sprayCreatedAt,
       );
       if (circularFlow) {
@@ -132,19 +198,30 @@ export class SprayAnomalyService {
           detectedAt: new Date().toISOString(),
           metadata: {
             detectionRule: 'circular_flow',
-            timeWindow: this.TIME_WINDOW_HOURS,
+            timeWindow: config.TIME_WINDOW_HOURS,
           },
         });
       }
 
       // Detect smurfing (large sum split into small sprays)
-      const smurfing = await this.detectSmurfing(sprayerWalletId, this.TIME_WINDOW_HOURS);
+      const smurfing = await this.detectSmurfing(
+        sprayerWalletId,
+        config.TIME_WINDOW_HOURS,
+        config.SMURFING_TOTAL_THRESHOLD,
+        config.SMURFING_COUNT_THRESHOLD,
+        config.SMURFING_AVG_PERCENT_THRESHOLD,
+      );
       if (smurfing) {
         findings.push({
           sprayId,
           transactionId,
           anomalyType: 'SMURFING',
-          severity: this.calculateSmurfingSeverity(smurfing.total, smurfing.count),
+          severity: this.calculateSmurfingSeverity(
+            smurfing.total,
+            smurfing.count,
+            config.SMURFING_TOTAL_THRESHOLD,
+            config.SMURFING_COUNT_THRESHOLD,
+          ),
           details: {
             sprayerWalletId,
             receiverWalletId,
@@ -154,15 +231,15 @@ export class SprayAnomalyService {
               total: smurfing.total.toString(),
               count: smurfing.count,
               average: smurfing.average.toString(),
-              threshold: this.SMURFING_TOTAL_THRESHOLD.toString(),
-              countThreshold: this.SMURFING_COUNT_THRESHOLD,
-              avgPercentThreshold: this.SMURFING_AVG_PERCENT_THRESHOLD,
+              threshold: config.SMURFING_TOTAL_THRESHOLD.toString(),
+              countThreshold: config.SMURFING_COUNT_THRESHOLD,
+              avgPercentThreshold: config.SMURFING_AVG_PERCENT_THRESHOLD,
             },
           },
           detectedAt: new Date().toISOString(),
           metadata: {
             detectionRule: 'smurfing',
-            timeWindow: this.TIME_WINDOW_HOURS,
+            timeWindow: config.TIME_WINDOW_HOURS,
           },
         });
       }
@@ -207,6 +284,7 @@ export class SprayAnomalyService {
     sprayerWalletId: string,
     receiverWalletId: string,
     timeWindowHours: number,
+    threshold: number,
   ): Promise<{ count: number; firstSprayAt: string; lastSprayAt: string } | null> {
     const timeWindowStart = new Date();
     timeWindowStart.setHours(timeWindowStart.getHours() - timeWindowHours);
@@ -229,7 +307,7 @@ export class SprayAnomalyService {
       },
     });
 
-    if (sprays.length >= this.REPEATED_RECIPIENT_THRESHOLD) {
+    if (sprays.length >= threshold) {
       return {
         count: sprays.length,
         firstSprayAt: sprays[0].createdAt.toISOString(),
@@ -295,6 +373,9 @@ export class SprayAnomalyService {
   private async detectSmurfing(
     sprayerWalletId: string,
     timeWindowHours: number,
+    totalThreshold: Decimal,
+    countThreshold: number,
+    avgPercentThreshold: number,
   ): Promise<{ total: Decimal; count: number; average: Decimal } | null> {
     const timeWindowStart = new Date();
     timeWindowStart.setHours(timeWindowStart.getHours() - timeWindowHours);
@@ -314,7 +395,7 @@ export class SprayAnomalyService {
       },
     });
 
-    if (sprays.length < this.SMURFING_COUNT_THRESHOLD) {
+    if (sprays.length < countThreshold) {
       return null;
     }
 
@@ -326,11 +407,11 @@ export class SprayAnomalyService {
     const average = total.dividedBy(sprays.length);
 
     // Check if total exceeds threshold and average is less than threshold percentage
-    const avgPercentOfTotal = average.dividedBy(this.SMURFING_TOTAL_THRESHOLD);
+    const avgPercentOfTotal = average.dividedBy(totalThreshold);
     
     if (
-      total.gt(this.SMURFING_TOTAL_THRESHOLD) &&
-      avgPercentOfTotal.lt(this.SMURFING_AVG_PERCENT_THRESHOLD)
+      total.gt(totalThreshold) &&
+      avgPercentOfTotal.lt(avgPercentThreshold)
     ) {
       return {
         total,
@@ -357,9 +438,14 @@ export class SprayAnomalyService {
   /**
    * Calculate severity for smurfing based on total and count
    */
-  private calculateSmurfingSeverity(total: Decimal, count: number): AnomalySeverity {
-    const totalMultiplier = total.dividedBy(this.SMURFING_TOTAL_THRESHOLD).toNumber();
-    const countMultiplier = count / this.SMURFING_COUNT_THRESHOLD;
+  private calculateSmurfingSeverity(
+    total: Decimal,
+    count: number,
+    totalThreshold: Decimal,
+    countThreshold: number,
+  ): AnomalySeverity {
+    const totalMultiplier = total.dividedBy(totalThreshold).toNumber();
+    const countMultiplier = count / countThreshold;
 
     if (totalMultiplier >= 5 || countMultiplier >= 3) {
       return 'HIGH';

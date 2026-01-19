@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { ConfigService } from '../config/config.service.js';
 
 @Injectable()
 export class EventsService {
@@ -27,6 +28,7 @@ export class EventsService {
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -61,6 +63,88 @@ export class EventsService {
       throw new ForbiddenException(
         `You need at least KYC Tier_2 to be a ${role}. Your current tier is ${customer.tier}.`
       );
+    }
+  }
+
+  /**
+   * Check if an event has at least one CELEBRANT or PERFORMER participant
+   * This ensures events always have someone who can receive sprays
+   */
+  private async hasNonAttendeeParticipant(eventId: string, excludeUserId?: string): Promise<boolean> {
+    const participants = await this.databaseService.eventParticipant.findMany({
+      where: {
+        eventId,
+        role: {
+          in: [EventRole.CELEBRANT, EventRole.PERFORMER],
+        },
+        ...(excludeUserId ? { userId: { not: excludeUserId } } : {}),
+      },
+      select: { id: true },
+    });
+
+    return participants.length > 0;
+  }
+
+  /**
+   * Check for overlapping events to prevent users from having multiple live events at the same time
+   * A user can only have one SCHEDULED or LIVE event at a time
+   * New event's start date must be after existing event's end date
+   */
+  private async checkForOverlappingEvents(
+    userId: string,
+    newEventStartAt: Date,
+    newEventEndAt: Date | null,
+  ): Promise<void> {
+    // Query existing SCHEDULED or LIVE events for this user
+    const existingEvents = await this.databaseService.event.findMany({
+      where: {
+        hostUserId: userId,
+        status: {
+          in: [EventStatus.SCHEDULED, EventStatus.LIVE],
+        },
+      },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+      },
+    });
+
+    // Get default event duration from config
+    const defaultDurationHours = await this.configService.getConfig<number>(
+      'EVENT_DEFAULT_DURATION_HOURS',
+      24,
+    );
+
+    // Check each existing event for overlap
+    for (const existingEvent of existingEvents) {
+      // Calculate effective end date for existing event
+      // If endsAt is null, use startsAt + default duration hours
+      const existingEventEndAt = existingEvent.endsAt
+        ? new Date(existingEvent.endsAt)
+        : new Date(new Date(existingEvent.startsAt).getTime() + defaultDurationHours * 60 * 60 * 1000);
+
+      // Check if new event's start date is before existing event's end date
+      // This means there's an overlap
+      if (newEventStartAt < existingEventEndAt) {
+        const existingEventStartAt = new Date(existingEvent.startsAt);
+        const existingEventEndAtDate = new Date(existingEventEndAt);
+        
+        // Format dates for error message
+        const startDateStr = existingEventStartAt.toISOString();
+        const endDateStr = existingEventEndAtDate.toISOString();
+        
+        // Build error message based on whether existing event has an end date
+        const dateRangeStr = existingEvent.endsAt
+          ? `${startDateStr} to ${endDateStr}`
+          : `${startDateStr} (no end date set, estimated end: ${endDateStr})`;
+
+        throw new BadRequestException(
+          `Cannot create event. You already have a ${existingEvent.status} event "${existingEvent.title}" from ${dateRangeStr}. The new event's start date must be after ${endDateStr}.`,
+        );
+      }
     }
   }
 
@@ -190,64 +274,10 @@ export class EventsService {
       }
     }
 
-    // Create event with required fields
-    const event = await this.databaseService.event.create({
-      data: {
-        code: eventCode!,
-        title: createEventDto.title,
-        name: createEventDto.title, // Keep name same as title for backward compatibility
-        location: createEventDto.location,
-        category: createEventDto.category,
-        description: createEventDto.description,
-        imageUrl: createEventDto.imageUrl,
-        imagePath: createEventDto.imagePath,
-        goLiveInstantly: createEventDto.goLiveInstantly,
-        sprayGoal: createEventDto.sprayGoal ? new Decimal(createEventDto.sprayGoal) : null,
-        minSprayAmount: createEventDto.minSprayAmount ? new Decimal(createEventDto.minSprayAmount) : null,
-        hostUserId: userId,
-        status: status,
-        startsAt: startAt,
-        endsAt: endAt,
-        enableLeaderboard: createEventDto.enableLeaderboard ?? true,
-        anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? true,
-        taggedPerformer: creatorRole === EventRole.PERFORMER ? null : (createEventDto.taggedPerformer || null),
-        visibility: createEventDto.visibility || EventVisibility.PUBLIC,
-      },
-      include: {
-        hostUser: {
-          select: {
-            id: true,
-            email: true,
-            firstName: true,
-            lastName: true,
-            username: true,
-          },
-        },
-        participants: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
-                firstName: true,
-                lastName: true,
-                username: true,
-              },
-            },
-          },
-        },
-        _count: {
-          select: {
-            participants: true,
-            sprays: true,
-          },
-        },
-      },
-    });
+    // Check for overlapping events - user cannot have multiple SCHEDULED or LIVE events at the same time
+    await this.checkForOverlappingEvents(userId, startAt, endAt);
 
-    // Automatically add host user with the specified role (PERFORMER or CELEBRANT)
-    // (Only Tier_2 and Tier_3 users can create events, so host is always eligible)
-    // Get host's default wallet for receiving sprays
+    // Get host's wallet before transaction (needed for participant creation)
     let hostWalletId: string | null = null;
     const hostCustomer = await this.databaseService.customer.findUnique({
       where: { userId },
@@ -275,23 +305,14 @@ export class EventsService {
       }
     }
 
-    await this.databaseService.eventParticipant.create({
-      data: {
-        eventId: event.id,
-        userId: userId,
-        role: creatorRole,
-        walletId: hostWalletId,
-      },
-    });
-
-    // If taggedPerformer is provided (only valid when role is CELEBRANT), add them as a participant with PERFORMER role
-    // Note: Validation already done above, so we can safely proceed with adding the participant
+    // Get performer wallet if taggedPerformer is provided
+    let performerUser: { id: string } | null = null;
+    let performerWalletId: string | null = null;
     if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
       const performerIdentifier = createEventDto.taggedPerformer.trim();
       const isEmail = performerIdentifier.includes('@');
       
       // Lookup performer user (already validated above, so this should always succeed)
-      let performerUser;
       if (isEmail) {
         performerUser = await this.databaseService.user.findUnique({
           where: { email: performerIdentifier },
@@ -311,40 +332,81 @@ export class EventsService {
         );
       }
 
-      // Add performer as participant (avoid duplicate if they're the creator)
+      // Get performer's wallet if they're not the creator
       if (performerUser.id !== userId) {
-        try {
-          // Get performer's default wallet for receiving sprays
-          let performerWalletId: string | null = null;
-          const performerCustomer = await this.databaseService.customer.findUnique({
-            where: { userId: performerUser.id },
-            include: {
-              wallets: {
-                where: { isDefault: true },
-                take: 1,
+        const performerCustomer = await this.databaseService.customer.findUnique({
+          where: { userId: performerUser.id },
+          include: {
+            wallets: {
+              where: { isDefault: true },
+              take: 1,
+            },
+          },
+        });
+
+        if (performerCustomer && performerCustomer.wallets && performerCustomer.wallets.length > 0) {
+          performerWalletId = performerCustomer.wallets[0].id;
+        } else {
+          // If no default wallet, try to get any wallet
+          const anyWallet = await this.databaseService.wallet.findFirst({
+            where: {
+              customer: {
+                userId: performerUser.id,
               },
             },
           });
-
-          if (performerCustomer && performerCustomer.wallets && performerCustomer.wallets.length > 0) {
-            performerWalletId = performerCustomer.wallets[0].id;
-          } else {
-            // If no default wallet, try to get any wallet
-            const anyWallet = await this.databaseService.wallet.findFirst({
-              where: {
-                customer: {
-                  userId: performerUser.id,
-                },
-              },
-            });
-            if (anyWallet) {
-              performerWalletId = anyWallet.id;
-            }
+          if (anyWallet) {
+            performerWalletId = anyWallet.id;
           }
+        }
+      }
+    }
 
-          await this.databaseService.eventParticipant.create({
+    // Use transaction to ensure atomicity: event and participants are created together
+    // If any part fails, everything is rolled back
+    const event = await this.databaseService.$transaction(async (tx) => {
+      // Create event
+      const createdEvent = await tx.event.create({
+        data: {
+          code: eventCode!,
+          title: createEventDto.title,
+          name: createEventDto.title, // Keep name same as title for backward compatibility
+          location: createEventDto.location,
+          category: createEventDto.category,
+          description: createEventDto.description,
+          imageUrl: createEventDto.imageUrl,
+          imagePath: createEventDto.imagePath,
+          goLiveInstantly: createEventDto.goLiveInstantly,
+          sprayGoal: createEventDto.sprayGoal ? new Decimal(createEventDto.sprayGoal) : null,
+          minSprayAmount: createEventDto.minSprayAmount ? new Decimal(createEventDto.minSprayAmount) : null,
+          hostUserId: userId,
+          status: status,
+          startsAt: startAt,
+          endsAt: endAt,
+          enableLeaderboard: createEventDto.enableLeaderboard ?? true,
+          anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? true,
+          taggedPerformer: creatorRole === EventRole.PERFORMER ? null : (createEventDto.taggedPerformer || null),
+          visibility: createEventDto.visibility || EventVisibility.PUBLIC,
+        },
+      });
+
+      // Automatically add host user with the specified role (PERFORMER or CELEBRANT)
+      // This ensures every event has at least one non-ATTENDEE participant
+      await tx.eventParticipant.create({
+        data: {
+          eventId: createdEvent.id,
+          userId: userId,
+          role: creatorRole,
+          walletId: hostWalletId,
+        },
+      });
+
+      // If taggedPerformer is provided (only valid when role is CELEBRANT), add them as a participant with PERFORMER role
+      if (performerUser && performerUser.id !== userId && performerWalletId !== null) {
+        try {
+          await tx.eventParticipant.create({
             data: {
-              eventId: event.id,
+              eventId: createdEvent.id,
               userId: performerUser.id,
               role: EventRole.PERFORMER,
               walletId: performerWalletId,
@@ -357,9 +419,11 @@ export class EventsService {
           }
         }
       }
-    }
 
-    // Return event with updated participants
+      return createdEvent;
+    });
+
+    // Return event with all participants
     return this.databaseService.event.findUnique({
       where: { id: event.id },
       include: {
@@ -825,15 +889,81 @@ export class EventsService {
     // Check if event exists
     const event = await this.databaseService.event.findUnique({
       where: { id: eventId },
-      select: { id: true, hostUserId: true },
+      include: {
+        participants: {
+          where: {
+            role: {
+              in: [EventRole.CELEBRANT, EventRole.PERFORMER],
+            },
+          },
+          select: {
+            userId: true,
+            role: true,
+          },
+        },
+      },
     });
 
     if (!event) {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
+    // Default role to ATTENDEE if not provided
+    const role = joinEventDto.role || EventRole.ATTENDEE;
+
+    // Business Rule: Only host can be CELEBRANT, only tagged performer can be PERFORMER
+    // All other participants must be ATTENDEE
+    if (role === EventRole.CELEBRANT) {
+      if (event.hostUserId !== userId) {
+        throw new ForbiddenException(
+          'Only the event host can have the CELEBRANT role. Regular participants must join as ATTENDEE.'
+        );
+      }
+    } else if (role === EventRole.PERFORMER) {
+      // Check if user is the tagged performer
+      if (!event.taggedPerformer) {
+        throw new BadRequestException(
+          'This event does not have a tagged performer. Only ATTENDEE role is available.'
+        );
+      }
+
+      // Find the tagged performer user
+      const isEmail = event.taggedPerformer.includes('@');
+      const taggedPerformerUser = isEmail
+        ? await this.databaseService.user.findUnique({
+            where: { email: event.taggedPerformer },
+            select: { id: true },
+          })
+        : await this.databaseService.user.findUnique({
+            where: { username: event.taggedPerformer },
+            select: { id: true },
+          });
+
+      if (!taggedPerformerUser || taggedPerformerUser.id !== userId) {
+        throw new ForbiddenException(
+          'Only the tagged performer can have the PERFORMER role. Regular participants must join as ATTENDEE.'
+        );
+      }
+
+      // Check if there's already a PERFORMER
+      const existingPerformer = event.participants.find(p => p.role === EventRole.PERFORMER);
+      if (existingPerformer && existingPerformer.userId !== userId) {
+        throw new ConflictException(
+          'This event already has a PERFORMER participant. Only one PERFORMER is allowed per event.'
+        );
+      }
+    } else if (role === EventRole.ATTENDEE) {
+      // Regular users joining should always be ATTENDEE - this is fine
+      // But prevent host from joining as ATTENDEE
+      if (event.hostUserId === userId) {
+        throw new ForbiddenException(
+          'Event host cannot join as ATTENDEE. The host must remain as CELEBRANT or PERFORMER.'
+        );
+      }
+    }
+
     // Check KYC tier for role
-    await this.checkKycTierForRole(userId, joinEventDto.role);
+    await this.checkKycTierForRole(userId, role);
 
     // Check if user is already a participant
     const existingParticipant = await this.databaseService.eventParticipant.findUnique({
@@ -847,21 +977,40 @@ export class EventsService {
 
     if (existingParticipant) {
       // Update role if different
-      if (existingParticipant.role !== joinEventDto.role) {
-        // Prevent host from changing their role from CELEBRANT
-        if (event.hostUserId === userId && existingParticipant.role === EventRole.CELEBRANT) {
-          throw new ForbiddenException(
-            'Event host cannot change their role from CELEBRANT. The host must remain as the celebrant.',
-          );
+      if (existingParticipant.role !== role) {
+        // Prevent host from changing their role from CELEBRANT or PERFORMER to ATTENDEE
+        if (event.hostUserId === userId) {
+          if (role === EventRole.ATTENDEE) {
+            throw new ForbiddenException(
+              'Event host cannot change their role to ATTENDEE. The host must remain as CELEBRANT or PERFORMER.'
+            );
+          }
+          // Host can only be CELEBRANT or PERFORMER
+          if (role !== EventRole.CELEBRANT && role !== EventRole.PERFORMER) {
+            throw new ForbiddenException(
+              'Event host can only have CELEBRANT or PERFORMER role.'
+            );
+          }
+        }
+
+        // Prevent changing to ATTENDEE if it would leave the event with only ATTENDEEs
+        // Events must have at least one CELEBRANT or PERFORMER to receive sprays
+        if (role === EventRole.ATTENDEE) {
+          const hasOtherNonAttendees = await this.hasNonAttendeeParticipant(eventId, userId);
+          if (!hasOtherNonAttendees) {
+            throw new BadRequestException(
+              'Cannot change role to ATTENDEE. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.'
+            );
+          }
         }
 
         // Check KYC tier for new role
-        await this.checkKycTierForRole(userId, joinEventDto.role);
+        await this.checkKycTierForRole(userId, role);
         
         return this.databaseService.eventParticipant.update({
           where: { id: existingParticipant.id },
           data: {
-            role: joinEventDto.role,
+            role: role,
             walletId: joinEventDto.walletId || existingParticipant.walletId,
           },
           include: {
@@ -892,7 +1041,7 @@ export class EventsService {
 
     // For CELEBRANT and PERFORMER roles, automatically fetch default wallet if not provided
     // They need a wallet to receive sprays
-    if (!walletIdToUse && (joinEventDto.role === EventRole.CELEBRANT || joinEventDto.role === EventRole.PERFORMER)) {
+    if (!walletIdToUse && (role === EventRole.CELEBRANT || role === EventRole.PERFORMER)) {
       const customer = await this.databaseService.customer.findUnique({
         where: { userId },
         include: {
@@ -905,7 +1054,7 @@ export class EventsService {
 
       if (customer && customer.wallets && customer.wallets.length > 0) {
         walletIdToUse = customer.wallets[0].id;
-        this.logger.log(`Auto-assigned default wallet ${walletIdToUse} to ${joinEventDto.role} ${userId}`);
+        this.logger.log(`Auto-assigned default wallet ${walletIdToUse} to ${role} ${userId}`);
       } else {
         // If no default wallet, try to get any wallet
         const anyWallet = await this.databaseService.wallet.findFirst({
@@ -917,9 +1066,9 @@ export class EventsService {
         });
         if (anyWallet) {
           walletIdToUse = anyWallet.id;
-          this.logger.log(`Auto-assigned wallet ${walletIdToUse} to ${joinEventDto.role} ${userId}`);
+          this.logger.log(`Auto-assigned wallet ${walletIdToUse} to ${role} ${userId}`);
         } else {
-          this.logger.warn(`No wallet found for ${joinEventDto.role} ${userId}. They may not be able to receive sprays.`);
+          this.logger.warn(`No wallet found for ${role} ${userId}. They may not be able to receive sprays.`);
         }
       }
     }
@@ -946,7 +1095,7 @@ export class EventsService {
       data: {
         eventId,
         userId,
-        role: joinEventDto.role,
+        role: role,
         walletId: walletIdToUse,
       },
       include: {
@@ -998,7 +1147,7 @@ export class EventsService {
               eventTitle: eventDetails?.title || '',
               participantId: userId,
               participantName: participantName,
-              participantRole: joinEventDto.role,
+              participantRole: role,
             },
           },
         );
@@ -1037,6 +1186,17 @@ export class EventsService {
 
     if (event?.hostUserId === userId) {
       throw new BadRequestException('Event host cannot leave their own event');
+    }
+
+    // Prevent leaving if it would leave the event with only ATTENDEEs
+    // Events must have at least one CELEBRANT or PERFORMER to receive sprays
+    if (participant.role === EventRole.CELEBRANT || participant.role === EventRole.PERFORMER) {
+      const hasOtherNonAttendees = await this.hasNonAttendeeParticipant(eventId, userId);
+      if (!hasOtherNonAttendees) {
+        throw new BadRequestException(
+          'Cannot leave event. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.'
+        );
+      }
     }
 
     await this.databaseService.eventParticipant.delete({

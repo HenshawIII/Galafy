@@ -111,6 +111,14 @@ enum KycRequestStatus {
   REJECTED
 }
 
+enum ConfigType {
+  STRING
+  NUMBER
+  DECIMAL
+  BOOLEAN
+  JSON
+}
+
 // =====================
 // CORE USER / AUTH
 // =====================
@@ -768,4 +776,25 @@ model WalletCreationEvent {
   @@index([walletId])
   @@index([isFlagged])
   @@index([createdAt])
+}
+
+// =====================
+// SYSTEM CONFIGURATION
+// =====================
+
+model SystemConfig {
+  id          String     @id @default(uuid())
+  key         String     @unique // e.g., "ADMIN_PAYOUT_FEE", "RISK_VELOCITY_MAX"
+  category    String     // e.g., "FEES", "RISK", "DEVICE_ABUSE", "ANOMALY", "EVENT", "SYSTEM"
+  value       String     // Stored as string, parsed based on type
+  type        ConfigType // STRING, NUMBER, DECIMAL, BOOLEAN, JSON
+  description String?    // Human-readable description
+  isActive    Boolean    @default(true)
+  updatedBy   String?    // Admin user ID who last updated
+  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime   @default(now())
+
+  @@index([category])
+  @@index([isActive])
+  @@index([key])
 }

@@ -31,6 +31,7 @@ import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { DeviceAbuseDetectionService, DeviceInfo } from '../common/services/device-abuse-detection.service.js';
 import { EmailService } from '../users/email.service.js';
+import { ConfigService } from '../config/config.service.js';
 
 @Injectable()
 export class WalletmoduleService {
@@ -46,6 +47,7 @@ export class WalletmoduleService {
     private readonly amlLoggingService: AmlLoggingService,
     private readonly deviceAbuseDetectionService: DeviceAbuseDetectionService,
     private readonly emailService: EmailService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -706,7 +708,7 @@ export class WalletmoduleService {
     const grossAmount = normalizeToKobo(payoutData.amount as string | number);
 
     // Calculate payout fee (3%)
-    const { fee, netAmount, feePercentage } = calculatePayoutFee(grossAmount);
+    const { fee, netAmount, feePercentage } = await calculatePayoutFee(grossAmount, this.configService);
 
     // Use database transaction for atomicity
     const result = await this.databaseService.$transaction(

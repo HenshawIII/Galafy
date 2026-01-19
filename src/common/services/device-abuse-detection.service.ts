@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service.js';
 import { AmlLoggingService } from './aml-logging.service.js';
+import { ConfigService } from '../../config/config.service.js';
 
 export interface DeviceInfo {
   deviceToken?: string;
@@ -29,40 +30,83 @@ export interface AbuseDetectionResult {
 export class DeviceAbuseDetectionService {
   private readonly logger = new Logger(DeviceAbuseDetectionService.name);
 
-  // Thresholds for abuse detection (configurable via env)
-  private readonly MAX_WALLETS_PER_DEVICE: number;
-  private readonly MAX_WALLETS_PER_IP: number;
-  private readonly MAX_WALLETS_PER_DEVICE_24H: number;
-  private readonly MAX_WALLETS_PER_IP_24H: number;
+  // Thresholds for abuse detection - loaded lazily from config
+  private maxWalletsPerDevice: number | null = null;
+  private maxWalletsPerIp: number | null = null;
+  private maxWalletsPerDevice24H: number | null = null;
+  private maxWalletsPerIp24H: number | null = null;
+
+  // Fallback values
+  private readonly FALLBACK_MAX_WALLETS_PER_DEVICE = 3;
+  private readonly FALLBACK_MAX_WALLETS_PER_IP = 5;
+  private readonly FALLBACK_MAX_WALLETS_PER_DEVICE_24H = 2;
+  private readonly FALLBACK_MAX_WALLETS_PER_IP_24H = 3;
 
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly amlLoggingService: AmlLoggingService,
+    private readonly configService: ConfigService,
   ) {
-    // Load thresholds from environment variables
-    this.MAX_WALLETS_PER_DEVICE = parseInt(
-      process.env.MAX_WALLETS_PER_DEVICE || '3',
-      10,
-    );
-    this.MAX_WALLETS_PER_IP = parseInt(
-      process.env.MAX_WALLETS_PER_IP || '5',
-      10,
-    );
-    this.MAX_WALLETS_PER_DEVICE_24H = parseInt(
-      process.env.MAX_WALLETS_PER_DEVICE_24H || '2',
-      10,
-    );
-    this.MAX_WALLETS_PER_IP_24H = parseInt(
-      process.env.MAX_WALLETS_PER_IP_24H || '3',
-      10,
-    );
+    // Config will be loaded lazily on first use
+  }
 
-    this.logger.log(
-      `Device abuse detection configured: Max per device=${this.MAX_WALLETS_PER_DEVICE}, ` +
-        `Max per IP=${this.MAX_WALLETS_PER_IP}, ` +
-        `Max per device 24h=${this.MAX_WALLETS_PER_DEVICE_24H}, ` +
-        `Max per IP 24h=${this.MAX_WALLETS_PER_IP_24H}`,
-    );
+  /**
+   * Load device abuse detection configuration from database or use fallback
+   */
+  private async loadConfig(): Promise<{
+    MAX_WALLETS_PER_DEVICE: number;
+    MAX_WALLETS_PER_IP: number;
+    MAX_WALLETS_PER_DEVICE_24H: number;
+    MAX_WALLETS_PER_IP_24H: number;
+  }> {
+    // Use cached values if already loaded
+    if (this.maxWalletsPerDevice !== null) {
+      return {
+        MAX_WALLETS_PER_DEVICE: this.maxWalletsPerDevice,
+        MAX_WALLETS_PER_IP: this.maxWalletsPerIp!,
+        MAX_WALLETS_PER_DEVICE_24H: this.maxWalletsPerDevice24H!,
+        MAX_WALLETS_PER_IP_24H: this.maxWalletsPerIp24H!,
+      };
+    }
+
+    try {
+      this.maxWalletsPerDevice = await this.configService.getConfig<number>(
+        'MAX_WALLETS_PER_DEVICE',
+        this.FALLBACK_MAX_WALLETS_PER_DEVICE,
+      );
+      this.maxWalletsPerIp = await this.configService.getConfig<number>(
+        'MAX_WALLETS_PER_IP',
+        this.FALLBACK_MAX_WALLETS_PER_IP,
+      );
+      this.maxWalletsPerDevice24H = await this.configService.getConfig<number>(
+        'MAX_WALLETS_PER_DEVICE_24H',
+        this.FALLBACK_MAX_WALLETS_PER_DEVICE_24H,
+      );
+      this.maxWalletsPerIp24H = await this.configService.getConfig<number>(
+        'MAX_WALLETS_PER_IP_24H',
+        this.FALLBACK_MAX_WALLETS_PER_IP_24H,
+      );
+
+      this.logger.log(
+        `Device abuse detection configured: Max per device=${this.maxWalletsPerDevice}, ` +
+        `Max per IP=${this.maxWalletsPerIp}, ` +
+        `Max per device 24h=${this.maxWalletsPerDevice24H}, ` +
+        `Max per IP 24h=${this.maxWalletsPerIp24H}`,
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to load device abuse config, using fallback values: ${error.message}`);
+      this.maxWalletsPerDevice = this.FALLBACK_MAX_WALLETS_PER_DEVICE;
+      this.maxWalletsPerIp = this.FALLBACK_MAX_WALLETS_PER_IP;
+      this.maxWalletsPerDevice24H = this.FALLBACK_MAX_WALLETS_PER_DEVICE_24H;
+      this.maxWalletsPerIp24H = this.FALLBACK_MAX_WALLETS_PER_IP_24H;
+    }
+
+    return {
+      MAX_WALLETS_PER_DEVICE: this.maxWalletsPerDevice,
+      MAX_WALLETS_PER_IP: this.maxWalletsPerIp,
+      MAX_WALLETS_PER_DEVICE_24H: this.maxWalletsPerDevice24H,
+      MAX_WALLETS_PER_IP_24H: this.maxWalletsPerIp24H,
+    };
   }
 
   /**
@@ -73,6 +117,8 @@ export class DeviceAbuseDetectionService {
     customerId: string,
     deviceInfo: DeviceInfo,
   ): Promise<AbuseDetectionResult> {
+    const config = await this.loadConfig();
+    
     const reasons: string[] = [];
     let severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'LOW';
     let deviceWalletCount = 0;
@@ -111,9 +157,9 @@ export class DeviceAbuseDetectionService {
       deviceWalletCount = deviceWallets.length;
 
       // Check total wallets from device
-      if (deviceWalletCount >= this.MAX_WALLETS_PER_DEVICE) {
+      if (deviceWalletCount >= config.MAX_WALLETS_PER_DEVICE) {
         reasons.push(
-          `Device has ${deviceWalletCount} wallets (threshold: ${this.MAX_WALLETS_PER_DEVICE})`,
+          `Device has ${deviceWalletCount} wallets (threshold: ${config.MAX_WALLETS_PER_DEVICE})`,
         );
         severity = this.upgradeSeverity(severity, 'HIGH');
         flaggedWallets.push(
@@ -133,9 +179,9 @@ export class DeviceAbuseDetectionService {
         (event) => event.createdAt >= twentyFourHoursAgo,
       );
 
-      if (recentDeviceWallets.length >= this.MAX_WALLETS_PER_DEVICE_24H) {
+      if (recentDeviceWallets.length >= config.MAX_WALLETS_PER_DEVICE_24H) {
         reasons.push(
-          `Device created ${recentDeviceWallets.length} wallets in last 24 hours (threshold: ${this.MAX_WALLETS_PER_DEVICE_24H})`,
+          `Device created ${recentDeviceWallets.length} wallets in last 24 hours (threshold: ${config.MAX_WALLETS_PER_DEVICE_24H})`,
         );
         severity = this.upgradeSeverity(severity, 'CRITICAL');
       }
@@ -168,9 +214,9 @@ export class DeviceAbuseDetectionService {
       ipWalletCount = ipWallets.length;
 
       // Check total wallets from IP
-      if (ipWalletCount >= this.MAX_WALLETS_PER_IP) {
+      if (ipWalletCount >= config.MAX_WALLETS_PER_IP) {
         reasons.push(
-          `IP address has ${ipWalletCount} wallets (threshold: ${this.MAX_WALLETS_PER_IP})`,
+          `IP address has ${ipWalletCount} wallets (threshold: ${config.MAX_WALLETS_PER_IP})`,
         );
         severity = this.upgradeSeverity(severity, 'HIGH');
         flaggedWallets.push(
@@ -190,9 +236,9 @@ export class DeviceAbuseDetectionService {
         (event) => event.createdAt >= twentyFourHoursAgo,
       );
 
-      if (recentIpWallets.length >= this.MAX_WALLETS_PER_IP_24H) {
+      if (recentIpWallets.length >= config.MAX_WALLETS_PER_IP_24H) {
         reasons.push(
-          `IP address created ${recentIpWallets.length} wallets in last 24 hours (threshold: ${this.MAX_WALLETS_PER_IP_24H})`,
+          `IP address created ${recentIpWallets.length} wallets in last 24 hours (threshold: ${config.MAX_WALLETS_PER_IP_24H})`,
         );
         severity = this.upgradeSeverity(severity, 'CRITICAL');
       }

@@ -11,6 +11,7 @@ import { SprayRateLimitGuard } from './guards/spray-rate-limit.guard.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { SprayAnomalyService } from './services/spray-anomaly.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
+import { ConfigModule } from '../config/config.module.js';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
     CacheModule,
     EventsModule,
     forwardRef(() => NotificationsModule),
+    ConfigModule,
   ],
   controllers: [SpraysController],
   providers: [SpraysService, SprayRateLimitGuard, WalletRiskService, SprayAnomalyService, AmlLoggingService],

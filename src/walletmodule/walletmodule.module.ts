@@ -11,9 +11,10 @@ import { OrganizationWalletService } from '../common/services/organization-walle
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { DeviceAbuseDetectionService } from '../common/services/device-abuse-detection.service.js';
+import { ConfigModule } from '../config/config.module.js';
 
 @Module({
-  imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule],
+  imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule, ConfigModule],
   controllers: [WalletmoduleController],
   providers: [WalletmoduleService, PayoutSecurityService, WalletExportService, OrganizationWalletService, WalletRiskService, AmlLoggingService, DeviceAbuseDetectionService],
   exports: [WalletmoduleService],

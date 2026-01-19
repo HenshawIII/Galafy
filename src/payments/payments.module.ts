@@ -10,9 +10,10 @@ import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { UsersModule } from '../users/users.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { ConfigModule } from '../config/config.module.js';
 
 @Module({
-  imports: [DatabaseModule, ProviderModule, UsersModule, forwardRef(() => NotificationsModule)],
+  imports: [DatabaseModule, ProviderModule, UsersModule, forwardRef(() => NotificationsModule), ConfigModule],
   controllers: [PaymentsController, WebhooksController],
   providers: [PaymentsService, WebhooksService, OrganizationWalletService, WalletRiskService, AmlLoggingService],
   exports: [PaymentsService, WebhooksService],

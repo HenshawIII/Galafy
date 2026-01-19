@@ -4,6 +4,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { config } from 'dotenv';
 import { AmlLoggingService } from './aml-logging.service.js';
+import { ConfigService } from '../../config/config.service.js';
 config();
 
 export type RiskStatus = 'NORMAL' | 'SOFT_FREEZE' | 'HARD_FREEZE';
@@ -20,29 +21,84 @@ export interface RiskScoreComponents {
 export class WalletRiskService {
   private readonly logger = new Logger(WalletRiskService.name);
 
-  // Risk thresholds from environment variables
-  private readonly RISK_VELOCITY_MAX: number;
-  private readonly RISK_AMOUNT_MAX: Decimal;
-  private readonly RISK_SOFT_FREEZE_THRESHOLD: number;
-  private readonly RISK_HARD_FREEZE_THRESHOLD: number;
+  // Risk thresholds - loaded lazily from config
+  private riskVelocityMax: number | null = null;
+  private riskAmountMax: Decimal | null = null;
+  private riskSoftFreezeThreshold: number | null = null;
+  private riskHardFreezeThreshold: number | null = null;
   private readonly RISK_TIME_WINDOW_HOURS = 24; // 24 hours window
+
+  // Fallback values
+  private readonly FALLBACK_RISK_VELOCITY_MAX = 50;
+  private readonly FALLBACK_RISK_AMOUNT_MAX = new Decimal('1000000');
+  private readonly FALLBACK_RISK_SOFT_FREEZE_THRESHOLD = 70;
+  private readonly FALLBACK_RISK_HARD_FREEZE_THRESHOLD = 85;
 
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly amlLoggingService: AmlLoggingService,
+    private readonly configService: ConfigService,
   ) {
-    // Load configuration from environment variables
-    this.RISK_VELOCITY_MAX = parseInt(process.env.RISK_VELOCITY_MAX || '50', 10);
-    this.RISK_AMOUNT_MAX = new Decimal(process.env.RISK_AMOUNT_MAX || '1000000');
-    this.RISK_SOFT_FREEZE_THRESHOLD = parseInt(process.env.RISK_SOFT_FREEZE_THRESHOLD || '70', 10);
-    this.RISK_HARD_FREEZE_THRESHOLD = parseInt(process.env.RISK_HARD_FREEZE_THRESHOLD || '85', 10);
+    // Config will be loaded lazily on first use
+  }
 
-    this.logger.log(
-      `Risk scoring configured: Velocity Max=${this.RISK_VELOCITY_MAX}, ` +
-      `Amount Max=${this.RISK_AMOUNT_MAX.toString()}, ` +
-      `Soft Freeze=${this.RISK_SOFT_FREEZE_THRESHOLD}, ` +
-      `Hard Freeze=${this.RISK_HARD_FREEZE_THRESHOLD}`,
-    );
+  /**
+   * Load risk configuration from database or use fallback
+   */
+  private async loadRiskConfig(): Promise<{
+    RISK_VELOCITY_MAX: number;
+    RISK_AMOUNT_MAX: Decimal;
+    RISK_SOFT_FREEZE_THRESHOLD: number;
+    RISK_HARD_FREEZE_THRESHOLD: number;
+  }> {
+    // Use cached values if already loaded
+    if (this.riskVelocityMax !== null) {
+      return {
+        RISK_VELOCITY_MAX: this.riskVelocityMax,
+        RISK_AMOUNT_MAX: this.riskAmountMax!,
+        RISK_SOFT_FREEZE_THRESHOLD: this.riskSoftFreezeThreshold!,
+        RISK_HARD_FREEZE_THRESHOLD: this.riskHardFreezeThreshold!,
+      };
+    }
+
+    try {
+      this.riskVelocityMax = await this.configService.getConfig<number>(
+        'RISK_VELOCITY_MAX',
+        this.FALLBACK_RISK_VELOCITY_MAX,
+      );
+      this.riskAmountMax = await this.configService.getConfig<Decimal>(
+        'RISK_AMOUNT_MAX',
+        this.FALLBACK_RISK_AMOUNT_MAX,
+      );
+      this.riskSoftFreezeThreshold = await this.configService.getConfig<number>(
+        'RISK_SOFT_FREEZE_THRESHOLD',
+        this.FALLBACK_RISK_SOFT_FREEZE_THRESHOLD,
+      );
+      this.riskHardFreezeThreshold = await this.configService.getConfig<number>(
+        'RISK_HARD_FREEZE_THRESHOLD',
+        this.FALLBACK_RISK_HARD_FREEZE_THRESHOLD,
+      );
+
+      this.logger.log(
+        `Risk scoring configured: Velocity Max=${this.riskVelocityMax}, ` +
+        `Amount Max=${this.riskAmountMax.toString()}, ` +
+        `Soft Freeze=${this.riskSoftFreezeThreshold}, ` +
+        `Hard Freeze=${this.riskHardFreezeThreshold}`,
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to load risk config, using fallback values: ${error.message}`);
+      this.riskVelocityMax = this.FALLBACK_RISK_VELOCITY_MAX;
+      this.riskAmountMax = this.FALLBACK_RISK_AMOUNT_MAX;
+      this.riskSoftFreezeThreshold = this.FALLBACK_RISK_SOFT_FREEZE_THRESHOLD;
+      this.riskHardFreezeThreshold = this.FALLBACK_RISK_HARD_FREEZE_THRESHOLD;
+    }
+
+    return {
+      RISK_VELOCITY_MAX: this.riskVelocityMax,
+      RISK_AMOUNT_MAX: this.riskAmountMax,
+      RISK_SOFT_FREEZE_THRESHOLD: this.riskSoftFreezeThreshold,
+      RISK_HARD_FREEZE_THRESHOLD: this.riskHardFreezeThreshold,
+    };
   }
 
   /**
@@ -51,6 +107,8 @@ export class WalletRiskService {
    * Each component is normalized to 0-100 scale
    */
   async calculateRiskScore(walletId: string): Promise<RiskScoreComponents> {
+    const config = await this.loadRiskConfig();
+    
     const timeWindowStart = new Date();
     timeWindowStart.setHours(timeWindowStart.getHours() - this.RISK_TIME_WINDOW_HOURS);
 
@@ -88,7 +146,7 @@ export class WalletRiskService {
 
     // Calculate Transaction Velocity (0-100)
     // Velocity = (transactionCount / maxExpectedTransactions) * 100 (capped at 100)
-    const velocity = Math.min((transactions.length / this.RISK_VELOCITY_MAX) * 100, 100);
+    const velocity = Math.min((transactions.length / config.RISK_VELOCITY_MAX) * 100, 100);
 
     // Calculate Amount Size (0-100)
     // Amount Size = (averageAmount / maxExpectedAmount) * 100 (capped at 100)
@@ -98,7 +156,7 @@ export class WalletRiskService {
     );
     const averageAmount = totalAmount.dividedBy(transactions.length);
     const amountSize = Math.min(
-      averageAmount.dividedBy(this.RISK_AMOUNT_MAX).times(100).toNumber(),
+      averageAmount.dividedBy(config.RISK_AMOUNT_MAX).times(100).toNumber(),
       100,
     );
 
@@ -154,10 +212,12 @@ export class WalletRiskService {
   /**
    * Determine freeze status based on risk score
    */
-  checkFreezeStatus(riskScore: number): RiskStatus {
-    if (riskScore >= this.RISK_HARD_FREEZE_THRESHOLD) {
+  async checkFreezeStatus(riskScore: number): Promise<RiskStatus> {
+    const config = await this.loadRiskConfig();
+    
+    if (riskScore >= config.RISK_HARD_FREEZE_THRESHOLD) {
       return 'HARD_FREEZE';
-    } else if (riskScore >= this.RISK_SOFT_FREEZE_THRESHOLD) {
+    } else if (riskScore >= config.RISK_SOFT_FREEZE_THRESHOLD) {
       return 'SOFT_FREEZE';
     }
     return 'NORMAL';
@@ -168,9 +228,11 @@ export class WalletRiskService {
    */
   async updateWalletRiskScore(walletId: string): Promise<void> {
     try {
+      const config = await this.loadRiskConfig();
+      
       // Calculate risk score
       const components = await this.calculateRiskScore(walletId);
-      const riskStatus = this.checkFreezeStatus(components.finalScore);
+      const riskStatus = await this.checkFreezeStatus(components.finalScore);
 
       // Get current wallet to check if status changed
       const currentWallet = await this.databaseService.wallet.findUnique({
@@ -230,7 +292,7 @@ export class WalletRiskService {
             walletId,
             'HARD_FREEZE',
             components.finalScore,
-            `Risk score ${components.finalScore.toFixed(2)} exceeds hard freeze threshold (${this.RISK_HARD_FREEZE_THRESHOLD})`,
+            `Risk score ${components.finalScore.toFixed(2)} exceeds hard freeze threshold (${config.RISK_HARD_FREEZE_THRESHOLD})`,
             wallet?.customerId,
             {
               velocity: components.velocity,
@@ -243,7 +305,7 @@ export class WalletRiskService {
             walletId,
             'SOFT_FREEZE',
             components.finalScore,
-            `Risk score ${components.finalScore.toFixed(2)} exceeds soft freeze threshold (${this.RISK_SOFT_FREEZE_THRESHOLD})`,
+            `Risk score ${components.finalScore.toFixed(2)} exceeds soft freeze threshold (${config.RISK_SOFT_FREEZE_THRESHOLD})`,
             wallet?.customerId,
             {
               velocity: components.velocity,

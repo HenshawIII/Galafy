@@ -20,6 +20,7 @@ import { ProviderService } from '../provider/provider.service.js';
 import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '../config/config.service.js';
 config();
 
 @Injectable()
@@ -35,6 +36,7 @@ export class WebhooksService {
     private readonly emailService: EmailService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly configService: ConfigService,
   ) {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     if (!this.apiKey) {
@@ -126,7 +128,7 @@ export class WebhooksService {
         }
 
         // Calculate admin fee based on amount threshold
-        const { fee: adminFee, netAmount, feePercentage } = calculateFundingFee(grossAmount);
+        const { fee: adminFee, netAmount, feePercentage } = await calculateFundingFee(grossAmount, this.configService);
 
         // Get admin wallet account number (for tracking purposes)
         const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
