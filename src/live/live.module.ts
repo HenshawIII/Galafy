@@ -2,6 +2,7 @@ import { Module, Logger } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { DatabaseModule } from '../database/database.module.js';
 import { LiveGateway } from './live.gateway.js';
+import { EventsModule } from '../events/events.module.js';
 
 @Module({
   imports: [
@@ -9,6 +10,7 @@ import { LiveGateway } from './live.gateway.js';
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
     }),
+    EventsModule,
   ],
   providers: [LiveGateway],
   exports: [LiveGateway],

@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
+import { EventsService } from '../events/events.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { config } from 'dotenv';
 config();
@@ -42,6 +43,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   constructor(
     private readonly jwtService: JwtService,
     private readonly databaseService: DatabaseService,
+    private readonly eventsService: EventsService,
   ) {
     // Log when gateway class is instantiated
     this.logger.log('LiveGateway class instantiated');
@@ -301,6 +303,18 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         this.logger.warn(`Failed to fetch wallet balance for user ${client.user.id}: ${walletError.message}`);
       }
 
+      // Fetch leaderboard
+      let leaderboard: any[] | null = null;
+      try {
+        const leaderboardData: any = await this.eventsService.getEventLeaderboard(eventId);
+        if (leaderboardData && Array.isArray(leaderboardData.leaderboard)) {
+          leaderboard = leaderboardData.leaderboard; // Extract just the leaderboard array
+        }
+      } catch (leaderboardError: any) {
+        // Log error but don't fail the join - leaderboard is optional
+        this.logger.warn(`Failed to fetch leaderboard for event ${eventId}: ${leaderboardError.message}`);
+      }
+
       // Return comprehensive event data
       client.emit('event.joined', {
         eventId: event.id,
@@ -310,6 +324,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         accumulatedSprayTotal: accumulatedSprayTotal.toString(),
         participants,
         sprays,
+        leaderboard,
       });
     } catch (error: any) {
       this.logger.error(`Error joining event: ${error.message}`);
