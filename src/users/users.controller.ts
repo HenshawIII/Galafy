@@ -53,7 +53,7 @@ export class UsersController {
   @ApiBody({ type: LoginDto })
   @ApiResponse({ 
     status: 200, 
-    description: 'Login successful, returns access token, refresh token, user details, and KYC status',
+    description: 'Login successful, returns access token, refresh token, user details, KYC status, and verification status',
     schema: {
       example: {
         access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -71,7 +71,8 @@ export class UsersController {
           hasNin: false,
           hasBvn: true,
           hasAddressVerification: false,
-        }
+        },
+        isVerified: true
       }
     }
   })

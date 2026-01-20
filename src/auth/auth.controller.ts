@@ -10,13 +10,13 @@ import { JwtAuthGuard } from './jwt-auth.guard.js';
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
 
-    @Post('google')
+    @Post('google/signup')
     @Public()
-    @ApiOperation({ summary: 'Google OAuth login' })
+    @ApiOperation({ summary: 'Google OAuth sign up - Create a new user account' })
     @ApiBody({ schema: { properties: { idtoken: { type: 'string' } } } })
     @ApiResponse({ 
         status: 200, 
-        description: 'Login successful, returns access token, refresh token, user details, and KYC status',
+        description: 'Sign up successful, returns access token, refresh token, user details, KYC status, and verification status',
         schema: {
             example: {
                 access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -34,11 +34,46 @@ export class AuthController {
                     hasNin: false,
                     hasBvn: true,
                     hasAddressVerification: false,
-                }
+                },
+                isVerified: true
             }
         }
     })
-    @ApiResponse({ status: 401, description: 'Invalid token' })
+    @ApiResponse({ status: 401, description: 'Invalid token or user already exists' })
+    googleSignUp(@Body() body: {idtoken: string}) {
+        return this.authService.googleSignUp(body.idtoken);
+    }
+
+    @Post('google/login')
+    @Public()
+    @ApiOperation({ summary: 'Google OAuth login - Authenticate an existing user' })
+    @ApiBody({ schema: { properties: { idtoken: { type: 'string' } } } })
+    @ApiResponse({ 
+        status: 200, 
+        description: 'Login successful, returns access token, refresh token, user details, KYC status, and verification status',
+        schema: {
+            example: {
+                access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+                refresh_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+                user: {
+                    id: 'uuid',
+                    email: 'user@example.com',
+                    firstName: 'John',
+                    lastName: 'Doe',
+                },
+                kycStatus: {
+                    customerId: 'uuid',
+                    tier: 'Tier_1',
+                    providerTierCode: 'TIER_1',
+                    hasNin: false,
+                    hasBvn: true,
+                    hasAddressVerification: false,
+                },
+                isVerified: true
+            }
+        }
+    })
+    @ApiResponse({ status: 401, description: 'Invalid token or user not found' })
     googleLogin(@Body() body: {idtoken: string}) {
         return this.authService.googleLogin(body.idtoken);
     }

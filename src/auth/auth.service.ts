@@ -119,57 +119,140 @@ export class AuthService {
             throw new UnauthorizedException(`Invalid Google token: ${error.message || 'Token verification failed'}`);
         }
     }
-    async googleLogin(idtoken: string) {
+    /**
+     * Google Sign Up - Creates a new user account
+     * Throws error if user already exists
+     */
+    async googleSignUp(idtoken: string) {
         const user = await this.validateGoogleToken(idtoken);
         if (!user) {
-            throw new UnauthorizedException('Invalid token/Bad Request3');
+            throw new UnauthorizedException('Invalid token');
         }
-        // console.log("user", user);
-        let dbUser = await this.usersService.findByEmail(user.email);
-        if (!dbUser) {
-          // Generate username from email prefix (part before @)
-          const emailPrefix = user.email.split('@')[0]
+
+        // Check if user already exists
+        const existingUser = await this.usersService.findByEmail(user.email);
+        if (existingUser) {
+            throw new UnauthorizedException('User already exists. Please use the login endpoint instead.');
+        }
+
+        // Generate username from email prefix (part before @)
+        const emailPrefix = user.email.split('@')[0]
             .toLowerCase()
             .replace(/[^a-z0-9]/g, '')
             .substring(0, 20); // Limit to 20 characters
-          
-          // Ensure emailPrefix is not empty (fallback to 'user' if all characters were removed)
-          const baseUsername = emailPrefix || 'user';
-          
-          // First, try to use the email prefix as-is
-          let username = baseUsername;
-          let existingUser = await this.databaseService.user.findUnique({
+        
+        // Ensure emailPrefix is not empty (fallback to 'user' if all characters were removed)
+        const baseUsername = emailPrefix || 'user';
+        
+        // First, try to use the email prefix as-is
+        let username = baseUsername;
+        let usernameTaken = await this.databaseService.user.findUnique({
             where: { username },
-          });
-          
-          // If username is taken, add random suffix
-          if (existingUser) {
+        });
+        
+        // If username is taken, add random suffix
+        if (usernameTaken) {
             const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
             username = `${baseUsername}${randomSuffix}`;
             
             // Check if this username is also taken (retry if needed)
-            existingUser = await this.databaseService.user.findUnique({
-              where: { username },
+            usernameTaken = await this.databaseService.user.findUnique({
+                where: { username },
             });
             
             // If still taken after adding suffix, use timestamp
-            if (existingUser) {
-              const timestamp = Date.now().toString().slice(-6);
-              username = `${baseUsername}${timestamp}`;
+            if (usernameTaken) {
+                const timestamp = Date.now().toString().slice(-6);
+                username = `${baseUsername}${timestamp}`;
             }
-          }
+        }
 
-          dbUser = await this.usersService.create({
+        const dbUser = await this.usersService.create({
             username: username,
             email: user.email,
             // No password for Google OAuth users
             isVerified: true,
-          }) as any;
+        }) as any;
+        
+        if (!dbUser) {
+            throw new UnauthorizedException('Failed to create user');
         }
         
-        // At this point, dbUser is guaranteed to exist
+        // Remove password from response for security
+        const { password, ...userWithoutPassword } = dbUser as any;
+        
+        // Generate access token (short-lived: 15 minutes)
+        const accessToken = this.jwtService.sign(
+            {
+                sub: dbUser.id,
+                email: dbUser.email,
+                firstName: dbUser.firstName || null,
+                lastName: dbUser.lastName || null,
+                type: 'access',
+            },
+            {
+                expiresIn: '15m', // Access token expires in 15 minutes
+            },
+        );
+
+        // Generate refresh token (long-lived: 7 days)
+        const refreshToken = this.jwtService.sign(
+            {
+                sub: dbUser.id,
+                email: dbUser.email,
+                type: 'refresh',
+            },
+            {
+                expiresIn: '7d', // Refresh token expires in 7 days
+                secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, // Use separate secret if available
+            },
+        );
+
+        // Calculate refresh token expiration date
+        const refreshTokenExpiresAt = new Date();
+        refreshTokenExpiresAt.setDate(refreshTokenExpiresAt.getDate() + 7); // 7 days from now
+
+        // Store refresh token in database
+        await this.databaseService.user.update({
+            where: { id: dbUser.id },
+            data: {
+                refreshToken,
+                refreshTokenExpiresAt,
+            },
+        });
+        
+        // Get KYC status if customer exists (should be null for new users)
+        let kycStatus: any = null;
+        try {
+            kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(dbUser.id);
+        } catch (error) {
+            // Customer might not exist yet, which is fine - return null for kycStatus
+            kycStatus = null;
+        }
+        
+        return {
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            user: userWithoutPassword,
+            kycStatus,
+            isVerified: dbUser.isVerified,
+        }
+    }
+
+    /**
+     * Google Login - Authenticates an existing user
+     * Throws error if user does not exist
+     */
+    async googleLogin(idtoken: string) {
+        const user = await this.validateGoogleToken(idtoken);
+        if (!user) {
+            throw new UnauthorizedException('Invalid token');
+        }
+
+        // Check if user exists
+        const dbUser = await this.usersService.findByEmail(user.email);
         if (!dbUser) {
-            throw new UnauthorizedException('Failed to create or retrieve user');
+            throw new UnauthorizedException('User not found. Please use the sign up endpoint to create an account.');
         }
         
         // Remove password from response for security
@@ -229,6 +312,7 @@ export class AuthService {
             refresh_token: refreshToken,
             user: userWithoutPassword,
             kycStatus,
+            isVerified: dbUser.isVerified,
         }
     }
 
