@@ -39,11 +39,11 @@ export class UsersService {
     });
 
     if (existingPhone) {
-      throw new ConflictException('User with this phone number already exists');
+      throw new ConflictException('Unable to complete registration.');
     }
 
     if (existingUser) {
-      throw new ConflictException('User with this email already exists');
+      throw new ConflictException('Unable to complete registration.');
     }
 
     // Hash password
