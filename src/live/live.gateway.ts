@@ -487,5 +487,13 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     this.server.to(`event:${eventId}`).emit('leaderboard.updated', payload);
     this.logger.log(`Emitted leaderboard.updated to event:${eventId}`);
   }
+
+  /**
+   * Emit sprays array update to event room
+   */
+  emitSpraysUpdate(eventId: string, sprays: any[]) {
+    this.server.to(`event:${eventId}`).emit('sprays.updated', { sprays });
+    this.logger.log(`Emitted sprays.updated to event:${eventId}`);
+  }
 }
 

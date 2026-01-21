@@ -534,6 +534,80 @@ export class SpraysService {
         this.logger.warn(`Failed to emit leaderboard update: ${leaderboardError.message}`);
       }
 
+      // Fetch and emit updated sprays array
+      try {
+        const event = await this.databaseService.event.findUnique({
+          where: { id: eventId },
+          include: {
+            sprays: {
+              include: {
+                sprayerWallet: {
+                  include: {
+                    customer: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            username: true,
+                            profilePicture: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+                receiverWallet: {
+                  include: {
+                    customer: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            username: true,
+                            profilePicture: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        });
+
+        if (event?.sprays) {
+          const formattedSprays = event.sprays
+            .filter((spray: any) => 
+              spray.sprayerWallet?.customer?.user && 
+              spray.receiverWallet?.customer?.user
+            )
+            .map((spray: any) => ({
+              id: spray.id,
+              totalAmount: spray.totalAmount.toString(),
+              note: spray.note,
+              createdAt: spray.createdAt,
+              updatedAt: spray.updatedAt,
+              sprayer: {
+                id: spray.sprayerWallet.customer.user.id,
+                username: spray.sprayerWallet.customer.user.username,
+                profilePicture: spray.sprayerWallet.customer.user.profilePicture,
+              },
+              receiver: {
+                id: spray.receiverWallet.customer.user.id,
+                username: spray.receiverWallet.customer.user.username,
+                profilePicture: spray.receiverWallet.customer.user.profilePicture,
+              },
+            }));
+
+          this.liveGateway.emitSpraysUpdate(eventId, formattedSprays);
+        }
+      } catch (spraysError: any) {
+        // Log error but don't fail the request - sprays update is optional
+        this.logger.warn(`Failed to emit sprays update: ${spraysError.message}`);
+      }
+
       // Send push notification to celebrant/performer if they were sprayed
       if (
         receiverParticipant.role === EventRole.CELEBRANT ||
