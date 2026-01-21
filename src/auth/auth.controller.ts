@@ -35,7 +35,7 @@ export class AuthController {
                     hasBvn: true,
                     hasAddressVerification: false,
                 },
-                isVerified: true
+                isVerified: 'true'
             }
         }
     })
@@ -69,7 +69,7 @@ export class AuthController {
                     hasBvn: true,
                     hasAddressVerification: false,
                 },
-                isVerified: true
+                isVerified: 'true'
             }
         }
     })

@@ -235,7 +235,7 @@ export class AuthService {
             refresh_token: refreshToken,
             user: userWithoutPassword,
             kycStatus,
-            isVerified: dbUser.isVerified,
+            isVerified: String(dbUser.isVerified),
         }
     }
 
@@ -312,7 +312,7 @@ export class AuthService {
             refresh_token: refreshToken,
             user: userWithoutPassword,
             kycStatus,
-            isVerified: dbUser.isVerified,
+            isVerified: String(dbUser.isVerified),
         }
     }
 

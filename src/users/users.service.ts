@@ -278,7 +278,7 @@ export class UsersService {
       refresh_token: refreshToken,
       user: userWithoutPassword,
       kycStatus,
-      isVerified: user.isVerified,
+      isVerified: String(user.isVerified),
     };
   }
 

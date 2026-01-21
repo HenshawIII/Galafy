@@ -72,7 +72,7 @@ export class UsersController {
           hasBvn: true,
           hasAddressVerification: false,
         },
-        isVerified: true
+        isVerified: 'true'
       }
     }
   })
