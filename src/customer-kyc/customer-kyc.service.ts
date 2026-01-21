@@ -367,12 +367,10 @@ export class CustomerKycService {
     return {
       customerId: customer.id,
       tier: customer.tier,
-      providerTierCode: providerStatus.customerTierCode || customer.providerTierCode  ,
-      hasNin: providerStatus.hasNin || !!customer.ninVerification,
-      hasBvn: providerStatus.hasBvn || !!customer.bvnVerification,
-      hasAddressVerification: providerStatus.hasAddressVerification || !!customer.addressVerification,
-      bvnValue: providerStatus.bvnValue,
-      ninValue: providerStatus.ninValue,
+      providerTierCode: providerStatus.tier ?? customer.providerTierCode,
+      hasNin: providerStatus.ninVerified ?? !!customer.ninVerification,
+      hasBvn: providerStatus.bvnVerified ?? !!customer.bvnVerification,
+      hasAddressVerification: providerStatus.addressVerified ?? !!customer.addressVerification,
     };
   }
 
