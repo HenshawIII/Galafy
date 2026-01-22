@@ -1016,7 +1016,21 @@ export class WalletmoduleService {
         let bankName: string | null = null;
         try {
           const banks = await this.providerService.getBanks();
-          const bank = banks.find(b => b.bankcode === payoutData.bankCode);
+          
+          // Helper function to normalize bank codes for comparison (remove leading zeros)
+          const normalizeBankCode = (code: string | number | null | undefined): string => {
+            if (code === null || code === undefined) return '';
+            return String(code).trim().replace(/^0+/, '') || '0';
+          };
+
+          const payoutBankCode = normalizeBankCode(payoutData.bankCode);
+          
+          // Find matching bank using normalized comparison
+          const bank = banks.find(b => {
+            const bankCode = normalizeBankCode(b.bankcode);
+            return bankCode === payoutBankCode;
+          });
+          
           bankName = bank?.bankname || null;
         } catch (error: any) {
           this.logger.warn(`Failed to fetch bank name for code ${payoutData.bankCode}: ${error.message}`);
