@@ -1012,6 +1012,17 @@ export class WalletmoduleService {
           },
         });
 
+        // Get bank name from bank code
+        let bankName: string | null = null;
+        try {
+          const banks = await this.providerService.getBanks();
+          const bank = banks.find(b => b.bankcode === payoutData.bankCode);
+          bankName = bank?.bankname || null;
+        } catch (error: any) {
+          this.logger.warn(`Failed to fetch bank name for code ${payoutData.bankCode}: ${error.message}`);
+          // Continue without bank name - not critical
+        }
+
         // Log complete payout transaction
         this.logger.log(
           `✅ PAYOUT CONFIRMED: GrossAmount=${grossAmount.toString()}, ` +
@@ -1030,6 +1041,8 @@ export class WalletmoduleService {
           transactionRef: providerTransactionRef,
           fromWalletId: fromWallet.id,
           toAccountNumber: payoutData.toAccountNumber,
+          bankCode: payoutData.bankCode,
+          bankName: bankName,
           amount: grossAmount.toString(),
           fee: fee.toString(),
           netAmount: netAmount.toString(),

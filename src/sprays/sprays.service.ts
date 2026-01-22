@@ -486,57 +486,10 @@ export class SpraysService {
 
     // Emit WebSocket events AFTER transaction commits
     try {
-      // Emit to event room with full user details
-      this.liveGateway.emitSprayCreated(eventId, {
-        eventId,
-        eventName: event.title,
-        spray: {
-          id: result.spray.id,
-          totalAmount: result.spray.totalAmount.toString(),
-          note: result.spray.note,
-          createdAt: result.spray.createdAt,
-          sprayer: {
-            id: sprayerUser?.id || userId,
-            username: sprayerUser?.username || null,
-            profilePicture: sprayerUser?.profilePicture || null,
-          },
-          receiver: {
-            id: receiverUser?.id || receiverParticipant.userId,
-            username: receiverUser?.username || null,
-            profilePicture: receiverUser?.profilePicture || null,
-          },
-        },
-        eventTotals: {
-          totalAmount: eventTotals.totalAmount.toString(),
-          totalCount: eventTotals.totalCount,
-        },
-      });
-
-      // Emit balance updates to sprayer and receiver
-      this.liveGateway.emitBalanceUpdate(userId, {
-        walletId: sprayerWallet.id,
-        availableBalance: result.sprayerBalance.toString(),
-        eventBalance: eventTotals.totalAmount.toString(),
-      });
-
-      this.liveGateway.emitBalanceUpdate(receiverParticipant.userId, {
-        walletId: receiverWallet.id,
-        availableBalance: result.receiverBalance.toString(),
-        eventBalance: eventTotals.totalAmount.toString(),
-      });
-
-      // Fetch and emit updated leaderboard
+      // Fetch sprays array first (we'll use it in multiple events)
+      let formattedSprays: any[] = [];
       try {
-        const leaderboard = await this.eventsService.getEventLeaderboard(eventId);
-        this.liveGateway.emitLeaderboardUpdate(eventId, leaderboard);
-      } catch (leaderboardError: any) {
-        // Log error but don't fail the request - leaderboard is optional
-        this.logger.warn(`Failed to emit leaderboard update: ${leaderboardError.message}`);
-      }
-
-      // Fetch and emit updated sprays array
-      try {
-        const event = await this.databaseService.event.findUnique({
+        const eventWithSprays = await this.databaseService.event.findUnique({
           where: { id: eventId },
           include: {
             sprays: {
@@ -577,8 +530,8 @@ export class SpraysService {
           },
         });
 
-        if (event?.sprays) {
-          const formattedSprays = event.sprays
+        if (eventWithSprays?.sprays) {
+          formattedSprays = eventWithSprays.sprays
             .filter((spray: any) => 
               spray.sprayerWallet?.customer?.user && 
               spray.receiverWallet?.customer?.user
@@ -600,12 +553,67 @@ export class SpraysService {
                 profilePicture: spray.receiverWallet.customer.user.profilePicture,
               },
             }));
-
-          this.liveGateway.emitSpraysUpdate(eventId, formattedSprays);
         }
       } catch (spraysError: any) {
-        // Log error but don't fail the request - sprays update is optional
-        this.logger.warn(`Failed to emit sprays update: ${spraysError.message}`);
+        // Log error but don't fail the request - sprays fetch is optional
+        this.logger.warn(`Failed to fetch sprays: ${spraysError.message}`);
+      }
+
+      // Emit to event room with full user details (now includes sprays array)
+      this.liveGateway.emitSprayCreated(eventId, {
+        eventId,
+        eventName: event.title,
+        spray: {
+          id: result.spray.id,
+          totalAmount: result.spray.totalAmount.toString(),
+          note: result.spray.note,
+          createdAt: result.spray.createdAt,
+          sprayer: {
+            id: sprayerUser?.id || userId,
+            username: sprayerUser?.username || null,
+            profilePicture: sprayerUser?.profilePicture || null,
+          },
+          receiver: {
+            id: receiverUser?.id || receiverParticipant.userId,
+            username: receiverUser?.username || null,
+            profilePicture: receiverUser?.profilePicture || null,
+          },
+        },
+        eventTotals: {
+          totalAmount: eventTotals.totalAmount.toString(),
+          totalCount: eventTotals.totalCount,
+        },
+        sprays: formattedSprays,
+      });
+
+      // Emit balance updates to sprayer and receiver
+      this.liveGateway.emitBalanceUpdate(userId, {
+        walletId: sprayerWallet.id,
+        availableBalance: result.sprayerBalance.toString(),
+        eventBalance: eventTotals.totalAmount.toString(),
+      });
+
+      this.liveGateway.emitBalanceUpdate(receiverParticipant.userId, {
+        walletId: receiverWallet.id,
+        availableBalance: result.receiverBalance.toString(),
+        eventBalance: eventTotals.totalAmount.toString(),
+      });
+
+      // Fetch and emit updated leaderboard (now includes sprays array)
+      try {
+        const leaderboard = await this.eventsService.getEventLeaderboard(eventId);
+        this.liveGateway.emitLeaderboardUpdate(eventId, {
+          ...leaderboard,
+          sprays: formattedSprays,
+        });
+      } catch (leaderboardError: any) {
+        // Log error but don't fail the request - leaderboard is optional
+        this.logger.warn(`Failed to emit leaderboard update: ${leaderboardError.message}`);
+      }
+
+      // Still emit separate sprays.updated event for consistency
+      if (formattedSprays.length > 0) {
+        this.liveGateway.emitSpraysUpdate(eventId, formattedSprays);
       }
 
       // Send push notification to celebrant/performer if they were sprayed
