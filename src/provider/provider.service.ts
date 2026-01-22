@@ -824,13 +824,21 @@ export class ProviderService {
    */
   async getBanks(): Promise<Array<{ bankcode: string; bankname: string }>> {
     const response = await this.makePayoutRequest<{
-      data: Array<{ bankcode: string; bankname: string }>;
+      data: Array<{ bankCode: string; bankName: string }>;
       statusCode: number;
       message: string;
       succeeded: boolean;
     }>('/api/Payout/banks', 'GET');
 
-    return response.data || [];
+    // Map the response from camelCase (bankCode, bankName) to lowercase (bankcode, bankname)
+    if (!response.data || !Array.isArray(response.data)) {
+      return [];
+    }
+
+    return response.data.map(bank => ({
+      bankcode: bank.bankCode,
+      bankname: bank.bankName,
+    }));
   }
 
   /**

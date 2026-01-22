@@ -139,10 +139,12 @@ model User {
   refreshTokenExpiresAt DateTime?
 
   // Payout security
-  payoutPin          String? // Hashed PIN for payout verification
-  payoutOtp          String? // Temporary OTP for payout confirmation
-  payoutOtpExpiresAt DateTime? // OTP expiration time
-  pendingPayoutData  Json? // Temporary storage for pending payout details
+  payoutPin             String?   // Hashed PIN for payout verification
+  payoutOtp             String?   // Temporary OTP for payout confirmation
+  payoutOtpExpiresAt    DateTime? // OTP expiration time
+  pinResetOtp           String?   // Temporary OTP for PIN reset
+  pinResetOtpExpiresAt DateTime? // PIN reset OTP expiration time
+  pendingPayoutData     Json?     // Temporary storage for pending payout details
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

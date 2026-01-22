@@ -23,7 +23,7 @@ import { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
-import { SetPayoutPinDto, UpdatePayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto } from './dto/payout-security.dto.js';
+import { SetPayoutPinDto, UpdatePayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto, ResetPayoutPinDto } from './dto/payout-security.dto.js';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto.js';
 import { extractDeviceInfo } from '../common/utils/request.util.js';
 import type { Request as ExpressRequest } from 'express';
@@ -186,12 +186,23 @@ export class WalletmoduleController {
     return { success: true, message: 'Payout PIN set successfully' };
   }
 
+  @Post('payout/reset-pin')
+  @ApiOperation({ summary: 'Reset payout PIN - Sends OTP to email address' })
+  @ApiBody({ type: ResetPayoutPinDto })
+  @ApiResponse({ status: 200, description: 'If the email exists and PIN is set, a PIN reset OTP has been sent' })
+  @ApiResponse({ status: 400, description: 'Invalid email format' })
+  async resetPayoutPin(
+    @Body(ValidationPipe) resetPinDto: ResetPayoutPinDto,
+  ) {
+    return this.walletmoduleService.resetPayoutPin(resetPinDto.emailAddress);
+  }
+
   @Patch('payout/update-pin')
-  @ApiOperation({ summary: 'Update payout PIN (requires old PIN verification, 4 digits)' })
+  @ApiOperation({ summary: 'Update payout PIN (requires OTP verification, 4 digits)' })
   @ApiBody({ type: UpdatePayoutPinDto })
   @ApiResponse({ status: 200, description: 'Payout PIN updated successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid PIN format or PIN not set' })
-  @ApiResponse({ status: 401, description: 'Invalid old PIN' })
+  @ApiResponse({ status: 400, description: 'Invalid PIN format, PIN not set, or invalid/expired OTP' })
+  @ApiResponse({ status: 401, description: 'Invalid OTP' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async updatePayoutPin(
     @Request() req: any,
@@ -201,7 +212,7 @@ export class WalletmoduleController {
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
-    await this.walletmoduleService.updatePayoutPin(userId, updatePinDto.oldPin, updatePinDto.newPin);
+    await this.walletmoduleService.updatePayoutPin(userId, updatePinDto.otp, updatePinDto.newPin);
     return { success: true, message: 'Payout PIN updated successfully' };
   }
 

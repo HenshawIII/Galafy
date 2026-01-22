@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, Length, Matches, IsDecimal, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, Length, Matches, IsDecimal, IsOptional, IsEmail } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -16,18 +16,28 @@ export class SetPayoutPinDto {
   pin: string;
 }
 
+export class ResetPayoutPinDto {
+  @ApiProperty({ 
+    description: 'User email address', 
+    example: 'user@example.com' 
+  })
+  @IsEmail({}, { message: 'Invalid email format' })
+  @IsNotEmpty({ message: 'Email address is required' })
+  emailAddress: string;
+}
+
 export class UpdatePayoutPinDto {
   @ApiProperty({ 
-    description: 'Current 4-digit PIN (required for verification)', 
-    example: '1234',
-    minLength: 4,
-    maxLength: 4
+    description: 'OTP sent to user email for PIN reset', 
+    example: '123456',
+    minLength: 6,
+    maxLength: 6
   })
   @IsString()
   @IsNotEmpty()
-  @Length(4, 4, { message: 'Old PIN must be exactly 4 digits' })
-  @Matches(/^\d+$/, { message: 'Old PIN must contain only digits' })
-  oldPin: string;
+  @Length(6, 6, { message: 'OTP must be exactly 6 digits' })
+  @Matches(/^\d+$/, { message: 'OTP must contain only digits' })
+  otp: string;
 
   @ApiProperty({ 
     description: 'New 4-digit PIN', 

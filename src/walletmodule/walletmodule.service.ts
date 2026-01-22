@@ -1172,10 +1172,21 @@ export class WalletmoduleService {
   }
 
   /**
-   * Update payout PIN for a user (requires old PIN verification)
+   * Reset payout PIN - Generate and send OTP to user's email
    */
-  async updatePayoutPin(userId: string, oldPin: string, newPin: string): Promise<void> {
-    await this.payoutSecurityService.updatePayoutPin(userId, oldPin, newPin);
+  async resetPayoutPin(emailAddress: string): Promise<{ success: boolean; message: string }> {
+    await this.payoutSecurityService.resetPayoutPin(emailAddress);
+    return {
+      success: true,
+      message: 'If the email exists and PIN is set, a PIN reset OTP has been sent to your email.',
+    };
+  }
+
+  /**
+   * Update payout PIN for a user (requires OTP verification)
+   */
+  async updatePayoutPin(userId: string, otp: string, newPin: string): Promise<void> {
+    await this.payoutSecurityService.updatePayoutPin(userId, otp, newPin);
   }
 
   /**
