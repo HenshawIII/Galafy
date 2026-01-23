@@ -87,13 +87,14 @@ export class EventsService {
 
   /**
    * Check for overlapping events to prevent users from having multiple live events at the same time
-   * A user can only have one SCHEDULED or LIVE event at a time
-   * New event's start date must be after existing event's end date
+   * Multiple SCHEDULED events are allowed as long as they don't clash
+   * Only prevent 2 LIVE events from happening at the same time
    */
   private async checkForOverlappingEvents(
     userId: string,
     newEventStartAt: Date,
     newEventEndAt: Date | null,
+    newEventWillBeLive: boolean, // Whether the new event will be LIVE (goLiveInstantly = true)
   ): Promise<void> {
     // Query existing SCHEDULED or LIVE events for this user
     const existingEvents = await this.databaseService.event.findMany({
@@ -134,25 +135,43 @@ export class EventsService {
         continue; // Event has ended, skip overlap check
       }
 
-      // Check if new event's start date is before existing event's end date
-      // This means there's an overlap
-      if (newEventStartAt < existingEventEndAt) {
-        const existingEventStartAt = new Date(existingEvent.startsAt);
-        const existingEventEndAtDate = new Date(existingEventEndAt);
-        
-        // Format dates for error message
-        const startDateStr = existingEventStartAt.toISOString();
-        const endDateStr = existingEventEndAtDate.toISOString();
-        
-        // Build error message based on whether existing event has an end date
-        const dateRangeStr = existingEvent.endsAt
-          ? `${startDateStr} to ${endDateStr}`
-          : `${startDateStr} (no end date set, estimated end: ${endDateStr})`;
+      // Calculate new event's effective end date
+      const newEventEffectiveEndAt = newEventEndAt
+        ? new Date(newEventEndAt)
+        : new Date(new Date(newEventStartAt).getTime() + defaultDurationHours * 60 * 60 * 1000);
 
-        throw new BadRequestException(
-          `Cannot create event. You already have a ${existingEvent.status} event "${existingEvent.title}" from ${dateRangeStr}. The new event's start date must be after ${endDateStr}.`,
-        );
+      // Check if events would overlap in time
+      const eventsOverlap = newEventStartAt < existingEventEndAt && newEventEffectiveEndAt > new Date(existingEvent.startsAt);
+
+      if (!eventsOverlap) {
+        continue; // No time overlap, allow both events
       }
+
+      // If both events are SCHEDULED, allow them (multiple scheduled events are OK)
+      if (existingEvent.status === EventStatus.SCHEDULED && !newEventWillBeLive) {
+        continue; // Both are scheduled, allow multiple scheduled events
+      }
+
+      // At this point, we have an overlap and at least one event is/will be LIVE
+      // Block to prevent 2 LIVE events at the same time
+      const existingEventStartAt = new Date(existingEvent.startsAt);
+      const existingEventEndAtDate = new Date(existingEventEndAt);
+      
+      // Format dates for error message
+      const startDateStr = existingEventStartAt.toISOString();
+      const endDateStr = existingEventEndAtDate.toISOString();
+      
+      // Build error message based on whether existing event has an end date
+      const dateRangeStr = existingEvent.endsAt
+        ? `${startDateStr} to ${endDateStr}`
+        : `${startDateStr} (no end date set, estimated end: ${endDateStr})`;
+
+      const eventType = existingEvent.status === EventStatus.LIVE ? 'LIVE' : 'SCHEDULED';
+      const newEventType = newEventWillBeLive ? 'LIVE' : 'SCHEDULED';
+      
+      throw new BadRequestException(
+        `Cannot create ${newEventType} event. You already have a ${eventType} event "${existingEvent.title}" from ${dateRangeStr} that would overlap. You cannot have multiple LIVE events at the same time.`,
+      );
     }
   }
 
@@ -282,8 +301,9 @@ export class EventsService {
       }
     }
 
-    // Check for overlapping events - user cannot have multiple SCHEDULED or LIVE events at the same time
-    await this.checkForOverlappingEvents(userId, startAt, endAt);
+    // Check for overlapping events - prevent multiple LIVE events at the same time
+    // Multiple SCHEDULED events are allowed as long as they don't clash
+    await this.checkForOverlappingEvents(userId, startAt, endAt, createEventDto.goLiveInstantly || false);
 
     // Get host's wallet before transaction (needed for participant creation)
     let hostWalletId: string | null = null;
