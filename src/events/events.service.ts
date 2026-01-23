@@ -119,12 +119,20 @@ export class EventsService {
     );
 
     // Check each existing event for overlap
+    const now = new Date();
+    
     for (const existingEvent of existingEvents) {
       // Calculate effective end date for existing event
       // If endsAt is null, use startsAt + default duration hours
       const existingEventEndAt = existingEvent.endsAt
         ? new Date(existingEvent.endsAt)
         : new Date(new Date(existingEvent.startsAt).getTime() + defaultDurationHours * 60 * 60 * 1000);
+
+      // Skip events that have already ended (current date is after event end date)
+      // Only check for overlap with events that are still active or upcoming
+      if (now > existingEventEndAt) {
+        continue; // Event has ended, skip overlap check
+      }
 
       // Check if new event's start date is before existing event's end date
       // This means there's an overlap
