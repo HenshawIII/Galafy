@@ -156,19 +156,37 @@ async function seedConfig() {
 
   for (const config of configs) {
     try {
-      await prisma.systemConfig.upsert({
+      // Check if config already exists
+      const existing = await prisma.systemConfig.findUnique({
         where: { key: config.key },
-        update: {
-          value: config.value,
-          description: config.description,
-          isActive: true,
-        },
-        create: {
-          ...config,
-          isActive: true,
-        },
       });
-      console.log(`✓ Seeded/Updated: ${config.key}`);
+
+      if (existing) {
+        // Config exists - only update description if it's different, but preserve the value
+        // This ensures admin portal changes are not overwritten
+        if (existing.description !== config.description) {
+          await prisma.systemConfig.update({
+            where: { key: config.key },
+            data: {
+              description: config.description,
+              // Don't update value - preserve admin changes
+              // Don't update isActive - preserve current state
+            },
+          });
+          console.log(`✓ Updated description for: ${config.key}`);
+        } else {
+          console.log(`○ Skipped (exists): ${config.key}`);
+        }
+      } else {
+        // Config doesn't exist - create it with default values
+        await prisma.systemConfig.create({
+          data: {
+            ...config,
+            isActive: true,
+          },
+        });
+        console.log(`✓ Created: ${config.key}`);
+      }
     } catch (error) {
       console.error(`✗ Failed to seed ${config.key}:`, error);
     }

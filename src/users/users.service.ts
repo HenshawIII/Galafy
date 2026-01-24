@@ -23,16 +23,54 @@ export class UsersService {
     private readonly customerKycService: CustomerKycService,
   ) {}
 
+  /**
+   * Helper method to find user by email (case-insensitive)
+   * Handles both normalized (lowercase) and existing mixed-case emails
+   * Uses Prisma's case-insensitive search via findFirst as fallback
+   */
+  private async findUserByEmailCaseInsensitive(email: string) {
+    const trimmedEmail = email.trim();
+    const normalizedEmail = trimmedEmail.toLowerCase();
+    
+    // Try normalized email first (for users with lowercase emails)
+    let user = await this.databaseService.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+    
+    // If not found, try original email (for backward compatibility with existing mixed-case emails)
+    if (!user && trimmedEmail !== normalizedEmail) {
+      user = await this.databaseService.user.findUnique({
+        where: { email: trimmedEmail },
+      });
+    }
+    
+    // If still not found, use findFirst with case-insensitive filter as fallback
+    // This handles cases where email might be stored in any case variation
+    if (!user) {
+      user = await this.databaseService.user.findFirst({
+        where: {
+          email: {
+            equals: trimmedEmail,
+            mode: 'insensitive', // Case-insensitive comparison
+          },
+        },
+      });
+    }
+    
+    return user;
+  }
+
   async signup(signupDto: SignupDto) {
     // Validate username is provided
     if (!signupDto.username || signupDto.username.trim() === '') {
       throw new BadRequestException('Username is required');
     }
 
-    // Check if user already exists
-    const existingUser = await this.databaseService.user.findUnique({
-      where: { email: signupDto.email },
-    });
+    // Normalize email to lowercase for case-insensitive comparison
+    const normalizedEmail = signupDto.email.toLowerCase().trim();
+
+    // Check if user already exists (case-insensitive)
+    const existingUser = await this.findUserByEmailCaseInsensitive(signupDto.email);
 
     const existingPhone = await this.databaseService.user.findUnique({
       where: { phone: signupDto.phone },
@@ -61,12 +99,12 @@ export class UsersService {
       throw new ConflictException('User with this username already exists');
     }
 
-    // Create user with unverified status
+    // Create user with unverified status (store email in lowercase)
     const user = await this.databaseService.user.create({
       data: {
         firstName: signupDto.firstName,
         lastName: signupDto.lastName,
-        email: signupDto.email,
+        email: normalizedEmail, // Store email in lowercase
         username: signupDto.username,
         password: hashedPassword,
         phone: signupDto.phone,
@@ -106,10 +144,8 @@ export class UsersService {
   }
 
   async resendVerificationCode(resendVerificationDto: ResendVerificationDto) {
-    // Find user by email
-    const user = await this.databaseService.user.findUnique({
-      where: { email: resendVerificationDto.email },
-    });
+    // Find user by email (case-insensitive)
+    const user = await this.findUserByEmailCaseInsensitive(resendVerificationDto.email);
 
     if (!user) {
       // Don't reveal if user exists or not for security
@@ -144,10 +180,8 @@ export class UsersService {
   }
 
   async verifyAccount(verifyAccountDto: VerifyAccountDto) {
-    // Find user by email
-    const user = await this.databaseService.user.findUnique({
-      where: { email: verifyAccountDto.email },
-    });
+    // Find user by email (case-insensitive)
+    const user = await this.findUserByEmailCaseInsensitive(verifyAccountDto.email);
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -196,10 +230,8 @@ export class UsersService {
   }
 
   async login(loginDto: LoginDto) {
-    // Find user by emaill
-    const user = await this.databaseService.user.findUnique({
-      where: { email: loginDto.email },
-    });
+    // Find user by email (case-insensitive)
+    const user = await this.findUserByEmailCaseInsensitive(loginDto.email);
 
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
@@ -283,10 +315,8 @@ export class UsersService {
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
-    // Find user by email
-    const user = await this.databaseService.user.findUnique({
-      where: { email: forgotPasswordDto.email },
-    });
+    // Find user by email (case-insensitive)
+    const user = await this.findUserByEmailCaseInsensitive(forgotPasswordDto.email);
 
     if (!user) {
       // Don't reveal if user exists or not for security
@@ -317,10 +347,8 @@ export class UsersService {
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
-    // Find user by email
-    const user = await this.databaseService.user.findUnique({
-      where: { email: resetPasswordDto.email },
-    });
+    // Find user by email (case-insensitive)
+    const user = await this.findUserByEmailCaseInsensitive(resetPasswordDto.email);
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -360,11 +388,23 @@ export class UsersService {
   }
 
   async create(createUserDto: CreateUserDto) {
+    // Normalize email to lowercase for consistent storage
+    // Also check if email already exists (case-insensitive) before creating
+    if (createUserDto.email) {
+      const normalizedEmail = createUserDto.email.toLowerCase().trim();
+      const existingUser = await this.findUserByEmailCaseInsensitive(normalizedEmail);
+      if (existingUser) {
+        throw new ConflictException('User with this email already exists');
+      }
+    }
+    
+    const normalizedEmail = createUserDto.email ? createUserDto.email.toLowerCase().trim() : null;
+    
     // Hash password if provided
     const data: any = {
       firstName: createUserDto.firstName,
       lastName: createUserDto.lastName,
-      email: createUserDto.email,
+      email: normalizedEmail,
       username: createUserDto.username,
       phone: createUserDto.phone,
       isVerified: createUserDto.isVerified ?? false,
@@ -425,9 +465,8 @@ export class UsersService {
   }
 
   async findByEmail(email: string) {
-    const user = await this.databaseService.user.findUnique({
-      where: { email },
-    });
+    // Find user by email (case-insensitive)
+    const user = await this.findUserByEmailCaseInsensitive(email);
 
     if (!user) {
       return null;
