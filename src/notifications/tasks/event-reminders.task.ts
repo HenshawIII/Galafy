@@ -186,20 +186,27 @@ export class EventRemindersTask {
   async updateScheduledToLiveStatus(): Promise<void> {
     this.logger.debug('Checking for events that should be LIVE...');
 
+    // Use current time - JavaScript Date is UTC internally, Prisma handles conversion
     const now = new Date();
+
+    // Log for debugging timezone issues
+    this.logger.debug(
+      `Time check - UTC ISO: ${now.toISOString()}, Local: ${now.toString()}, UTC Timestamp: ${now.getTime()}`,
+    );
 
     try {
       // Find events with SCHEDULED status that should be LIVE (startsAt is in the past)
       // Exclude events that have ended (endsAt is in the past)
+      // Prisma converts JavaScript Date to UTC for PostgreSQL TIMESTAMP comparison
       const eventsToLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           startsAt: {
-            lte: now, // startsAt is in the past
+            lte: now, // startsAt is in the past (Prisma handles UTC conversion)
           },
           OR: [
             { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet
+            { endsAt: { gt: now } }, // Events that haven't ended yet (Prisma handles UTC conversion)
           ],
         },
         select: {
@@ -244,10 +251,17 @@ export class EventRemindersTask {
   async updateEndedEventsStatus(): Promise<void> {
     this.logger.debug('Checking for events that have ended...');
 
+    // Use current time - JavaScript Date is UTC internally, Prisma handles conversion
     const now = new Date();
+
+    // Log for debugging timezone issues
+    this.logger.debug(
+      `Time check - UTC ISO: ${now.toISOString()}, Local: ${now.toString()}, UTC Timestamp: ${now.getTime()}`,
+    );
 
     try {
       // Find events that have ended (endsAt is in the past) but are still LIVE or SCHEDULED
+      // Prisma converts JavaScript Date to UTC for PostgreSQL TIMESTAMP comparison
       const endedEvents = await this.databaseService.event.findMany({
         where: {
           status: {
@@ -255,7 +269,7 @@ export class EventRemindersTask {
           },
           endsAt: {
             not: null,
-            lte: now, // endsAt is in the past
+            lte: now, // endsAt is in the past (Prisma handles UTC conversion)
           },
         },
         select: {

@@ -25,15 +25,22 @@ export class EventStatusTask {
   async handleScheduledEvents(): Promise<void> {
     this.logger.debug('Checking for scheduled events that should go live...');
 
+    // Use current time - JavaScript Date is UTC internally, Prisma will handle conversion
     const now = new Date();
+
+    // Log for debugging timezone issues
+    this.logger.debug(
+      `Time check - UTC ISO: ${now.toISOString()}, Local: ${now.toString()}, UTC Timestamp: ${now.getTime()}`,
+    );
 
     try {
       // Find all events that are SCHEDULED and have reached their startsAt time
+      // Prisma converts JavaScript Date to UTC for PostgreSQL TIMESTAMP comparison
       const eventsToGoLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           startsAt: {
-            lte: now, // startsAt is less than or equal to now
+            lte: now, // startsAt is less than or equal to now (Prisma handles UTC conversion)
           },
         },
         select: {
