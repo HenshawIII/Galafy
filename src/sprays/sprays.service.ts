@@ -462,6 +462,55 @@ export class SpraysService {
         });
     }
 
+    // Send push notification to celebrant/performer immediately after spray creation (non-blocking)
+    // This ensures real-time delivery without waiting for other operations
+    if (
+      receiverParticipant.role === EventRole.CELEBRANT ||
+      receiverParticipant.role === EventRole.PERFORMER
+    ) {
+      // Fetch sprayer name asynchronously and send notification (fire and forget)
+      this.databaseService.user
+        .findUnique({
+          where: { id: userId },
+          select: {
+            username: true,
+            profilePicture: true,
+          },
+        })
+        .then((sprayerUser) => {
+          const sprayerName =
+            sprayerUser?.username ||
+            sprayerUser?.profilePicture ||
+            'Someone';
+          
+          // Send notification asynchronously (non-blocking)
+          return this.notificationsService.sendNotificationIfEnabled(
+            receiverParticipant.userId,
+            {
+              notification: {
+                title: 'You were sprayed!',
+                body: `${sprayerName} sprayed you ${spray.totalAmount.toString()}`,
+              },
+              data: {
+                type: 'SPRAY_RECEIVED',
+                eventId: eventId,
+                eventTitle: event.title,
+                sprayId: spray.id,
+                amount: spray.totalAmount.toString(),
+                sprayerId: userId,
+                sprayerName: sprayerName,
+              },
+            },
+          );
+        })
+        .catch((notificationError: any) => {
+          // Log error but don't fail the request - notification is optional
+          this.logger.warn(
+            `Failed to send spray notification: ${notificationError.message}`,
+          );
+        });
+    }
+
     // Compute event totals
     const eventTotals = await this.computeEventTotals(eventId);
 
@@ -614,43 +663,6 @@ export class SpraysService {
       // Still emit separate sprays.updated event for consistency
       if (formattedSprays.length > 0) {
         this.liveGateway.emitSpraysUpdate(eventId, formattedSprays);
-      }
-
-      // Send push notification to celebrant/performer if they were sprayed
-      if (
-        receiverParticipant.role === EventRole.CELEBRANT ||
-        receiverParticipant.role === EventRole.PERFORMER
-      ) {
-        try {
-          const sprayerName =
-            sprayerUser?.username ||
-            sprayerUser?.profilePicture ||
-            'Someone';
-          
-          await this.notificationsService.sendNotificationIfEnabled(
-            receiverParticipant.userId,
-            {
-              notification: {
-                title: 'You were sprayed!',
-                body: `${sprayerName} sprayed you ${result.spray.totalAmount.toString()}`,
-              },
-              data: {
-                type: 'SPRAY_RECEIVED',
-                eventId: eventId,
-                eventTitle: event.title,
-                sprayId: result.spray.id,
-                amount: result.spray.totalAmount.toString(),
-                sprayerId: userId,
-                sprayerName: sprayerName,
-              },
-            },
-          );
-        } catch (notificationError: any) {
-          // Log error but don't fail the request - notification is optional
-          this.logger.warn(
-            `Failed to send spray notification: ${notificationError.message}`,
-          );
-        }
       }
     } catch (error: any) {
       // Log error but don't fail the request - spray was successful

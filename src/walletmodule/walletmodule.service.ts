@@ -1120,6 +1120,7 @@ export class WalletmoduleService {
   /**
    * Get wallet transaction history
    * Cached for 30 seconds (transaction history changes frequently)
+   * Supports search, status filtering, and amount range filtering
    */
   async getWalletHistory(
     accountNumber: string,
@@ -1127,12 +1128,17 @@ export class WalletmoduleService {
     toDate: string,
     page?: number,
     pageSize?: number,
+    query?: string,
+    status?: string,
+    minAmount?: number,
+    maxAmount?: number,
   ) {
-    // Generate cache key from all parameters
-    const cacheKey = `wallet:history:${accountNumber}:${fromDate}:${toDate}:${page || 1}:${pageSize || 20}`;
+    // Generate cache key from all parameters (excluding filters for cache efficiency)
+    const baseCacheKey = `wallet:history:${accountNumber}:${fromDate}:${toDate}:${page || 1}:${pageSize || 20}`;
+    const filterCacheKey = `${baseCacheKey}:${query || ''}:${status || 'all'}:${minAmount || ''}:${maxAmount || ''}`;
 
     // Check cache first
-    const cached = await this.cacheService.get(cacheKey);
+    const cached = await this.cacheService.get(filterCacheKey);
     if (cached) {
       return cached;
     }
@@ -1150,18 +1156,101 @@ export class WalletmoduleService {
     }
 
     // Get history from provider using account number
+    // Request more records if filtering is needed to ensure we have enough results after filtering
+    const providerPageSize = (query || status || minAmount !== undefined || maxAmount !== undefined) 
+      ? (pageSize || 20) * 3 // Request 3x more to account for filtering
+      : pageSize || 20;
+
     const history = await this.providerService.getWalletHistoryByAccountNumber(
       wallet.virtualAccountNumber,
       fromDate,
       toDate,
       page,
-      pageSize,
+      providerPageSize,
     );
 
-    // Cache for 30 seconds (transaction history changes frequently)
-    await this.cacheService.set(cacheKey, history, 30);
+    // Get database transactions to match status if status filter is provided
+    let dbTransactions: Map<string, any> = new Map();
+    if (status && status !== 'all') {
+      const transactions = await this.databaseService.transaction.findMany({
+        where: {
+          walletId: wallet.id,
+          createdAt: {
+            gte: new Date(fromDate),
+            lte: new Date(toDate + 'T23:59:59.999Z'),
+          },
+        },
+        select: {
+          reference: true,
+          externalReference: true,
+          status: true,
+        },
+      });
+      // Create a map of reference -> status for quick lookup
+      // Check both reference and externalReference to match provider's transactionReference
+      transactions.forEach((tx) => {
+        if (tx.reference) {
+          dbTransactions.set(tx.reference, tx.status);
+        }
+        if (tx.externalReference) {
+          dbTransactions.set(tx.externalReference, tx.status);
+        }
+      });
+    }
 
-    return history;
+    // Apply filters
+    let filteredTransactions = history.transactions || [];
+
+    // Search filter (case-insensitive search in description)
+    if (query && query.trim()) {
+      const searchQuery = query.trim().toLowerCase();
+      filteredTransactions = filteredTransactions.filter((tx) =>
+        tx.description?.toLowerCase().includes(searchQuery) ||
+        tx.reference?.toLowerCase().includes(searchQuery),
+      );
+    }
+
+    // Status filter
+    if (status && status !== 'all') {
+      filteredTransactions = filteredTransactions.filter((tx) => {
+        const txStatus = dbTransactions.get(tx.reference || '');
+        if (!txStatus) return false; // Skip if we can't find status in database
+        
+        const statusMap: Record<string, string> = {
+          successful: 'SUCCESS',
+          pending: 'PENDING',
+          failed: 'FAILED',
+        };
+        return txStatus === statusMap[status.toLowerCase()];
+      });
+    }
+
+    // Amount range filter
+    if (minAmount !== undefined) {
+      filteredTransactions = filteredTransactions.filter((tx) => tx.amount >= minAmount);
+    }
+    if (maxAmount !== undefined) {
+      filteredTransactions = filteredTransactions.filter((tx) => tx.amount <= maxAmount);
+    }
+
+    // Re-paginate after filtering
+    const totalFiltered = filteredTransactions.length;
+    const startIndex = ((page || 1) - 1) * (pageSize || 20);
+    const endIndex = startIndex + (pageSize || 20);
+    const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex);
+
+    const result = {
+      transactions: paginatedTransactions,
+      total: totalFiltered,
+      page: page || 1,
+      limit: pageSize || 20,
+      totalPages: Math.ceil(totalFiltered / (pageSize || 20)),
+    };
+
+    // Cache for 30 seconds (transaction history changes frequently)
+    await this.cacheService.set(filterCacheKey, result, 30);
+
+    return result;
   }
 
   /**

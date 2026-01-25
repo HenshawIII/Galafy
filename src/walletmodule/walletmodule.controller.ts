@@ -87,12 +87,19 @@ export class WalletmoduleController {
   }
 
   @Get('account/:accountNumber/history')
-  @ApiOperation({ summary: 'Get wallet transaction history by account number' })
+  @ApiOperation({ 
+    summary: 'Get wallet transaction history by account number',
+    description: 'Retrieves transaction history with support for search, status filtering, and amount range filtering',
+  })
   @ApiParam({ name: 'accountNumber', description: 'Wallet account number', example: '9719913297' })
   @ApiQuery({ name: 'startDate', required: true, description: 'Start date (YYYY-MM-DD)', example: '2025-01-01' })
   @ApiQuery({ name: 'endDate', required: true, description: 'End date (YYYY-MM-DD)', example: '2025-01-31' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number', example: '1' })
   @ApiQuery({ name: 'limit', required: false, description: 'Number of items per page', example: '10' })
+  @ApiQuery({ name: 'query', required: false, description: 'Search query to filter by transaction description', example: 'payment' })
+  @ApiQuery({ name: 'status', required: false, description: 'Filter by transaction status', enum: ['all', 'successful', 'pending', 'failed'], example: 'all' })
+  @ApiQuery({ name: 'minAmount', required: false, description: 'Minimum transaction amount', type: Number, example: 10 })
+  @ApiQuery({ name: 'maxAmount', required: false, description: 'Maximum transaction amount', type: Number, example: 500 })
   @ApiResponse({ status: 200, description: 'Wallet history retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Wallet not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
@@ -108,6 +115,10 @@ export class WalletmoduleController {
       query.endDate,
       page,
       limit,
+      query.query,
+      query.status,
+      query.minAmount,
+      query.maxAmount,
     );
   }
 

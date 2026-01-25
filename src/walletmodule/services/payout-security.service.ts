@@ -31,7 +31,7 @@ export class PayoutSecurityService {
     });
 
     if (user && user.payoutPin) {
-      throw new BadRequestException('Payout PIN already exists. Use the update endpoint to change your PIN.');
+      throw new BadRequestException('Payout PIN exists already.');
     }
 
     // Hash the PIN

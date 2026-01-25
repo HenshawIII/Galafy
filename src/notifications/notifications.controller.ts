@@ -571,4 +571,31 @@ export class NotificationsController {
 
     return this.notificationsService.markAllNotificationsAsRead(userId);
   }
+
+  /**
+   * Delete all notifications for a user
+   */
+  @Delete()
+  @ApiOperation({
+    summary: 'Delete all notifications',
+    description: 'Deletes all notifications (both read and unread) for the authenticated user.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'All notifications deleted successfully',
+    schema: {
+      example: {
+        count: 10,
+        message: '10 notification(s) deleted successfully',
+      },
+    },
+  })
+  async deleteAllNotifications(@Request() req: any) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+
+    return this.notificationsService.deleteAllNotifications(userId);
+  }
 }

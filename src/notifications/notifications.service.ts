@@ -615,4 +615,20 @@ export class NotificationsService {
       message: `${result.count} notification(s) marked as read`,
     };
   }
+
+  /**
+   * Delete all notifications for a user
+   */
+  async deleteAllNotifications(userId: string) {
+    const result = await this.databaseService.notification.deleteMany({
+      where: {
+        userId,
+      },
+    });
+
+    return {
+      count: result.count,
+      message: `${result.count} notification(s) deleted successfully`,
+    };
+  }
 }

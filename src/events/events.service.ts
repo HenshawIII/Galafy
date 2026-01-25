@@ -157,20 +157,31 @@ export class EventsService {
       const existingEventStartAt = new Date(existingEvent.startsAt);
       const existingEventEndAtDate = new Date(existingEventEndAt);
       
-      // Format dates for error message
-      const startDateStr = existingEventStartAt.toISOString();
-      const endDateStr = existingEventEndAtDate.toISOString();
+      // Format dates for error message in a user-friendly format
+      const formatDate = (date: Date) => {
+        return date.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+      };
+      
+      const startDateStr = formatDate(existingEventStartAt);
+      const endDateStr = formatDate(existingEventEndAtDate);
       
       // Build error message based on whether existing event has an end date
       const dateRangeStr = existingEvent.endsAt
         ? `${startDateStr} to ${endDateStr}`
-        : `${startDateStr} (no end date set, estimated end: ${endDateStr})`;
+        : `starting ${startDateStr}`;
 
-      const eventType = existingEvent.status === EventStatus.LIVE ? 'LIVE' : 'SCHEDULED';
-      const newEventType = newEventWillBeLive ? 'LIVE' : 'SCHEDULED';
+      const eventType = existingEvent.status === EventStatus.LIVE ? 'live' : 'scheduled';
+      const newEventType = newEventWillBeLive ? 'live' : 'scheduled';
       
       throw new BadRequestException(
-        `Cannot create ${newEventType} event. You already have a ${eventType} event "${existingEvent.title}" from ${dateRangeStr} that would overlap. You cannot have multiple LIVE events at the same time.`,
+        `You already have a ${eventType} event. You can only have one live event running at a time.`,
       );
     }
   }
