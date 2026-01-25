@@ -21,6 +21,15 @@ export enum TransactionStatusFilter {
   FAILED = 'failed',
 }
 
+export enum TransactionTypeFilter {
+  ALL = 'all',
+  INFLOW = 'inflow',
+  SPRAY = 'spray',
+  PAYOUT = 'payout',
+  REFUND = 'refund',
+  ADJUSTMENT = 'adjustment',
+}
+
 export class GetWalletHistoryDto {
   @ApiProperty({
     description: 'Start date for the query period (YYYY-MM-DD)',
@@ -95,5 +104,14 @@ export class GetWalletHistoryDto {
   @IsNumber({}, { message: 'Max amount must be a number' })
   @Min(0, { message: 'Max amount must be greater than or equal to 0' })
   maxAmount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Filter transactions by type',
+    enum: TransactionTypeFilter,
+    example: TransactionTypeFilter.ALL,
+  })
+  @IsOptional()
+  @IsEnum(TransactionTypeFilter, { message: 'Type must be one of: all, inflow, spray, payout, refund, adjustment' })
+  type?: TransactionTypeFilter;
 }
 

@@ -1120,7 +1120,7 @@ export class WalletmoduleService {
   /**
    * Get wallet transaction history
    * Cached for 30 seconds (transaction history changes frequently)
-   * Supports search, status filtering, and amount range filtering
+   * Supports search, status filtering, type filtering, and amount range filtering
    */
   async getWalletHistory(
     accountNumber: string,
@@ -1132,10 +1132,11 @@ export class WalletmoduleService {
     status?: string,
     minAmount?: number,
     maxAmount?: number,
+    type?: string,
   ) {
     // Generate cache key from all parameters (excluding filters for cache efficiency)
     const baseCacheKey = `wallet:history:${accountNumber}:${fromDate}:${toDate}:${page || 1}:${pageSize || 20}`;
-    const filterCacheKey = `${baseCacheKey}:${query || ''}:${status || 'all'}:${minAmount || ''}:${maxAmount || ''}`;
+    const filterCacheKey = `${baseCacheKey}:${query || ''}:${status || 'all'}:${minAmount || ''}:${maxAmount || ''}:${type || 'all'}`;
 
     // Check cache first
     const cached = await this.cacheService.get(filterCacheKey);
@@ -1157,7 +1158,7 @@ export class WalletmoduleService {
 
     // Get history from provider using account number
     // Request more records if filtering is needed to ensure we have enough results after filtering
-    const providerPageSize = (query || status || minAmount !== undefined || maxAmount !== undefined) 
+    const providerPageSize = (query || status || type || minAmount !== undefined || maxAmount !== undefined) 
       ? (pageSize || 20) * 3 // Request 3x more to account for filtering
       : pageSize || 20;
 
@@ -1169,9 +1170,9 @@ export class WalletmoduleService {
       providerPageSize,
     );
 
-    // Get database transactions to match status if status filter is provided
-    let dbTransactions: Map<string, any> = new Map();
-    if (status && status !== 'all') {
+    // Get database transactions to match status and type if filters are provided
+    let dbTransactions: Map<string, { status: string; type: string }> = new Map();
+    if ((status && status !== 'all') || (type && type !== 'all')) {
       const transactions = await this.databaseService.transaction.findMany({
         where: {
           walletId: wallet.id,
@@ -1184,16 +1185,18 @@ export class WalletmoduleService {
           reference: true,
           externalReference: true,
           status: true,
+          type: true,
         },
       });
-      // Create a map of reference -> status for quick lookup
+      // Create a map of reference -> {status, type} for quick lookup
       // Check both reference and externalReference to match provider's transactionReference
       transactions.forEach((tx) => {
+        const txData = { status: tx.status, type: tx.type };
         if (tx.reference) {
-          dbTransactions.set(tx.reference, tx.status);
+          dbTransactions.set(tx.reference, txData);
         }
         if (tx.externalReference) {
-          dbTransactions.set(tx.externalReference, tx.status);
+          dbTransactions.set(tx.externalReference, txData);
         }
       });
     }
@@ -1213,15 +1216,32 @@ export class WalletmoduleService {
     // Status filter
     if (status && status !== 'all') {
       filteredTransactions = filteredTransactions.filter((tx) => {
-        const txStatus = dbTransactions.get(tx.reference || '');
-        if (!txStatus) return false; // Skip if we can't find status in database
+        const txData = dbTransactions.get(tx.reference || '');
+        if (!txData) return false; // Skip if we can't find transaction in database
         
         const statusMap: Record<string, string> = {
           successful: 'SUCCESS',
           pending: 'PENDING',
           failed: 'FAILED',
         };
-        return txStatus === statusMap[status.toLowerCase()];
+        return txData.status === statusMap[status.toLowerCase()];
+      });
+    }
+
+    // Type filter
+    if (type && type !== 'all') {
+      filteredTransactions = filteredTransactions.filter((tx) => {
+        const txData = dbTransactions.get(tx.reference || '');
+        if (!txData) return false; // Skip if we can't find transaction in database
+        
+        const typeMap: Record<string, string> = {
+          inflow: 'INFLOW',
+          spray: 'SPRAY',
+          payout: 'PAYOUT',
+          refund: 'REFUND',
+          adjustment: 'ADJUSTMENT',
+        };
+        return txData.type === typeMap[type.toLowerCase()];
       });
     }
 

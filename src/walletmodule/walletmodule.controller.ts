@@ -98,6 +98,7 @@ export class WalletmoduleController {
   @ApiQuery({ name: 'limit', required: false, description: 'Number of items per page', example: '10' })
   @ApiQuery({ name: 'query', required: false, description: 'Search query to filter by transaction description', example: 'payment' })
   @ApiQuery({ name: 'status', required: false, description: 'Filter by transaction status', enum: ['all', 'successful', 'pending', 'failed'], example: 'all' })
+  @ApiQuery({ name: 'type', required: false, description: 'Filter by transaction type', enum: ['all', 'inflow', 'spray', 'payout', 'refund', 'adjustment'], example: 'all' })
   @ApiQuery({ name: 'minAmount', required: false, description: 'Minimum transaction amount', type: Number, example: 10 })
   @ApiQuery({ name: 'maxAmount', required: false, description: 'Maximum transaction amount', type: Number, example: 500 })
   @ApiResponse({ status: 200, description: 'Wallet history retrieved successfully' })
@@ -119,6 +120,7 @@ export class WalletmoduleController {
       query.status,
       query.minAmount,
       query.maxAmount,
+      query.type,
     );
   }
 
