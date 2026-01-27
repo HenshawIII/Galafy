@@ -761,23 +761,28 @@ export class WalletmoduleService {
         });
 
         if (wallet?.riskStatus === 'HARD_FREEZE') {
-          // Log AML transaction block
-          this.amlLoggingService.logTransactionBlocked(
-            fromWallet.id,
-            'N/A', // Transaction ID not yet created
-            'PAYOUT',
-            'DEBIT',
-            grossAmount,
-            `Hard freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
-            wallet.riskStatus,
-            wallet.riskScore?.toNumber(),
-            fromWallet.customerId,
-            userId,
-            {
-              destinationAccount: payoutData.toAccountNumber,
-              destinationBank: payoutData.bankCode,
-            },
-          );
+          // Log AML transaction block (non-blocking)
+          try {
+            this.amlLoggingService.logTransactionBlocked(
+              fromWallet.id,
+              'N/A', // Transaction ID not yet created
+              'PAYOUT',
+              'DEBIT',
+              grossAmount,
+              `Hard freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
+              wallet.riskStatus,
+              wallet.riskScore?.toNumber(),
+              fromWallet.customerId,
+              userId,
+              {
+                destinationAccount: payoutData.toAccountNumber,
+                destinationBank: payoutData.bankCode,
+              },
+            );
+          } catch (logError) {
+            // Log the logging error but don't block transaction
+            this.logger.error(`AML logging failed for hard freeze: ${logError.message}`);
+          }
 
           throw new BadRequestException(
             `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
@@ -786,23 +791,28 @@ export class WalletmoduleService {
         }
 
         if (wallet?.riskStatus === 'SOFT_FREEZE') {
-          // Log AML transaction block
-          this.amlLoggingService.logTransactionBlocked(
-            fromWallet.id,
-            'N/A', // Transaction ID not yet created
-            'PAYOUT',
-            'DEBIT',
-            grossAmount,
-            `Soft freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
-            wallet.riskStatus,
-            wallet.riskScore?.toNumber(),
-            fromWallet.customerId,
-            userId,
-            {
-              destinationAccount: payoutData.toAccountNumber,
-              destinationBank: payoutData.bankCode,
-            },
-          );
+          // Log AML transaction block (non-blocking)
+          try {
+            this.amlLoggingService.logTransactionBlocked(
+              fromWallet.id,
+              'N/A', // Transaction ID not yet created
+              'PAYOUT',
+              'DEBIT',
+              grossAmount,
+              `Soft freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
+              wallet.riskStatus,
+              wallet.riskScore?.toNumber(),
+              fromWallet.customerId,
+              userId,
+              {
+                destinationAccount: payoutData.toAccountNumber,
+                destinationBank: payoutData.bankCode,
+              },
+            );
+          } catch (logError) {
+            // Log the logging error but don't block transaction
+            this.logger.error(`AML logging failed for soft freeze: ${logError.message}`);
+          }
 
           throw new BadRequestException(
             `Wallet is soft frozen due to elevated risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +

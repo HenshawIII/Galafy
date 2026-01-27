@@ -252,21 +252,22 @@ export class DeviceAbuseDetectionService {
         `🚨 Wallet creation abuse detected for user ${userId}: ${reasons.join(', ')}`,
       );
 
-      // Log to AML system
-      this.amlLoggingService.logWalletCreationAbuse(
-        userId,
-        customerId,
-        'MULTIPLE_WALLET_CREATION',
-        severity,
-        {
-          deviceToken: deviceInfo.deviceToken,
-          ipAddress: deviceInfo.ipAddress,
-          deviceWalletCount,
-          ipWalletCount,
-          reasons,
-          flaggedWallets: flaggedWallets.map((w) => ({
-            walletId: w.walletId,
-            userId: w.userId,
+      // Log to AML system (non-blocking)
+      try {
+        this.amlLoggingService.logWalletCreationAbuse(
+          userId,
+          customerId,
+          'MULTIPLE_WALLET_CREATION',
+          severity,
+          {
+            deviceToken: deviceInfo.deviceToken,
+            ipAddress: deviceInfo.ipAddress,
+            deviceWalletCount,
+            ipWalletCount,
+            reasons,
+            flaggedWallets: flaggedWallets.map((w) => ({
+              walletId: w.walletId,
+              userId: w.userId,
             customerId: w.customerId,
             createdAt: w.createdAt.toISOString(),
           })),
@@ -278,6 +279,10 @@ export class DeviceAbuseDetectionService {
           browser: deviceInfo.browser,
         },
       );
+      } catch (logError) {
+        // Log the logging error but don't block wallet creation check
+        this.logger.error(`AML logging failed for wallet creation abuse: ${logError.message}`);
+      }
     }
 
     return {

@@ -244,24 +244,29 @@ export class SprayAnomalyService {
         });
       }
 
-      // Log findings using AML logging service
+      // Log findings using AML logging service (non-blocking)
       if (findings.length > 0) {
         for (const finding of findings) {
           // Convert severity to AML severity
           const amlSeverity = finding.severity === 'HIGH' ? 'HIGH' : finding.severity === 'MEDIUM' ? 'MEDIUM' : 'LOW';
           
-          this.amlLoggingService.logAnomalyDetected(
-            finding.sprayId,
-            finding.transactionId,
-            finding.details.sprayerWalletId,
-            finding.details.receiverWalletId,
-            new Decimal(finding.details.amount),
-            finding.anomalyType,
-            amlSeverity,
-            finding.details.patternData,
-            finding.details.eventId,
-            finding.metadata,
-          );
+          try {
+            this.amlLoggingService.logAnomalyDetected(
+              finding.sprayId,
+              finding.transactionId,
+              finding.details.sprayerWalletId,
+              finding.details.receiverWalletId,
+              new Decimal(finding.details.amount),
+              finding.anomalyType,
+              amlSeverity,
+              finding.details.patternData,
+              finding.details.eventId,
+              finding.metadata,
+            );
+          } catch (logError) {
+            // Log the logging error but don't block anomaly detection
+            this.logger.error(`AML logging failed for anomaly detection: ${logError.message}`);
+          }
         }
         
         // Also log using existing method for backward compatibility

@@ -267,78 +267,88 @@ export class WalletRiskService {
         },
       });
 
-      // Log risk score calculation
-      this.amlLoggingService.logRiskScoreCalculated(
-        walletId,
-        components.finalScore,
-        riskStatus,
-        {
-          velocity: components.velocity,
-          amountSize: components.amountSize,
-          frequency: components.frequency,
-          deviceRisk: components.deviceRisk,
-        },
-        wallet?.customerId,
-        {
-          previousRiskScore: currentWallet?.riskScore?.toNumber(),
-          timeWindowHours: this.RISK_TIME_WINDOW_HOURS,
-        },
-      );
-
-      // Log status changes
-      if (statusChanged) {
-        if (riskStatus === 'HARD_FREEZE') {
-          this.amlLoggingService.logFreezeApplied(
-            walletId,
-            'HARD_FREEZE',
-            components.finalScore,
-            `Risk score ${components.finalScore.toFixed(2)} exceeds hard freeze threshold (${config.RISK_HARD_FREEZE_THRESHOLD})`,
-            wallet?.customerId,
-            {
-              velocity: components.velocity,
-              amountSize: components.amountSize,
-              frequency: components.frequency,
-            },
-          );
-        } else if (riskStatus === 'SOFT_FREEZE') {
-          this.amlLoggingService.logFreezeApplied(
-            walletId,
-            'SOFT_FREEZE',
-            components.finalScore,
-            `Risk score ${components.finalScore.toFixed(2)} exceeds soft freeze threshold (${config.RISK_SOFT_FREEZE_THRESHOLD})`,
-            wallet?.customerId,
-            {
-              velocity: components.velocity,
-              amountSize: components.amountSize,
-              frequency: components.frequency,
-            },
-          );
-        } else if (previousStatus !== 'NORMAL' && riskStatus === 'NORMAL') {
-          this.amlLoggingService.logFreezeReleased(
-            walletId,
-            previousStatus as 'SOFT_FREEZE' | 'HARD_FREEZE',
-            components.finalScore,
-            wallet?.customerId,
-            {
-              previousRiskScore: currentWallet?.riskScore?.toNumber(),
-            },
-          );
-        }
-
-        // Log status change
-        this.amlLoggingService.logRiskStatusChanged(
+      // Log risk score calculation (non-blocking)
+      try {
+        this.amlLoggingService.logRiskScoreCalculated(
           walletId,
-          previousStatus,
-          riskStatus,
           components.finalScore,
-          currentWallet?.riskScore?.toNumber(),
-          wallet?.customerId,
+          riskStatus,
           {
             velocity: components.velocity,
             amountSize: components.amountSize,
             frequency: components.frequency,
+            deviceRisk: components.deviceRisk,
+          },
+          wallet?.customerId,
+          {
+            previousRiskScore: currentWallet?.riskScore?.toNumber(),
+            timeWindowHours: this.RISK_TIME_WINDOW_HOURS,
           },
         );
+      } catch (logError) {
+        // Log the logging error but don't block risk score update
+        this.logger.error(`AML logging failed for risk score calculation: ${logError.message}`);
+      }
+
+      // Log status changes (non-blocking)
+      if (statusChanged) {
+        try {
+          if (riskStatus === 'HARD_FREEZE') {
+            this.amlLoggingService.logFreezeApplied(
+              walletId,
+              'HARD_FREEZE',
+              components.finalScore,
+              `Risk score ${components.finalScore.toFixed(2)} exceeds hard freeze threshold (${config.RISK_HARD_FREEZE_THRESHOLD})`,
+              wallet?.customerId,
+              {
+                velocity: components.velocity,
+                amountSize: components.amountSize,
+                frequency: components.frequency,
+              },
+            );
+          } else if (riskStatus === 'SOFT_FREEZE') {
+            this.amlLoggingService.logFreezeApplied(
+              walletId,
+              'SOFT_FREEZE',
+              components.finalScore,
+              `Risk score ${components.finalScore.toFixed(2)} exceeds soft freeze threshold (${config.RISK_SOFT_FREEZE_THRESHOLD})`,
+              wallet?.customerId,
+              {
+                velocity: components.velocity,
+                amountSize: components.amountSize,
+                frequency: components.frequency,
+              },
+            );
+          } else if (previousStatus !== 'NORMAL' && riskStatus === 'NORMAL') {
+            this.amlLoggingService.logFreezeReleased(
+              walletId,
+              previousStatus as 'SOFT_FREEZE' | 'HARD_FREEZE',
+              components.finalScore,
+              wallet?.customerId,
+              {
+                previousRiskScore: currentWallet?.riskScore?.toNumber(),
+              },
+            );
+          }
+
+          // Log status change
+          this.amlLoggingService.logRiskStatusChanged(
+            walletId,
+            previousStatus,
+            riskStatus,
+            components.finalScore,
+            currentWallet?.riskScore?.toNumber(),
+            wallet?.customerId,
+            {
+              velocity: components.velocity,
+              amountSize: components.amountSize,
+              frequency: components.frequency,
+            },
+          );
+        } catch (logError) {
+          // Log the logging error but don't block risk status update
+          this.logger.error(`AML logging failed for risk status change: ${logError.message}`);
+        }
       }
 
       // Keep existing logger for backward compatibility
@@ -373,14 +383,20 @@ export class WalletRiskService {
         select: { customerId: true },
       }).catch(() => null);
 
-      this.amlLoggingService.logRiskScoreUpdateFailed(
-        walletId,
-        error as Error,
-        wallet?.customerId,
-        {
-          errorMessage: (error as Error).message,
-        },
-      );
+      // Log risk score update failure (non-blocking)
+      try {
+        this.amlLoggingService.logRiskScoreUpdateFailed(
+          walletId,
+          error as Error,
+          wallet?.customerId,
+          {
+            errorMessage: (error as Error).message,
+          },
+        );
+      } catch (logError) {
+        // Log the logging error but don't throw
+        this.logger.error(`AML logging failed for risk score update failure: ${logError.message}`);
+      }
 
       this.logger.error(
         `Failed to update risk score for wallet ${walletId}: ${error.message}`,
@@ -415,21 +431,27 @@ export class WalletRiskService {
         select: { customerId: true },
       });
 
-      this.amlLoggingService.logTransactionBlocked(
-        walletId,
-        'N/A', // Transaction ID not available at this point
-        'UNKNOWN',
-        'UNKNOWN',
-        new Decimal(0),
-        `Hard freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
-        wallet.riskStatus,
-        wallet.riskScore?.toNumber(),
-        walletWithCustomer?.customerId,
-        undefined,
-        {
-          blockAllTransactions,
-        },
-      );
+      // Log AML transaction block (non-blocking)
+      try {
+        this.amlLoggingService.logTransactionBlocked(
+          walletId,
+          'N/A', // Transaction ID not available at this point
+          'UNKNOWN',
+          'UNKNOWN',
+          new Decimal(0),
+          `Hard freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
+          wallet.riskStatus,
+          wallet.riskScore?.toNumber(),
+          walletWithCustomer?.customerId,
+          undefined,
+          {
+            blockAllTransactions,
+          },
+        );
+      } catch (logError) {
+        // Log the logging error but don't block transaction
+        this.logger.error(`AML logging failed for hard freeze check: ${logError.message}`);
+      }
 
       throw new BadRequestException(
         `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
@@ -444,21 +466,27 @@ export class WalletRiskService {
         select: { customerId: true },
       });
 
-      this.amlLoggingService.logTransactionBlocked(
-        walletId,
-        'N/A', // Transaction ID not available at this point
-        'UNKNOWN',
-        'UNKNOWN',
-        new Decimal(0),
-        `Soft freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
-        wallet.riskStatus,
-        wallet.riskScore?.toNumber(),
-        walletWithCustomer?.customerId,
-        undefined,
-        {
-          blockAllTransactions,
-        },
-      );
+      // Log AML transaction block (non-blocking)
+      try {
+        this.amlLoggingService.logTransactionBlocked(
+          walletId,
+          'N/A', // Transaction ID not available at this point
+          'UNKNOWN',
+          'UNKNOWN',
+          new Decimal(0),
+          `Soft freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
+          wallet.riskStatus,
+          wallet.riskScore?.toNumber(),
+          walletWithCustomer?.customerId,
+          undefined,
+          {
+            blockAllTransactions,
+          },
+        );
+      } catch (logError) {
+        // Log the logging error but don't block transaction
+        this.logger.error(`AML logging failed for soft freeze check: ${logError.message}`);
+      }
 
       throw new BadRequestException(
         `Wallet is soft frozen due to elevated risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
