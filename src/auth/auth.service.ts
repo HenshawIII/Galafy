@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
+import { EmailService } from '../users/email.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
 import { google } from 'googleapis';
@@ -15,6 +16,7 @@ export class AuthService {
     constructor(
         private readonly usersService: UsersService,
         private readonly customerKycService: CustomerKycService,
+        private readonly emailService: EmailService,
         private readonly jwtService: JwtService,
         private readonly databaseService: DatabaseService,
     ) {
@@ -167,9 +169,16 @@ export class AuthService {
             }
         }
 
+        // Extract firstName from Google name (split by space, take first part)
+        const nameParts = user.name ? user.name.trim().split(/\s+/) : [];
+        const firstName = nameParts.length > 0 ? nameParts[0] : undefined;
+        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined;
+
         const dbUser = await this.usersService.create({
             username: username,
             email: user.email,
+            firstName: firstName,
+            lastName: lastName,
             // No password for Google OAuth users
             isVerified: true,
         }) as any;
@@ -220,6 +229,14 @@ export class AuthService {
                 refreshTokenExpiresAt,
             },
         });
+        
+        // Send welcome email after successful Google signup (don't fail signup if email fails)
+        try {
+            await this.emailService.sendWelcomeEmail(dbUser.email, dbUser.firstName || firstName || undefined);
+        } catch (emailError) {
+            // Log error but don't fail signup - email sending is non-critical
+            console.error('Failed to send welcome email (Google signup still succeeded):', emailError.message);
+        }
         
         // Get KYC status if customer exists (should be null for new users)
         let kycStatus: any = null;
