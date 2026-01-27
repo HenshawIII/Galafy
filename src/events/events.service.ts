@@ -1448,7 +1448,11 @@ export class EventsService {
     // Get all sprays for this event with sprayer wallet and user info
     const sprays = await this.databaseService.spray.findMany({
       where: { eventId },
-      include: {
+      select: {
+        id: true,
+        totalAmount: true,
+        note: true, // Include note field
+        createdAt: true,
         sprayerWallet: {
           include: {
             customer: {
@@ -1485,6 +1489,7 @@ export class EventsService {
         sprayCount: number;
         firstSprayAt: Date;
         lastSprayAt: Date;
+        latestNote: string | null; // Track latest note from most recent spray
       }
     >();
 
@@ -1504,9 +1509,10 @@ export class EventsService {
       if (existing) {
         existing.totalAmount = existing.totalAmount.plus(spray.totalAmount);
         existing.sprayCount += 1;
-        // Update last spray timestamp (sprays are ordered by createdAt desc, so first one is latest)
+        // Update last spray timestamp and note (sprays are ordered by createdAt desc, so first one is latest)
         if (spray.createdAt > existing.lastSprayAt) {
           existing.lastSprayAt = spray.createdAt;
+          existing.latestNote = spray.note || null; // Update latest note from most recent spray
         }
         if (spray.createdAt < existing.firstSprayAt) {
           existing.firstSprayAt = spray.createdAt;
@@ -1522,6 +1528,7 @@ export class EventsService {
           sprayCount: 1,
           firstSprayAt: spray.createdAt,
           lastSprayAt: spray.createdAt,
+          latestNote: spray.note || null, // Set latest note from first (most recent) spray
         });
       }
     }
@@ -1538,6 +1545,7 @@ export class EventsService {
         sprayCount: entry.sprayCount,
         firstSprayAt: entry.firstSprayAt.toISOString(),
         lastSprayAt: entry.lastSprayAt.toISOString(),
+        latestNote: entry.latestNote, // Include latest note in response
         rank: 0, // Will be set after sorting
       }))
       .sort((a, b) => {
