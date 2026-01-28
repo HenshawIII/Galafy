@@ -121,28 +121,31 @@ export class EventsService {
     );
 
     // Check each existing event for overlap
-    // Use WAT time for comparison
-    const now = getWATDateForComparison();
+    // All dates are stored in UTC in the database, so we compare UTC timestamps directly
+    const now = new Date(); // Current UTC time
     
     for (const existingEvent of existingEvents) {
       // Calculate effective end date for existing event
-      // If endsAt is null, use startsAt + default duration hours
+      // Dates from database are already UTC
       const existingEventEndAt = existingEvent.endsAt
         ? new Date(existingEvent.endsAt)
         : new Date(new Date(existingEvent.startsAt).getTime() + defaultDurationHours * 60 * 60 * 1000);
 
-      // Skip events that have already ended (current date is after event end date)
+      // Skip events that have already ended (current UTC time is after event end UTC time)
       // Only check for overlap with events that are still active or upcoming
       if (now > existingEventEndAt) {
         continue; // Event has ended, skip overlap check
       }
 
       // Calculate new event's effective end date
+      // newEventStartAt and newEventEndAt are already UTC (from parseWATDate)
       const newEventEffectiveEndAt = newEventEndAt
         ? new Date(newEventEndAt)
         : new Date(new Date(newEventStartAt).getTime() + defaultDurationHours * 60 * 60 * 1000);
 
       // Check if events would overlap in time
+      // All dates are UTC, so direct comparison works correctly
+      // Events overlap if: newEvent starts before existingEvent ends AND newEvent ends after existingEvent starts
       const eventsOverlap = newEventStartAt < existingEventEndAt && newEventEffectiveEndAt > new Date(existingEvent.startsAt);
 
       if (!eventsOverlap) {
