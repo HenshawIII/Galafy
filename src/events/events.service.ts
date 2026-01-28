@@ -18,6 +18,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ConfigService } from '../config/config.service.js';
+import { getWATDateForComparison, parseWATDate, formatWATDate as formatWATDateUtil } from '../common/utils/timezone.util.js';
 
 @Injectable()
 export class EventsService {
@@ -120,7 +121,8 @@ export class EventsService {
     );
 
     // Check each existing event for overlap
-    const now = new Date();
+    // Use WAT time for comparison
+    const now = getWATDateForComparison();
     
     for (const existingEvent of existingEvents) {
       // Calculate effective end date for existing event
@@ -157,9 +159,9 @@ export class EventsService {
       const existingEventStartAt = new Date(existingEvent.startsAt);
       const existingEventEndAtDate = new Date(existingEventEndAt);
       
-      // Format dates for error message in a user-friendly format
+      // Format dates for error message in a user-friendly format (WAT timezone)
       const formatDate = (date: Date) => {
-        return date.toLocaleString('en-US', {
+        return formatWATDateUtil(date, {
           month: 'short',
           day: 'numeric',
           year: 'numeric',
@@ -299,14 +301,15 @@ export class EventsService {
 
     // Determine status based on goLiveInstantly
     const status = createEventDto.goLiveInstantly ? EventStatus.LIVE : EventStatus.SCHEDULED;
+    // Parse dates assuming WAT timezone if no timezone specified
     const startAt = createEventDto.goLiveInstantly 
-      ? new Date() 
-      : new Date(createEventDto.startAt);
+      ? getWATDateForComparison() 
+      : parseWATDate(createEventDto.startAt);
 
     // Validate endAt if provided (must be after startAt)
     let endAt: Date | null = null;
     if (createEventDto.endAt) {
-      endAt = new Date(createEventDto.endAt);
+      endAt = parseWATDate(createEventDto.endAt);
       if (endAt <= startAt) {
         throw new BadRequestException('Event end date must be after start date');
       }
@@ -652,6 +655,15 @@ export class EventsService {
         return sum.plus(spray.totalAmount);
       }, new Decimal(0));
 
+      // Count unique sprayers (users who have sent at least one spray)
+      const uniqueSprayerIds = new Set<string>();
+      (event.sprays || []).forEach((spray: any) => {
+        if (spray.sprayerWallet?.customer?.user?.id) {
+          uniqueSprayerIds.add(spray.sprayerWallet.customer.user.id);
+        }
+      });
+      const uniqueSprayerCount = uniqueSprayerIds.size;
+
       // Remove the raw participants and sprays from the event object
       const { participants: _, sprays: __, ...eventWithoutRawData } = event;
 
@@ -662,6 +674,7 @@ export class EventsService {
         accumulatedSprayTotal: accumulatedSprayTotal.toString(),
         participantCount: participants.length,
         sprayCount: sprays.length,
+        uniqueSprayerCount: uniqueSprayerCount,
       };
     });
 
@@ -836,9 +849,9 @@ export class EventsService {
         ? new Decimal(dto.minSprayAmount) 
         : null;
     }
-    if (dto.startAt !== undefined) updateData.startsAt = new Date(dto.startAt);
+    if (dto.startAt !== undefined) updateData.startsAt = parseWATDate(dto.startAt);
     if (dto.endAt !== undefined) {
-      const newEndAt = dto.endAt ? new Date(dto.endAt) : null;
+      const newEndAt = dto.endAt ? parseWATDate(dto.endAt) : null;
       const currentStartAt = updateData.startsAt ? updateData.startsAt : event.startsAt;
       
       if (newEndAt && newEndAt <= currentStartAt) {
@@ -1633,6 +1646,23 @@ export class EventsService {
               profilePicture: true,
             },
           },
+          sprays: {
+            include: {
+              sprayerWallet: {
+                include: {
+                  customer: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           _count: {
             select: {
               participants: true,
@@ -1650,22 +1680,34 @@ export class EventsService {
     ]);
 
     // Format events for response
-    const formattedEvents = events.map((event) => ({
-      id: event.id,
-      code: event.code,
-      title: event.title,
-      location: event.location,
-      category: event.category,
-      description: event.description,
-      imageUrl: event.imageUrl,
-      status: event.status,
-      visibility: event.visibility,
-      startsAt: event.startsAt,
-      hostUser: event.hostUser,
-      participantCount: event._count.participants,
-      sprayCount: event._count.sprays,
-      createdAt: event.createdAt,
-    }));
+    const formattedEvents = events.map((event: any) => {
+      // Count unique sprayers (users who have sent at least one spray)
+      const uniqueSprayerIds = new Set<string>();
+      (event.sprays || []).forEach((spray: any) => {
+        if (spray.sprayerWallet?.customer?.user?.id) {
+          uniqueSprayerIds.add(spray.sprayerWallet.customer.user.id);
+        }
+      });
+      const uniqueSprayerCount = uniqueSprayerIds.size;
+
+      return {
+        id: event.id,
+        code: event.code,
+        title: event.title,
+        location: event.location,
+        category: event.category,
+        description: event.description,
+        imageUrl: event.imageUrl,
+        status: event.status,
+        visibility: event.visibility,
+        startsAt: event.startsAt,
+        hostUser: event.hostUser,
+        participantCount: event._count.participants,
+        sprayCount: event._count.sprays,
+        uniqueSprayerCount: uniqueSprayerCount,
+        createdAt: event.createdAt,
+      };
+    });
 
     return {
       events: formattedEvents,

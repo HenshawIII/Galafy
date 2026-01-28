@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../database/database.service.js';
 import { NotificationsService } from '../notifications.service.js';
 import { EventStatus } from '../../../generated/prisma/enums.js';
+import { getWATDateForComparison, getWATISOString } from '../../common/utils/timezone.util.js';
 
 /**
  * Scheduled task to send event reminder notifications
@@ -25,7 +26,8 @@ export class EventRemindersTask {
   async send10MinuteReminders(): Promise<void> {
     this.logger.debug('Checking for events starting in 10 minutes...');
 
-    const now = new Date();
+    // Use WAT time for comparison
+    const now = getWATDateForComparison();
     const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000);
 
     try {
@@ -78,7 +80,7 @@ export class EventRemindersTask {
                 eventId: event.id,
                 eventCode: event.code,
                 eventTitle: event.title,
-                startsAt: event.startsAt.toISOString(),
+                startsAt: getWATISOString(event.startsAt),
               },
             },
             true, // Check event reminders preference
@@ -102,7 +104,8 @@ export class EventRemindersTask {
   async sendStartNotifications(): Promise<void> {
     this.logger.debug('Checking for events starting now...');
 
-    const now = new Date();
+    // Use WAT time for comparison
+    const now = getWATDateForComparison();
 
     try {
       // Find events that just started (within 1 minute window)
@@ -162,7 +165,7 @@ export class EventRemindersTask {
                 eventId: event.id,
                 eventCode: event.code,
                 eventTitle: event.title,
-                startsAt: event.startsAt.toISOString(),
+                startsAt: getWATISOString(event.startsAt),
               },
             },
             true, // Check event reminders preference
@@ -186,27 +189,27 @@ export class EventRemindersTask {
   async updateScheduledToLiveStatus(): Promise<void> {
     this.logger.debug('Checking for events that should be LIVE...');
 
-    // Use current time - JavaScript Date is UTC internally, Prisma handles conversion
-    const now = new Date();
+    // Use WAT time for comparison
+    const now = getWATDateForComparison();
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - UTC ISO: ${now.toISOString()}, Local: ${now.toString()}, UTC Timestamp: ${now.getTime()}`,
+      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
       // Find events with SCHEDULED status that should be LIVE (startsAt is in the past)
       // Exclude events that have ended (endsAt is in the past)
-      // Prisma converts JavaScript Date to UTC for PostgreSQL TIMESTAMP comparison
+      // Compare using WAT time - Prisma will convert to UTC for database comparison
       const eventsToLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           startsAt: {
-            lte: now, // startsAt is in the past (Prisma handles UTC conversion)
+            lte: now, // startsAt is in the past (in WAT context)
           },
           OR: [
             { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet (Prisma handles UTC conversion)
+            { endsAt: { gt: now } }, // Events that haven't ended yet (in WAT context)
           ],
         },
         select: {
@@ -251,17 +254,17 @@ export class EventRemindersTask {
   async updateEndedEventsStatus(): Promise<void> {
     this.logger.debug('Checking for events that have ended...');
 
-    // Use current time - JavaScript Date is UTC internally, Prisma handles conversion
-    const now = new Date();
+    // Use WAT time for comparison
+    const now = getWATDateForComparison();
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - UTC ISO: ${now.toISOString()}, Local: ${now.toString()}, UTC Timestamp: ${now.getTime()}`,
+      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
       // Find events that have ended (endsAt is in the past) but are still LIVE or SCHEDULED
-      // Prisma converts JavaScript Date to UTC for PostgreSQL TIMESTAMP comparison
+      // Compare using WAT time - Prisma will convert to UTC for database comparison
       const endedEvents = await this.databaseService.event.findMany({
         where: {
           status: {
@@ -269,7 +272,7 @@ export class EventRemindersTask {
           },
           endsAt: {
             not: null,
-            lte: now, // endsAt is in the past (Prisma handles UTC conversion)
+            lte: now, // endsAt is in the past (in WAT context)
           },
         },
         select: {

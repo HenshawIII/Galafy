@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '../../database/database.service.js';
 import { EventStatus } from '../../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
+import { getWATDateForComparison, getWATISOString } from '../../common/utils/timezone.util.js';
 
 /**
  * Scheduled task to automatically update event status from SCHEDULED to LIVE
@@ -25,22 +26,22 @@ export class EventStatusTask {
   async handleScheduledEvents(): Promise<void> {
     this.logger.debug('Checking for scheduled events that should go live...');
 
-    // Use current time - JavaScript Date is UTC internally, Prisma will handle conversion
-    const now = new Date();
+    // Use current time in WAT for comparison
+    const now = getWATDateForComparison();
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - UTC ISO: ${now.toISOString()}, Local: ${now.toString()}, UTC Timestamp: ${now.getTime()}`,
+      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
       // Find all events that are SCHEDULED and have reached their startsAt time
-      // Prisma converts JavaScript Date to UTC for PostgreSQL TIMESTAMP comparison
+      // Compare using WAT time - Prisma will convert to UTC for database comparison
       const eventsToGoLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           startsAt: {
-            lte: now, // startsAt is less than or equal to now (Prisma handles UTC conversion)
+            lte: now, // startsAt is less than or equal to now (in WAT context)
           },
         },
         select: {
@@ -85,7 +86,7 @@ export class EventStatusTask {
                 eventId: event.id,
                 eventCode: event.code,
                 eventTitle: event.title,
-                startsAt: event.startsAt.toISOString(),
+                startsAt: getWATISOString(event.startsAt),
               },
             },
             true, // Check event reminders preference
