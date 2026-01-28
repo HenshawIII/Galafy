@@ -131,10 +131,15 @@ export function formatWATDate(date: Date, options?: Intl.DateTimeFormatOptions):
 /**
  * Get WAT time as ISO string
  * Returns ISO string representing the time in WAT
+ * 
+ * Note: If the date is already a WAT comparison date (from getWATDateForComparison),
+ * it should be formatted directly. Otherwise, it formats the UTC date in WAT timezone.
  */
 export function getWATISOString(date: Date): string {
-  // Format the date in WAT
-  const watString = formatWATDate(date, {
+  // Get the WAT time components from the date
+  // This handles both UTC dates and WAT comparison dates correctly
+  const watParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: WAT_TIMEZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -142,15 +147,18 @@ export function getWATISOString(date: Date): string {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  });
+  }).formatToParts(date);
   
-  // Convert to ISO format (YYYY-MM-DDTHH:mm:ss)
-  const [datePart, timePart] = watString.split(', ');
-  const [month, day, year] = datePart.split('/');
-  const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${timePart}`;
+  // Extract parts
+  const year = watParts.find(p => p.type === 'year')!.value;
+  const month = watParts.find(p => p.type === 'month')!.value.padStart(2, '0');
+  const day = watParts.find(p => p.type === 'day')!.value.padStart(2, '0');
+  const hour = watParts.find(p => p.type === 'hour')!.value.padStart(2, '0');
+  const minute = watParts.find(p => p.type === 'minute')!.value.padStart(2, '0');
+  const second = watParts.find(p => p.type === 'second')!.value.padStart(2, '0');
   
-  // Add WAT offset (+01:00)
-  return `${formattedDate}+01:00`;
+  // Format as ISO string with WAT offset
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}+01:00`;
 }
 
 /**

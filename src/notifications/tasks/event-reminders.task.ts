@@ -191,10 +191,11 @@ export class EventRemindersTask {
 
     // Use WAT time for comparison
     const now = getWATDateForComparison();
+    const actualUTC = new Date(); // Actual UTC time for logging
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
+      `Time check - WAT: ${getWATISOString(actualUTC)}, UTC ISO: ${actualUTC.toISOString()}, UTC Timestamp: ${actualUTC.getTime()}`,
     );
 
     try {
@@ -256,10 +257,11 @@ export class EventRemindersTask {
 
     // Use WAT time for comparison
     const now = getWATDateForComparison();
+    const actualUTC = new Date(); // Actual UTC time for logging
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
+      `Time check - WAT: ${getWATISOString(actualUTC)}, UTC ISO: ${actualUTC.toISOString()}, UTC Timestamp: ${actualUTC.getTime()}`,
     );
 
     try {
