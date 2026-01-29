@@ -1182,6 +1182,8 @@ export class WalletmoduleService {
 
     // Get database transactions to match status and type if filters are provided
     let dbTransactions: Map<string, { status: string; type: string }> = new Map();
+    // For SPRAY type, we also need groupReference to match credit transactions
+    let sprayTransactions: Array<{ reference: string | null; externalReference: string | null; groupReference: string | null; status: string; type: string; amount: any; createdAt: Date }> = [];
     if ((status && status !== 'all') || (type && type !== 'all')) {
       const transactions = await this.databaseService.transaction.findMany({
         where: {
@@ -1194,10 +1196,19 @@ export class WalletmoduleService {
         select: {
           reference: true,
           externalReference: true,
+          groupReference: true,
           status: true,
           type: true,
+          amount: true,
+          createdAt: true,
         },
       });
+      
+      // Store spray transactions separately for special handling
+      if (type && type.toLowerCase() === 'spray') {
+        sprayTransactions = transactions.filter(tx => tx.type === 'SPRAY');
+      }
+      
       // Create a map of reference -> {status, type} for quick lookup
       // Check both reference and externalReference to match provider's transactionReference
       transactions.forEach((tx) => {
@@ -1240,19 +1251,74 @@ export class WalletmoduleService {
 
     // Type filter
     if (type && type !== 'all') {
-      filteredTransactions = filteredTransactions.filter((tx) => {
-        const txData = dbTransactions.get(tx.reference || '');
-        if (!txData) return false; // Skip if we can't find transaction in database
-        
-        const typeMap: Record<string, string> = {
-          inflow: 'INFLOW',
-          spray: 'SPRAY',
-          payout: 'PAYOUT',
-          refund: 'REFUND',
-          adjustment: 'ADJUSTMENT',
-        };
-        return txData.type === typeMap[type.toLowerCase()];
-      });
+      const typeMap: Record<string, string> = {
+        inflow: 'INFLOW',
+        spray: 'SPRAY',
+        payout: 'PAYOUT',
+        refund: 'REFUND',
+        adjustment: 'ADJUSTMENT',
+      };
+      const targetType = typeMap[type.toLowerCase()];
+      
+      if (type.toLowerCase() === 'spray') {
+        // Special handling for SPRAY type to include both debit and credit transactions
+        // Credit spray transactions may have different references from the provider,
+        // so we need to match them using fuzzy matching (amount + timestamp)
+        filteredTransactions = filteredTransactions.filter((tx) => {
+          // First try direct reference match
+          let txData = dbTransactions.get(tx.reference || '');
+          
+          // If no direct match, try to find a matching spray transaction
+          // by checking if any spray transaction has a matching reference or externalReference
+          if (!txData) {
+            const matchingSpray = sprayTransactions.find(
+              (st) => 
+                (st.reference && st.reference === tx.reference) ||
+                (st.externalReference && st.externalReference === tx.reference)
+            );
+            
+            if (matchingSpray) {
+              txData = { status: matchingSpray.status, type: matchingSpray.type };
+            } else {
+              // If still no match, try fuzzy matching by amount and timestamp
+              // This handles cases where provider reference doesn't match our reference
+              // This is especially important for credit spray transactions which may have different references
+              const providerAmount = new Decimal(tx.amount || 0);
+              const providerTimestamp = tx.timestamp ? new Date(tx.timestamp) : null;
+              
+              const fuzzyMatch = sprayTransactions.find((st) => {
+                // Amount must match exactly
+                if (!st.amount) return false;
+                const amountMatch = new Decimal(st.amount).equals(providerAmount);
+                if (!amountMatch) return false;
+                
+                // Timestamp must be very close (within 2 minutes) to ensure we're matching the right transaction
+                if (providerTimestamp) {
+                  const timeDiff = Math.abs(providerTimestamp.getTime() - st.createdAt.getTime());
+                  // Allow 2 minute window for matching (accounts for slight timing differences)
+                  return timeDiff <= 2 * 60 * 1000;
+                }
+                // If no timestamp, only match by amount (less reliable, but better than nothing)
+                return true;
+              });
+              
+              if (fuzzyMatch) {
+                txData = { status: fuzzyMatch.status, type: fuzzyMatch.type };
+              }
+            }
+          }
+          
+          if (!txData) return false;
+          return txData.type === 'SPRAY';
+        });
+      } else {
+        // For other types, use existing logic
+        filteredTransactions = filteredTransactions.filter((tx) => {
+          const txData = dbTransactions.get(tx.reference || '');
+          if (!txData) return false; // Skip if we can't find transaction in database
+          return txData.type === targetType;
+        });
+      }
     }
 
     // Amount range filter
