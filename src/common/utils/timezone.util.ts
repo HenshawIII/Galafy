@@ -200,3 +200,38 @@ export function getWATDateForComparison(): Date {
   return getCurrentWATTime();
 }
 
+/**
+ * Get current time as a Date object that represents current WAT time converted to UTC
+ * This matches the format returned by parseWATDate, so they can be compared directly
+ * Use this when you need to compare current WAT time with dates parsed from parseWATDate
+ */
+export function getCurrentWATAsUTC(): Date {
+  // Get current UTC time
+  const now = new Date();
+  
+  // Get WAT time components
+  const watParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: WAT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  
+  // Extract parts
+  const year = parseInt(watParts.find(p => p.type === 'year')!.value);
+  const month = parseInt(watParts.find(p => p.type === 'month')!.value) - 1; // JS months are 0-indexed
+  const day = parseInt(watParts.find(p => p.type === 'day')!.value);
+  const hour = parseInt(watParts.find(p => p.type === 'hour')!.value);
+  const minute = parseInt(watParts.find(p => p.type === 'minute')!.value);
+  const second = parseInt(watParts.find(p => p.type === 'second')!.value);
+  
+  // Create UTC date representing WAT time, then convert to actual UTC (same logic as parseWATDate)
+  const utcDate = new Date(Date.UTC(year, month, day, hour, minute, second));
+  // Convert WAT to UTC by subtracting 1 hour (same as parseWATDate does)
+  return new Date(utcDate.getTime() - (WAT_UTC_OFFSET_HOURS * 60 * 60 * 1000));
+}
+

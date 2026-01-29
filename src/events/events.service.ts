@@ -18,7 +18,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ConfigService } from '../config/config.service.js';
-import { getWATDateForComparison, parseWATDate, formatWATDate as formatWATDateUtil, getWATISOString } from '../common/utils/timezone.util.js';
+import { getWATDateForComparison, parseWATDate, formatWATDate as formatWATDateUtil, getWATISOString, getCurrentWATAsUTC } from '../common/utils/timezone.util.js';
 
 @Injectable()
 export class EventsService {
@@ -325,8 +325,10 @@ export class EventsService {
     // Determine status based on goLiveInstantly
     const status = createEventDto.goLiveInstantly ? EventStatus.LIVE : EventStatus.SCHEDULED;
     // Parse dates assuming WAT timezone if no timezone specified
+    // When goLiveInstantly is true, use getCurrentWATAsUTC to get current WAT time
+    // converted to UTC format (matching parseWATDate format) for proper comparison
     const startAt = createEventDto.goLiveInstantly 
-      ? getWATDateForComparison() 
+      ? getCurrentWATAsUTC() 
       : parseWATDate(createEventDto.startAt);
 
     // Validate endAt if provided (must be after startAt)
