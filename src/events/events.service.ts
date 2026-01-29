@@ -18,7 +18,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ConfigService } from '../config/config.service.js';
-import { getWATDateForComparison, parseWATDate, formatWATDate as formatWATDateUtil } from '../common/utils/timezone.util.js';
+import { getWATDateForComparison, parseWATDate, formatWATDate as formatWATDateUtil, getWATISOString } from '../common/utils/timezone.util.js';
 
 @Injectable()
 export class EventsService {
@@ -43,6 +43,26 @@ export class EventsService {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return code;
+  }
+
+  /**
+   * Convert event dates to WAT format for API responses
+   * Converts startsAt and endsAt from UTC to WAT ISO strings
+   */
+  private convertEventDatesToWAT(event: any): any {
+    if (!event) return event;
+    
+    const converted = { ...event };
+    
+    if (event.startsAt) {
+      converted.startsAt = getWATISOString(event.startsAt);
+    }
+    
+    if (event.endsAt) {
+      converted.endsAt = getWATISOString(event.endsAt);
+    }
+    
+    return converted;
   }
 
   /**
@@ -469,7 +489,7 @@ export class EventsService {
     });
 
     // Return event with all participants
-    return this.databaseService.event.findUnique({
+    const createdEventWithDetails = await this.databaseService.event.findUnique({
       where: { id: event.id },
       include: {
         hostUser: {
@@ -502,6 +522,9 @@ export class EventsService {
         },
       },
     });
+
+    // Convert dates to WAT format
+    return this.convertEventDatesToWAT(createdEventWithDetails);
   }
 
   /**
@@ -670,8 +693,11 @@ export class EventsService {
       // Remove the raw participants and sprays from the event object
       const { participants: _, sprays: __, ...eventWithoutRawData } = event;
 
+      // Convert dates to WAT format
+      const eventWithWATDates = this.convertEventDatesToWAT(eventWithoutRawData);
+      
       return {
-        ...eventWithoutRawData,
+        ...eventWithWATDates,
         participants,
         sprays,
         accumulatedSprayTotal: accumulatedSprayTotal.toString(),
@@ -754,10 +780,13 @@ export class EventsService {
       throw new NotFoundException(`Event with ID ${id} not found`);
     }
 
-    // Cache for 30 minutes (1800 seconds)
-    await this.cacheService.set(cacheKey, event, 1800);
+    // Convert dates to WAT format
+    const eventWithWATDates = this.convertEventDatesToWAT(event);
 
-    return event;
+    // Cache for 30 minutes (1800 seconds)
+    await this.cacheService.set(cacheKey, eventWithWATDates, 1800);
+
+    return eventWithWATDates;
   }
 
   /**
@@ -809,7 +838,8 @@ export class EventsService {
       throw new NotFoundException(`Event with code ${code} not found`);
     }
 
-    return event;
+    // Convert dates to WAT format
+    return this.convertEventDatesToWAT(event);
   }
 
   /**
@@ -907,7 +937,8 @@ export class EventsService {
     // Invalidate event cache
     await this.cacheService.invalidateEventCache(eventId);
 
-    return updatedEvent;
+    // Convert dates to WAT format
+    return this.convertEventDatesToWAT(updatedEvent);
   }
 
   /**
@@ -1296,11 +1327,15 @@ export class EventsService {
       },
     });
 
-    return participants.map(p => ({
-      ...p.event,
-      userRole: p.role,
-      joinedAt: p.joinedAt,
-    }));
+    return participants.map(p => {
+      // Convert event dates to WAT format
+      const eventWithWATDates = this.convertEventDatesToWAT(p.event);
+      return {
+        ...eventWithWATDates,
+        userRole: p.role,
+        joinedAt: p.joinedAt,
+      };
+    });
   }
 
   /**
@@ -1693,6 +1728,9 @@ export class EventsService {
       });
       const uniqueSprayerCount = uniqueSprayerIds.size;
 
+      // Convert dates to WAT format
+      const eventWithWATDates = this.convertEventDatesToWAT(event);
+
       return {
         id: event.id,
         code: event.code,
@@ -1703,7 +1741,8 @@ export class EventsService {
         imageUrl: event.imageUrl,
         status: event.status,
         visibility: event.visibility,
-        startsAt: event.startsAt,
+        startsAt: eventWithWATDates.startsAt,
+        endsAt: eventWithWATDates.endsAt,
         hostUser: event.hostUser,
         participantCount: event._count.participants,
         sprayCount: event._count.sprays,
