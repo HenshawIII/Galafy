@@ -3,7 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../database/database.service.js';
 import { NotificationsService } from '../notifications.service.js';
 import { EventStatus } from '../../../generated/prisma/enums.js';
-import { getWATDateForComparison, getWATISOString } from '../../common/utils/timezone.util.js';
+import { getWATISOString } from '../../common/utils/timezone.util.js';
 
 /**
  * Scheduled task to send event reminder notifications
@@ -26,8 +26,8 @@ export class EventRemindersTask {
   async send10MinuteReminders(): Promise<void> {
     this.logger.debug('Checking for events starting in 10 minutes...');
 
-    // Use WAT time for comparison
-    const now = getWATDateForComparison();
+    // Use actual UTC time for comparison since database stores UTC timestamps
+    const now = new Date();
     const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000);
 
     try {
@@ -42,7 +42,7 @@ export class EventRemindersTask {
           },
           OR: [
             { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet
+            { endsAt: { gt: now } }, // Events that haven't ended yet (UTC comparison)
           ],
         },
         select: {
@@ -104,8 +104,8 @@ export class EventRemindersTask {
   async sendStartNotifications(): Promise<void> {
     this.logger.debug('Checking for events starting now...');
 
-    // Use WAT time for comparison
-    const now = getWATDateForComparison();
+    // Use actual UTC time for comparison since database stores UTC timestamps
+    const now = new Date();
 
     try {
       // Find events that just started (within 1 minute window)
@@ -114,12 +114,12 @@ export class EventRemindersTask {
         where: {
           status: EventStatus.SCHEDULED,
           startsAt: {
-            gte: new Date(now.getTime() - 30 * 1000), // 30 seconds before now
-            lte: new Date(now.getTime() + 30 * 1000), // 30 seconds after now
+            gte: new Date(now.getTime() - 30 * 1000), // 30 seconds before now (UTC)
+            lte: new Date(now.getTime() + 30 * 1000), // 30 seconds after now (UTC)
           },
           OR: [
             { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet
+            { endsAt: { gt: now } }, // Events that haven't ended yet (UTC comparison)
           ],
         },
         select: {
@@ -189,28 +189,27 @@ export class EventRemindersTask {
   async updateScheduledToLiveStatus(): Promise<void> {
     this.logger.debug('Checking for events that should be LIVE...');
 
-    // Use WAT time for comparison
-    const now = getWATDateForComparison();
-    const actualUTC = new Date(); // Actual UTC time for logging
+    // Use actual UTC time for comparison since database stores UTC timestamps
+    const now = new Date();
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - WAT: ${getWATISOString(actualUTC)}, UTC ISO: ${actualUTC.toISOString()}, UTC Timestamp: ${actualUTC.getTime()}`,
+      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
       // Find events with SCHEDULED status that should be LIVE (startsAt is in the past)
       // Exclude events that have ended (endsAt is in the past)
-      // Compare using WAT time - Prisma will convert to UTC for database comparison
+      // Database stores UTC timestamps, so we compare with actual UTC time
       const eventsToLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           startsAt: {
-            lte: now, // startsAt is in the past (in WAT context)
+            lte: now, // startsAt (UTC) is in the past
           },
           OR: [
             { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet (in WAT context)
+            { endsAt: { gt: now } }, // Events that haven't ended yet (UTC comparison)
           ],
         },
         select: {
@@ -255,18 +254,17 @@ export class EventRemindersTask {
   async updateEndedEventsStatus(): Promise<void> {
     this.logger.debug('Checking for events that have ended...');
 
-    // Use WAT time for comparison
-    const now = getWATDateForComparison();
-    const actualUTC = new Date(); // Actual UTC time for logging
+    // Use actual UTC time for comparison since database stores UTC timestamps
+    const now = new Date();
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - WAT: ${getWATISOString(actualUTC)}, UTC ISO: ${actualUTC.toISOString()}, UTC Timestamp: ${actualUTC.getTime()}`,
+      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
       // Find events that have ended (endsAt is in the past) but are still LIVE or SCHEDULED
-      // Compare using WAT time - Prisma will convert to UTC for database comparison
+      // Database stores UTC timestamps, so we compare with actual UTC time
       const endedEvents = await this.databaseService.event.findMany({
         where: {
           status: {
@@ -274,7 +272,7 @@ export class EventRemindersTask {
           },
           endsAt: {
             not: null,
-            lte: now, // endsAt is in the past (in WAT context)
+            lte: now, // endsAt (UTC) is in the past
           },
         },
         select: {

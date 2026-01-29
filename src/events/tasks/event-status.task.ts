@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '../../database/database.service.js';
 import { EventStatus } from '../../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
-import { getWATDateForComparison, getWATISOString } from '../../common/utils/timezone.util.js';
+import { getWATISOString } from '../../common/utils/timezone.util.js';
 
 /**
  * Scheduled task to automatically update event status from SCHEDULED to LIVE
@@ -26,23 +26,22 @@ export class EventStatusTask {
   async handleScheduledEvents(): Promise<void> {
     this.logger.debug('Checking for scheduled events that should go live...');
 
-    // Use current time in WAT for comparison
-    const now = getWATDateForComparison();
-    const actualUTC = new Date(); // Actual UTC time for logging
+    // Use actual UTC time for comparison since database stores UTC timestamps
+    const now = new Date();
 
     // Log for debugging timezone issues
     this.logger.debug(
-      `Time check - WAT: ${getWATISOString(actualUTC)}, UTC ISO: ${actualUTC.toISOString()}, UTC Timestamp: ${actualUTC.getTime()}`,
+      `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
       // Find all events that are SCHEDULED and have reached their startsAt time
-      // Compare using WAT time - Prisma will convert to UTC for database comparison
+      // Database stores UTC timestamps, so we compare with actual UTC time
       const eventsToGoLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           startsAt: {
-            lte: now, // startsAt is less than or equal to now (in WAT context)
+            lte: now, // startsAt (UTC) is less than or equal to now (UTC)
           },
         },
         select: {
