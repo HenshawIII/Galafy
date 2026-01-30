@@ -77,6 +77,7 @@ export class UsersController {
     }
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
+  @ApiResponse({ status: 409, description: 'User already logged in on another device. Please log out first.' })
   login(@Body(ValidationPipe) loginDto: LoginDto) {
     return this.usersService.login(loginDto);
   }

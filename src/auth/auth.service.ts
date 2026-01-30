@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { UsersService } from '../users/users.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { EmailService } from '../users/email.service.js';
@@ -271,6 +271,16 @@ export class AuthService {
         if (!dbUser) {
             throw new UnauthorizedException('User not found. Please use the sign up endpoint to create an account.');
         }
+
+        // Check for active session - if user has a valid refresh token, they're already logged in
+        if (dbUser.refreshToken && dbUser.refreshTokenExpiresAt) {
+            const now = new Date();
+            if (dbUser.refreshTokenExpiresAt > now) {
+                throw new ConflictException(
+                    'You are already logged in on another device. Please log out from that device first before logging in here.'
+                );
+            }
+        }
         
         // Remove password from response for security
         const { password, ...userWithoutPassword } = dbUser as any;
@@ -396,7 +406,7 @@ export class AuthService {
     }
 
     /**
-     * Logout - invalidate refresh token
+     * Logout - invalidate refresh token (requires access token)
      */
     async logout(userId: string) {
         // Clear refresh token from database
@@ -409,5 +419,70 @@ export class AuthService {
         });
 
         return { message: 'Logged out successfully' };
+    }
+
+    /**
+     * Logout using refresh token - allows logout even if access token expired
+     */
+    async logoutByRefreshToken(refreshToken: string) {
+        try {
+            // Verify refresh token to get userId
+            const payload = this.jwtService.verify(refreshToken, {
+                secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+            });
+
+            if (payload.type !== 'refresh') {
+                throw new UnauthorizedException('Invalid token type');
+            }
+
+            // Find user and verify refresh token matches stored token
+            const user = await this.databaseService.user.findUnique({
+                where: { id: payload.sub },
+            });
+
+            if (!user) {
+                throw new UnauthorizedException('User not found');
+            }
+
+            // Verify refresh token matches stored token
+            if (user.refreshToken !== refreshToken) {
+                throw new UnauthorizedException('Invalid refresh token');
+            }
+
+            // Clear refresh token from database
+            await this.databaseService.user.update({
+                where: { id: user.id },
+                data: {
+                    refreshToken: null,
+                    refreshTokenExpiresAt: null,
+                },
+            });
+
+            return { message: 'Logged out successfully' };
+        } catch (error: any) {
+            if (error.name === 'TokenExpiredError') {
+                // Token expired, but we can still try to clear it if it exists
+                // This handles edge cases where token expired but wasn't cleared
+                try {
+                    const payload = this.jwtService.decode(refreshToken) as any;
+                    if (payload && payload.sub) {
+                        await this.databaseService.user.update({
+                            where: { id: payload.sub },
+                            data: {
+                                refreshToken: null,
+                                refreshTokenExpiresAt: null,
+                            },
+                        });
+                    }
+                } catch (clearError) {
+                    // Ignore errors during cleanup
+                }
+                return { message: 'Session already expired and cleared' };
+            }
+            if (error.name === 'JsonWebTokenError') {
+                throw new UnauthorizedException('Invalid refresh token');
+            }
+            throw error;
+        }
     }
 }

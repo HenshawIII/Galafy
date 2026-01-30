@@ -254,6 +254,16 @@ export class UsersService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // Check for active session - if user has a valid refresh token, they're already logged in
+    if (user.refreshToken && user.refreshTokenExpiresAt) {
+      const now = new Date();
+      if (user.refreshTokenExpiresAt > now) {
+        throw new ConflictException(
+          'You are already logged in on another device. Please log out from that device first before logging in here.'
+        );
+      }
+    }
+
     // Generate access token (short-lived: 15 minutes)
     const accessToken = this.jwtService.sign(
       {

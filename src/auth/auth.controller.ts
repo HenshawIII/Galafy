@@ -74,6 +74,7 @@ export class AuthController {
         }
     })
     @ApiResponse({ status: 401, description: 'Invalid token or user not found' })
+    @ApiResponse({ status: 409, description: 'User already logged in on another device. Please log out first.' })
     googleLogin(@Body() body: {idtoken: string}) {
         return this.authService.googleLogin(body.idtoken);
     }
@@ -99,7 +100,7 @@ export class AuthController {
     @Post('logout')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth('bearer')
-    @ApiOperation({ summary: 'Logout - invalidate refresh token' })
+    @ApiOperation({ summary: 'Logout - invalidate refresh token (requires access token)' })
     @ApiResponse({ 
         status: 200, 
         description: 'Logged out successfully',
@@ -116,5 +117,23 @@ export class AuthController {
             throw new Error('User ID is required. Please ensure you are authenticated.');
         }
         return this.authService.logout(userId);
+    }
+
+    @Post('logout-by-refresh')
+    @Public()
+    @ApiOperation({ summary: 'Logout using refresh token - allows logout even if access token expired' })
+    @ApiBody({ type: RefreshTokenDto })
+    @ApiResponse({ 
+        status: 200, 
+        description: 'Logged out successfully',
+        schema: {
+            example: {
+                message: 'Logged out successfully',
+            }
+        }
+    })
+    @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+    logoutByRefresh(@Body(ValidationPipe) refreshTokenDto: RefreshTokenDto) {
+        return this.authService.logoutByRefreshToken(refreshTokenDto.refreshToken);
     }
 }
