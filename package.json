@@ -25,7 +25,7 @@
     "prebuild": "prisma generate",
     "db:migrate": "prisma migrate deploy && prisma generate",
     "db:seed:config": "node --loader ts-node/esm prisma/seed-config.ts",
-    "start:render": "prisma db push --accept-data-loss && prisma generate && npm run db:seed:config && npm run start:prod",
+    "start:render": "prisma migrate deploy && prisma generate && npm run db:seed:config && npm run start:prod",
     "redis:start": "docker-compose up -d redis",
     "redis:stop": "docker-compose down",
     "redis:logs": "docker-compose logs -f redis",
