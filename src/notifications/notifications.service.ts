@@ -35,7 +35,7 @@ export class NotificationsService {
     });
 
     if (existingDevice) {
-      // Update existing device if it belongs to the same user, otherwise it's a conflict
+      // If device belongs to the same user, just update it
       if (existingDevice.userId === userId) {
         return await this.databaseService.notificationDevice.update({
           where: { id: existingDevice.id },
@@ -47,7 +47,19 @@ export class NotificationsService {
           },
         });
       } else {
-        throw new BadRequestException('Device token is already registered to another user');
+        // Device belongs to a different user - transfer ownership
+        // This handles the case where a user logs out and another user logs in on the same device
+        // The device is now owned by the currently logged-in user
+        return await this.databaseService.notificationDevice.update({
+          where: { id: existingDevice.id },
+          data: {
+            userId, // Transfer to new user
+            deviceType: registerDeviceDto.deviceType,
+            appVersion: registerDeviceDto.appVersion,
+            isActive: true,
+            lastSeenAt: new Date(),
+          },
+        });
       }
     }
 

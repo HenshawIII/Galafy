@@ -37,7 +37,7 @@ export class NotificationsController {
   @Post('devices/register')
   @ApiOperation({
     summary: 'Register a device for push notifications',
-    description: 'Registers a device token (FCM token) for receiving push notifications. User ID is automatically extracted from the authentication token. If the device token already exists, it will be updated.',
+    description: 'Registers a device token (FCM token) for receiving push notifications. User ID is automatically extracted from the authentication token. If the device token already exists for the same user, it will be updated. If the device token belongs to another user, ownership will be transferred to the current user.',
   })
   @ApiBody({
     schema: {
@@ -80,7 +80,7 @@ export class NotificationsController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Bad request - Invalid device token or device already registered to another user' })
+  @ApiResponse({ status: 400, description: 'Bad request - Invalid device token or device type' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async registerDevice(
     @Request() req: any,
