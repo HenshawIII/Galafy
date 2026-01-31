@@ -6,7 +6,7 @@
  *   DATABASE_URL=<production_url> node prisma/baseline-migrations.js
  */
 
-import { PrismaClient } from '@prisma/client';
+import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,18 +15,23 @@ import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const prisma = new PrismaClient();
+const { Client } = pg;
 
 async function baselineMigrations() {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+  });
+
   try {
+    await client.connect();
     console.log('Checking if migration baseline is needed...');
     
     // Check if _prisma_migrations table exists and has entries
     try {
-      const existingMigrations = await prisma.$queryRawUnsafe(`
+      const result = await client.query(`
         SELECT COUNT(*) as count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL
       `);
-      const count = existingMigrations[0]?.count || 0;
+      const count = parseInt(result.rows[0]?.count || 0);
       
       if (count > 0) {
         console.log(`✓ Migration history already exists (${count} migrations found). Skipping baseline.`);
@@ -51,7 +56,7 @@ async function baselineMigrations() {
     console.log(`Found ${migrations.length} migrations to baseline`);
 
     // Check if _prisma_migrations table exists, create if not
-    await prisma.$executeRawUnsafe(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
         "id" VARCHAR(36) NOT NULL,
         "checksum" VARCHAR(64) NOT NULL,
@@ -78,17 +83,17 @@ async function baselineMigrations() {
       const checksum = crypto.createHash('sha256').update(migrationSql).digest('hex');
       
       // Check if already marked as applied
-      const existing = await prisma.$queryRawUnsafe(`
+      const existing = await client.query(`
         SELECT id FROM "_prisma_migrations" WHERE migration_name = $1
-      `, migration);
+      `, [migration]);
 
-      if (existing && existing.length > 0) {
+      if (existing.rows && existing.rows.length > 0) {
         console.log(`✓ ${migration} already marked as applied`);
         continue;
       }
 
       // Mark as applied
-      await prisma.$executeRawUnsafe(`
+      await client.query(`
         INSERT INTO "_prisma_migrations" (
           "id",
           "checksum",
@@ -104,7 +109,7 @@ async function baselineMigrations() {
           now(),
           1
         )
-      `, checksum, migration);
+      `, [checksum, migration]);
 
       console.log(`✓ Marked ${migration} as applied`);
     }
@@ -116,7 +121,7 @@ async function baselineMigrations() {
     console.error('❌ Error baselining migrations:', error);
     process.exit(1);
   } finally {
-    await prisma.$disconnect();
+    await client.end();
   }
 }
 
