@@ -190,46 +190,6 @@ export class AuthService {
         // Remove password from response for security
         const { password, ...userWithoutPassword } = dbUser as any;
         
-        // Generate access token (short-lived: 15 minutes)
-        const accessToken = this.jwtService.sign(
-            {
-                sub: dbUser.id,
-                email: dbUser.email,
-                firstName: dbUser.firstName || null,
-                lastName: dbUser.lastName || null,
-                type: 'access',
-            },
-            {
-                expiresIn: '15m', // Access token expires in 15 minutes
-            },
-        );
-
-        // Generate refresh token (long-lived: 7 days)
-        const refreshToken = this.jwtService.sign(
-            {
-                sub: dbUser.id,
-                email: dbUser.email,
-                type: 'refresh',
-            },
-            {
-                expiresIn: '7d', // Refresh token expires in 7 days
-                secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, // Use separate secret if available
-            },
-        );
-
-        // Calculate refresh token expiration date
-        const refreshTokenExpiresAt = new Date();
-        refreshTokenExpiresAt.setDate(refreshTokenExpiresAt.getDate() + 7); // 7 days from now
-
-        // Store refresh token in database
-        await this.databaseService.user.update({
-            where: { id: dbUser.id },
-            data: {
-                refreshToken,
-                refreshTokenExpiresAt,
-            },
-        });
-        
         // Send welcome email after successful Google signup (don't fail signup if email fails)
         try {
             await this.emailService.sendWelcomeEmail(dbUser.email, dbUser.firstName || firstName || undefined);
@@ -238,21 +198,11 @@ export class AuthService {
             console.error('Failed to send welcome email (Google signup still succeeded):', emailError.message);
         }
         
-        // Get KYC status if customer exists (should be null for new users)
-        let kycStatus: any = null;
-        try {
-            kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(dbUser.id);
-        } catch (error) {
-            // Customer might not exist yet, which is fine - return null for kycStatus
-            kycStatus = null;
-        }
-        
+        // Return user data without tokens - user must login to get tokens
+        // This matches the behavior of normal signup and prevents blocking future logins
         return {
-            access_token: accessToken,
-            refresh_token: refreshToken,
-            user: userWithoutPassword,
-            kycStatus,
-            isVerified: String(dbUser.isVerified),
+            ...userWithoutPassword,
+            message: 'Account created successfully. Please login to continue.',
         }
     }
 
