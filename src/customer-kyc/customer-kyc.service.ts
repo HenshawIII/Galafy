@@ -63,8 +63,8 @@ export class CustomerKycService {
       dob: createCustomerDto.dob,
       city: createCustomerDto.city,
       address: createCustomerDto.address,
-      customerTypeId: createCustomerDto.customerTypeId || "f671da57-e281-4b40-965f-a96f4205405e",
-      countryId: createCustomerDto.countryId || "c15ad9ae-c4d7-4342-b70f-de5508627e3b",
+      customerTypeId: createCustomerDto.customerTypeId || "c92d5158-a4c5-4418-83f7-a813d3989a85",
+      countryId: createCustomerDto.countryId || "4aa9d59e-04e7-4984-9794-85a55489d433",
     };
 
     let providerCustomerId: string | null = null;
@@ -86,8 +86,8 @@ export class CustomerKycService {
         userId,
         providerCustomerId,
         organizationId: createCustomerDto.organizationId,
-        customerTypeId: createCustomerDto.customerTypeId || "f671da57-e281-4b40-965f-a96f4205405e",
-        countryId: createCustomerDto.countryId || "c15ad9ae-c4d7-4342-b70f-de5508627e3b",
+        customerTypeId: createCustomerDto.customerTypeId || "c92d5158-a4c5-4418-83f7-a813d3989a85",
+        countryId: createCustomerDto.countryId || "4aa9d59e-04e7-4984-9794-85a55489d433",
         firstName: createCustomerDto.firstName,
         lastName: createCustomerDto.lastName,
         middleName: createCustomerDto.middleName,

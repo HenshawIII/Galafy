@@ -106,7 +106,7 @@ export class WalletmoduleService {
     const tempWallet = await this.databaseService.wallet.create({
       data: {
         customerId: customer.id,
-        currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+        currencyId: createWalletDto.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
         walletGroupId: createWalletDto.walletGroupId || undefined,
         walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
         walletClassificationId: createWalletDto.walletClassificationId || undefined,
@@ -127,7 +127,7 @@ export class WalletmoduleService {
     const providerRequest = {
       id: walletId,
       customerId: customer.providerCustomerId,
-      currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: createWalletDto.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
       walletGroupId: createWalletDto.walletGroupId || undefined,
       walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
       walletClassificationId: createWalletDto.walletClassificationId || undefined,
@@ -384,7 +384,7 @@ export class WalletmoduleService {
       fromWalletId: fromWallet.virtualAccountNumber,
       toWalletId: toWallet.virtualAccountNumber,
       amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
       description: transferDto.description,
       reference: internalReference,
     });
@@ -408,7 +408,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.DEBIT,
         status: TransactionStatus.SUCCESS,
         amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+        currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
         reference: internalReference,
         externalReference: null, // Wallet-to-wallet (sprays) only use internal reference
         groupReference: groupReference,
@@ -424,7 +424,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.CREDIT,
         status: TransactionStatus.SUCCESS,
         amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+        currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
         reference: `SPRAY-CREDIT-${randomUUID()}`, // Unique reference for credit side
         externalReference: null,
         groupReference: groupReference, // Same group reference to link transactions
@@ -571,7 +571,7 @@ export class WalletmoduleService {
       sourceAccountName: sourceAccountName,
       remarks: transferDto.description || 'Fast wallet transfer',
       amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
       customerTransactionReference: transactionReference,
     });
 
@@ -666,7 +666,7 @@ export class WalletmoduleService {
       amount: amount.toString(),
       description: initiateDto.description,
       recipientName: destinationAccountName,
-      currencyId: initiateDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: initiateDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
       sourceAccountName,
       walletId: fromWallet.id,
     };
@@ -833,7 +833,7 @@ export class WalletmoduleService {
           fromWalletId: fromWallet.virtualAccountNumber,
           toWalletId: adminWalletAccountNumber, // Use account number directly from env
           amount: grossAmount.toNumber(),
-          currencyId: fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+          currencyId: fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
           description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
           reference: userTransactionRef,
         });
