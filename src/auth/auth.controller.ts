@@ -16,26 +16,16 @@ export class AuthController {
     @ApiBody({ schema: { properties: { idtoken: { type: 'string' } } } })
     @ApiResponse({ 
         status: 200, 
-        description: 'Sign up successful, returns access token, refresh token, user details, KYC status, and verification status',
+        description: 'Sign up successful, returns user details. User must login to get access and refresh tokens.',
         schema: {
             example: {
-                access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-                refresh_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-                user: {
-                    id: 'uuid',
-                    email: 'user@example.com',
-                    firstName: 'John',
-                    lastName: 'Doe',
-                },
-                kycStatus: {
-                    customerId: 'uuid',
-                    tier: 'Tier_1',
-                    providerTierCode: 'TIER_1',
-                    hasNin: false,
-                    hasBvn: true,
-                    hasAddressVerification: false,
-                },
-                isVerified: 'true'
+                id: 'uuid',
+                email: 'user@example.com',
+                firstName: 'John',
+                lastName: 'Doe',
+                username: 'johndoe',
+                isVerified: true,
+                message: 'Account created successfully. Please login to continue.'
             }
         }
     })
