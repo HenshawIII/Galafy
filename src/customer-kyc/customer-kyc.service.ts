@@ -32,6 +32,39 @@ export class CustomerKycService {
   ) {}
 
   /**
+   * Safely parse a date string from provider responses
+   * Returns null if the date is invalid or cannot be parsed
+   * This prevents server crashes when provider returns invalid date strings
+   */
+  private safeParseDate(dateString: string | null | undefined): Date | null {
+    if (!dateString || typeof dateString !== 'string' || dateString.trim() === '') {
+      return null;
+    }
+
+    // Check for common invalid date strings from providers
+    const lowerDateString = dateString.toLowerCase().trim();
+    if (lowerDateString === 'invalid date' || lowerDateString === 'null' || lowerDateString === 'undefined') {
+      this.logger.warn(`Invalid date string received from provider: "${dateString}"`);
+      return null;
+    }
+
+    try {
+      const date = new Date(dateString);
+      
+      // Check if the date is valid
+      if (isNaN(date.getTime()) || date.toString() === 'Invalid Date') {
+        this.logger.warn(`Failed to parse date string from provider: "${dateString}"`);
+        return null;
+      }
+
+      return date;
+    } catch (error) {
+      this.logger.warn(`Error parsing date string from provider: "${dateString}"`, error);
+      return null;
+    }
+  }
+
+  /**
    * Create a new customer (Tier 0) - both in our DB and with provider
    */
   async createCustomer(userId: string, createCustomerDto: CreateCustomerDto) {
@@ -429,7 +462,7 @@ export class CustomerKycService {
         firstnameMatch: summary?.fieldMatches?.firstname,
         lastnameMatch: summary?.fieldMatches?.lastname,
         
-        ninBirthdate: ninData?.birthdate ? new Date(ninData.birthdate) : null,
+        ninBirthdate: this.safeParseDate(ninData?.birthdate),
         ninGender: ninData?.gender,
         ninPhone: ninData?.phone,
         lgaOfResidence: ninData?.lga_of_residence,
@@ -444,7 +477,7 @@ export class CustomerKycService {
         firstnameMatch: summary?.fieldMatches?.firstname,
         lastnameMatch: summary?.fieldMatches?.lastname,
         
-        ninBirthdate: ninData?.birthdate ? new Date(ninData.birthdate) : null,
+        ninBirthdate: this.safeParseDate(ninData?.birthdate),
         ninGender: ninData?.gender,
         ninPhone: ninData?.phone,
         lgaOfResidence: ninData?.lga_of_residence,
@@ -529,7 +562,7 @@ export class CustomerKycService {
         firstnameMatch: summary?.fieldMatches?.firstname,
         lastnameMatch: summary?.fieldMatches?.lastname,
        
-        birthdate: bvnData?.birthdate ? new Date(bvnData.birthdate) : null,
+        birthdate: this.safeParseDate(bvnData?.birthdate),
         gender: bvnData?.gender,
         phone: bvnData?.phone,
         email: bvnData?.email,
@@ -553,7 +586,7 @@ export class CustomerKycService {
         firstnameMatch: summary?.fieldMatches?.firstname,
         lastnameMatch: summary?.fieldMatches?.lastname,
         
-        birthdate: bvnData?.birthdate ? new Date(bvnData.birthdate) : null,
+        birthdate: this.safeParseDate(bvnData?.birthdate),
         gender: bvnData?.gender,
         phone: bvnData?.phone,
         email: bvnData?.email,
@@ -647,9 +680,7 @@ export class CustomerKycService {
         discoCode: verificationData.discoCode,
         providerStatus: providerResponse.data.status,
         providerMessage: providerResponse.data.message,
-        providerTimestamp: providerResponse.data.timestamp
-          ? new Date(providerResponse.data.timestamp)
-          : null,
+        providerTimestamp: this.safeParseDate(providerResponse.data.timestamp),
       },
       update: {
         verified: verificationData.verified || false,
@@ -659,9 +690,7 @@ export class CustomerKycService {
         discoCode: verificationData.discoCode,
         providerStatus: providerResponse.data.status,
         providerMessage: providerResponse.data.message,
-        providerTimestamp: providerResponse.data.timestamp
-          ? new Date(providerResponse.data.timestamp)
-          : null,
+        providerTimestamp: this.safeParseDate(providerResponse.data.timestamp),
       },
     });
 
