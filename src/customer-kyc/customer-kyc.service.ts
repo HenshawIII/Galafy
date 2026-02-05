@@ -262,6 +262,14 @@ export class CustomerKycService {
   }
 
   /**
+   * Update customer name by userId
+   */
+  async updateCustomerNameByUserId(userId: string, updateDto: UpdateCustomerNameDto) {
+    const customerId = await this.getCustomerIdByUserId(userId);
+    return this.updateCustomerName(customerId, updateDto);
+  }
+
+  /**
    * Update customer name
    */
   async updateCustomerName(customerId: string, updateDto: UpdateCustomerNameDto) {
@@ -279,12 +287,21 @@ export class CustomerKycService {
 
     // Update with provider
     try {
-      await this.providerService.updateCustomerName(customer.providerCustomerId, {
+      const providerUpdateData: any = {
         customerId: customer.providerCustomerId,
         firstName: updateDto.firstName || customer.firstName,
         lastName: updateDto.lastName || customer.lastName,
-        middleName: updateDto.middleName,
-      });
+      };
+      
+      if (updateDto.middleName !== undefined) {
+        providerUpdateData.middleName = updateDto.middleName;
+      }
+      
+      if (updateDto.dob !== undefined) {
+        providerUpdateData.dob = updateDto.dob;
+      }
+      
+      await this.providerService.updateCustomerName(customer.providerCustomerId, providerUpdateData);
     } catch (error) {
       this.logger.error(`Failed to update customer name with provider: ${error.message}`);
       // Pass through the actual error message from provider
@@ -295,13 +312,23 @@ export class CustomerKycService {
     }
 
     // Update in our database
+    const updateData: any = {};
+    if (updateDto.firstName !== undefined) {
+      updateData.firstName = updateDto.firstName;
+    }
+    if (updateDto.lastName !== undefined) {
+      updateData.lastName = updateDto.lastName;
+    }
+    if (updateDto.middleName !== undefined) {
+      updateData.middleName = updateDto.middleName;
+    }
+    if (updateDto.dob !== undefined) {
+      updateData.dob = updateDto.dob ? new Date(updateDto.dob) : null;
+    }
+
     const updatedCustomer = await this.databaseService.customer.update({
       where: { id: customerId },
-      data: {
-        firstName: updateDto.firstName,
-        lastName: updateDto.lastName,
-        middleName: updateDto.middleName,
-      },
+      data: updateData,
     });
 
     return updatedCustomer;

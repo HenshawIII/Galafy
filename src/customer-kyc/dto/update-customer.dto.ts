@@ -15,6 +15,10 @@ export class UpdateCustomerNameDto {
   @IsString({ message: 'Middle name must be a string' })
   @IsOptional()
   middleName?: string;
+
+  @IsOptional()
+  @IsDateString({}, { message: 'Date of birth must be a valid date string' })
+  dob?: string;
 }
 
 export class UpdateCustomerContactsDto {
