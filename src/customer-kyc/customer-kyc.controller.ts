@@ -83,13 +83,37 @@ export class CustomerKycController {
     return this.customerKycService.getAllCustomers(query);
   }
 
-  @Patch(':id/name')
-  @ApiExcludeEndpoint()
+  @Patch('name')
+  @ApiOperation({ summary: 'Update customer name and date of birth' })
+  @ApiBody({ type: UpdateCustomerNameDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Customer name and/or date of birth updated successfully',
+    schema: {
+      example: {
+        id: 'customer-uuid',
+        userId: 'user-uuid',
+        providerCustomerId: 'provider-customer-id',
+        firstName: 'John',
+        lastName: 'Doe',
+        middleName: 'Michael',
+        dob: '1990-01-15T00:00:00.000Z',
+        updatedAt: '2025-01-25T10:00:00.000Z'
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Bad request - Customer does not have a provider customer ID or provider update failed' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async updateCustomerName(
-    @Param('id') id: string,
+    @Request() req: any,
     @Body(ValidationPipe) updateDto: UpdateCustomerNameDto,
   ) {
-    return this.customerKycService.updateCustomerName(id, updateDto);
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.customerKycService.updateCustomerNameByUserId(userId, updateDto);
   }
 
   @Patch(':id/contacts')

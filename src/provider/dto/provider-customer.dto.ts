@@ -86,6 +86,10 @@ export class ProviderUpdateCustomerNameRequestDto {
   @IsOptional()
   @IsString({ message: 'Middle name must be a string' })
   middleName?: string;
+
+  @IsOptional()
+  @IsDateString({}, { message: 'Date of birth must be a valid date string' })
+  dob?: string;
 }
 
 export class ProviderUpdateCustomerContactsRequestDto {

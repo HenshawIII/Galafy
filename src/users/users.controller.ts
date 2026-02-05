@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards, Request, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards, Request, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiQuery } from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
 import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
@@ -136,9 +136,20 @@ export class UsersController {
   @ApiOperation({ summary: 'Get user details with customer information and KYC status' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User details retrieved successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - You can only access your own user details' })
   @ApiResponse({ status: 404, description: 'User or customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  getUserDetails(@Param('id') id: string) {
+  getUserDetails(@Request() req: any, @Param('id') id: string) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
+    }
+    
+    // Ensure users can only access their own details
+    if (userId !== id) {
+      throw new ForbiddenException('You can only access your own user details.');
+    }
+    
     return this.usersService.getUserDetails(id);
   }
 
