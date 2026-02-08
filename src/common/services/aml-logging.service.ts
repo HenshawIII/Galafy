@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
+import { DatabaseService } from '../../database/database.service.js';
 
 export type AmlEventType =
   | 'RISK_SCORE_CALCULATED'
@@ -49,6 +50,8 @@ export interface AmlLogEntry {
 export class AmlLoggingService {
   private readonly logger = new Logger('AML');
 
+  constructor(private readonly databaseService: DatabaseService) {}
+
   /**
    * Log risk score calculation
    */
@@ -79,7 +82,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log risk score: ${error.message}`);
+    });
   }
 
   /**
@@ -111,7 +116,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log risk status change: ${error.message}`);
+    });
   }
 
   /**
@@ -149,7 +156,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log transaction blocked: ${error.message}`);
+    });
   }
 
   /**
@@ -186,7 +195,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log anomaly: ${error.message}`);
+    });
   }
 
   /**
@@ -213,7 +224,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log wallet creation abuse: ${error.message}`);
+    });
   }
 
   /**
@@ -241,7 +254,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log freeze applied: ${error.message}`);
+    });
   }
 
   /**
@@ -268,7 +283,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log freeze released: ${error.message}`);
+    });
   }
 
   /**
@@ -297,7 +314,9 @@ export class AmlLoggingService {
       },
     };
 
-    this.logEntry(entry);
+    this.logEntry(entry).catch((error) => {
+      this.logger.error(`Failed to log risk score update failure: ${error.message}`);
+    });
   }
 
   /**
@@ -330,8 +349,9 @@ export class AmlLoggingService {
 
   /**
    * Log entry with appropriate log level
+   * Also persists to database if severity is MEDIUM or higher
    */
-  private logEntry(entry: AmlLogEntry): void {
+  private async logEntry(entry: AmlLogEntry): Promise<void> {
     const logData = {
       type: 'AML_EVENT',
       ...entry,
@@ -353,6 +373,30 @@ export class AmlLoggingService {
         break;
       default:
         this.logger.warn(JSON.stringify(logData, null, 2));
+    }
+
+    // Persist to database if severity is MEDIUM or higher
+    if (entry.severity !== 'LOW') {
+      try {
+        await this.databaseService.amlAlert.create({
+          data: {
+            eventType: entry.eventType,
+            severity: entry.severity,
+            status: 'PENDING',
+            walletId: entry.walletId,
+            transactionId: entry.transactionId,
+            sprayId: entry.sprayId,
+            customerId: entry.customerId,
+            userId: entry.userId,
+            eventId: entry.eventId,
+            details: entry.details,
+            context: entry.context,
+          },
+        });
+      } catch (error: any) {
+        // Log error but don't fail the main operation
+        this.logger.error(`Failed to persist AML alert: ${error.message}`);
+      }
     }
   }
 }

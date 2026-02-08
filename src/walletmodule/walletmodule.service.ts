@@ -32,6 +32,8 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { DeviceAbuseDetectionService, DeviceInfo } from '../common/services/device-abuse-detection.service.js';
 import { EmailService } from '../users/email.service.js';
 import { ConfigService } from '../config/config.service.js';
+import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
+import { ForbiddenException } from '@nestjs/common';
 
 @Injectable()
 export class WalletmoduleService {
@@ -48,6 +50,7 @@ export class WalletmoduleService {
     private readonly deviceAbuseDetectionService: DeviceAbuseDetectionService,
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
+    private readonly withdrawalLimitService: WithdrawalLimitService,
   ) {}
 
   /**
@@ -748,6 +751,32 @@ export class WalletmoduleService {
           throw new NotFoundException('User wallet not found after lock');
         }
 
+        // Check AML restriction
+        if (fromWallet.customer.isAmlRestricted) {
+          throw new ForbiddenException(
+            'User account is restricted due to AML compliance. Contact support.',
+          );
+        }
+
+        // Check withdrawal limit for Tier 2 users
+        if (fromWallet.customer.tier === KycTier.Tier_2) {
+          const limitCheck = await this.withdrawalLimitService.checkDailyLimit(
+            fromWallet.customer.id,
+            grossAmount,
+          );
+
+          if (!limitCheck.allowed) {
+            const limitInNaira = limitCheck.currentLimit.dividedBy(100000).toFixed(2);
+            const usedInNaira = limitCheck.used.dividedBy(100000).toFixed(2);
+            const remainingInNaira = limitCheck.remaining.dividedBy(100000).toFixed(2);
+            const requestedInNaira = grossAmount.dividedBy(100000).toFixed(2);
+
+            throw new BadRequestException(
+              `Withdrawal limit exceeded. Daily limit: ₦${limitInNaira}, Used: ₦${usedInNaira}, Remaining: ₦${remainingInNaira}, Requested: ₦${requestedInNaira}`,
+            );
+          }
+        }
+
         // Re-check balance (in case it changed)
         if (lockedUserWallet.availableBalance.lt(grossAmount)) {
           throw new BadRequestException('Insufficient balance');
@@ -1045,6 +1074,13 @@ export class WalletmoduleService {
         } catch (error: any) {
           this.logger.warn(`Failed to fetch bank name for code ${payoutData.bankCode}: ${error.message}`);
           // Continue without bank name - not critical
+        }
+
+        // Record withdrawal for Tier 2 users (outside transaction to avoid blocking)
+        if (fromWallet.customer.tier === KycTier.Tier_2) {
+          this.withdrawalLimitService.recordWithdrawal(fromWallet.customer.id, grossAmount).catch((error) => {
+            this.logger.error(`Failed to record withdrawal for customer ${fromWallet.customer.id}: ${error.message}`);
+          });
         }
 
         // Log complete payout transaction
