@@ -20,7 +20,9 @@ import {
   CreateCustomerWithBvnDto,
   UpgradeWithNinAndAddressDto,
 } from './dto/kyc-utility.dto.js';
+import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
+import { UtilityBillStatus } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class CustomerKycService {
@@ -932,5 +934,47 @@ export class CustomerKycService {
     }
 
     return results;
+  }
+
+  /**
+   * Submit utility bill for Tier 2 withdrawal limit increase
+   */
+  async submitUtilityBill(userId: string, dto: SubmitUtilityBillDto) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      include: {
+        utilityBillSubmissions: {
+          where: {
+            status: UtilityBillStatus.PENDING,
+          },
+        },
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    // Validate user is Tier 2
+    if (customer.tier !== KycTier.Tier_2) {
+      throw new BadRequestException('Utility bill submission is only available for Tier 2 users');
+    }
+
+    // Check if there's already a pending submission
+    if (customer.utilityBillSubmissions.length > 0) {
+      throw new ConflictException('You already have a pending utility bill submission. Please wait for review.');
+    }
+
+    // Create submission
+    const submission = await this.databaseService.utilityBillSubmission.create({
+      data: {
+        customerId: customer.id,
+        utilityBillUrl: dto.utilityBillUrl,
+        status: UtilityBillStatus.PENDING,
+      },
+    });
+
+    this.logger.log(`Utility bill submitted for customer ${customer.id} by user ${userId}`);
+    return submission;
   }
 }

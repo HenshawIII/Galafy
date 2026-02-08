@@ -25,6 +25,7 @@ import {
   CreateCustomerWithBvnDto,
   UpgradeWithNinAndAddressDto,
 } from './dto/kyc-utility.dto.js';
+import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 
 @ApiTags('customers')
 @Controller('customer-kyc')
@@ -239,5 +240,34 @@ export class CustomerKycController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.customerKycService.upgradeWithNinAndAddressByUserId(userId, dto);
+  }
+
+  @Post('utility-bill')
+  @ApiOperation({ summary: 'Submit utility bill for Tier 2 withdrawal limit increase' })
+  @ApiBody({ type: SubmitUtilityBillDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Utility bill submitted successfully',
+    schema: {
+      example: {
+        id: 'submission-uuid',
+        customerId: 'customer-uuid',
+        utilityBillUrl: 'https://example.com/utility-bill.jpg',
+        status: 'PENDING',
+        createdAt: '2025-02-08T12:00:00.000Z',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'User is not Tier 2 or submission already exists' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  async submitUtilityBill(
+    @Request() req: any,
+    @Body(ValidationPipe) dto: SubmitUtilityBillDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.customerKycService.submitUtilityBill(userId, dto);
   }
 }

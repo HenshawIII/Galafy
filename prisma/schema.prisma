@@ -102,6 +102,7 @@ enum AdminRole {
   OPERATIONS
   COMPLIANCE
   SUPPORT
+  FINANCE_ADMIN
   VIEW_ONLY
 }
 
@@ -109,6 +110,19 @@ enum KycRequestStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum UtilityBillStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AlertStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
 }
 
 enum ConfigType {
@@ -272,6 +286,17 @@ model Customer {
   // Admin fees
   adminFees AdminFee[]
 
+  // Utility bill submissions
+  utilityBillSubmissions UtilityBillSubmission[]
+
+  // Withdrawal limit
+  withdrawalLimit WithdrawalLimit?
+
+  // AML restriction
+  isAmlRestricted    Boolean   @default(false)
+  amlRestrictedAt    DateTime?
+  amlRestrictionReason String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -412,6 +437,7 @@ model Wallet {
   eventParticipants EventParticipant[]
   adminFees         AdminFee[]
   creationEvents    WalletCreationEvent[]
+  amlAlerts         AmlAlert[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -704,12 +730,21 @@ model ProviderWebhookEvent {
 model Admin {
   id String @id @default(uuid())
 
-  userId String @unique
+  email    String   @unique
+  password String   // Hashed password
+  userId   String?  @unique // Optional link to User if needed
 
   role     AdminRole
   isActive Boolean   @default(true)
 
+  // Authentication tracking
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int      @default(0)
+  lockedUntil         DateTime?
+
   kycRequests KycRequest[]
+  utilityBillReviews UtilityBillSubmission[]
+  actionLogs AdminActionLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -778,6 +813,127 @@ model WalletCreationEvent {
   @@index([walletId])
   @@index([isFlagged])
   @@index([createdAt])
+}
+
+// =====================
+// UTILITY BILL SUBMISSIONS
+// =====================
+
+model UtilityBillSubmission {
+  id String @id @default(uuid())
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  utilityBillUrl String // Image URL of utility bill
+  status         UtilityBillStatus @default(PENDING)
+
+  // Admin decision tracking
+  adminId    String?
+  admin      Admin?  @relation(fields: [adminId], references: [id])
+  reviewedAt DateTime?
+  reason     String? // Rejection reason or approval notes
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([adminId])
+}
+
+// =====================
+// WITHDRAWAL LIMITS
+// =====================
+
+model WithdrawalLimit {
+  id String @id @default(uuid())
+
+  customerId String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  // Daily withdrawal limits (in kobo)
+  dailyLimit        Decimal @default(100000000) @db.Decimal(19, 2) // 1M default for Tier 2
+  approvedDailyLimit Decimal? @db.Decimal(19, 2) // 10M after utility bill approval
+
+  // Tracking
+  lastResetDate DateTime @default(now()) // Track when daily limit was last reset
+  dailyWithdrawn Decimal @default(0) @db.Decimal(19, 2) // Amount withdrawn today
+
+  // Approval status
+  isLimitIncreased Boolean @default(false) // True if utility bill approved
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+}
+
+// =====================
+// ADMIN ACTION LOGGING
+// =====================
+
+model AdminActionLog {
+  id String @id @default(uuid())
+
+  adminId String
+  admin   Admin @relation(fields: [adminId], references: [id])
+
+  actionType String // 'KYC_APPROVED', 'KYC_REJECTED', 'UTILITY_BILL_APPROVED', 'UTILITY_BILL_REJECTED', 'USER_RESTRICTED', etc.
+  targetType String // 'CUSTOMER', 'UTILITY_BILL', 'KYC_REQUEST', 'USER'
+  targetId   String // ID of the target entity
+
+  details Json? // Additional action details
+  reason  String? // Reason for action
+
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([actionType])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
+
+// =====================
+// AML ALERTS
+// =====================
+
+model AmlAlert {
+  id String @id @default(uuid())
+
+  // Alert metadata
+  eventType String // 'RISK_SCORE_CALCULATED', 'TRANSACTION_BLOCKED', 'ANOMALY_DETECTED', etc.
+  severity String // 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'
+  status AlertStatus @default(PENDING)
+
+  // Related entities
+  walletId String?
+  wallet Wallet? @relation(fields: [walletId], references: [id])
+  transactionId String?
+  sprayId String?
+  customerId String?
+  userId String?
+  eventId String?
+
+  // Alert details (stored as JSON for flexibility)
+  details Json // Contains riskScore, amount, blockReason, anomalyType, etc.
+  context Json? // Additional context data
+
+  // Admin tracking
+  reviewedBy String? // Admin ID who reviewed
+  reviewedAt DateTime?
+  resolutionNotes String? // Notes when resolving/dismissing
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([severity])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([walletId])
+  @@index([customerId])
+  @@index([reviewedBy])
 }
 
 // =====================
