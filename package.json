@@ -7,7 +7,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "node --max-old-space-size=4096 ./node_modules/.bin/nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -22,7 +22,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
-    "prebuild": "prisma generate",
+    "prebuild": "node --max-old-space-size=4096 ./node_modules/.bin/prisma generate",
     "db:migrate": "prisma migrate deploy && prisma generate",
     "db:seed:config": "node --loader ts-node/esm prisma/seed-config.ts",
     "baseline:migrations": "node prisma/baseline-migrations.js",
