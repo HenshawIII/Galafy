@@ -99,7 +99,7 @@ export class InitiatePayoutDto {
   @IsOptional()
   recipientName?: string;
 
-  @ApiPropertyOptional({ description: 'Currency ID', example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9' })
+  @ApiPropertyOptional({ description: 'Currency ID', example: '45852f0c-84fa-410c-b66c-1ffec56e5cd8' })
   @IsString()
   @IsOptional()
   currencyId?: string;
