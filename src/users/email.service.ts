@@ -306,6 +306,75 @@ export class EmailService {
     }
   }
 
+  async sendAdminPasswordResetLink(email: string, resetLink: string, token: string): Promise<void> {
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'GalaPay Admin - Password Reset Request',
+      text: `You have requested to reset your admin password. Click the link below or copy and paste it into your browser: ${resetLink}. This link will expire in 15 minutes.`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+            <!-- Header -->
+            <div style="background-color: #1e3a8a; padding: 30px 20px; text-align: center;">
+              <div style="color: #ffffff; font-size: 24px; font-weight: bold;">GalaPay Admin</div>
+            </div>
+            
+            <!-- Main Content -->
+            <div style="padding: 30px 20px;">
+              <h2 style="color: #333333; font-size: 24px; font-weight: bold; margin: 0 0 15px 0;">Forgot Password?</h2>
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                Enter your registered email address to reset your password.
+              </p>
+              
+              <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                You have requested to reset your admin password. Click the button below to reset your password:
+              </p>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${resetLink}" style="background-color: #1e3a8a; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">Reset Password</a>
+              </div>
+              
+              <p style="color: #666666; font-size: 12px; line-height: 1.6; margin: 20px 0 0 0;">
+                Or copy and paste this link into your browser:
+              </p>
+              <p style="word-break: break-all; color: #666666; font-size: 12px; margin: 10px 0 20px 0;">${resetLink}</p>
+              
+              <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <p style="color: #856404; font-size: 14px; margin: 0;">
+                  <strong>⚠️ Security Notice:</strong> This link will expire in 15 minutes. If you did not request this password reset, please ignore this email and contact your administrator immediately.
+                </p>
+              </div>
+              
+              <p style="color: #333333; font-size: 14px; margin: 30px 0 0 0;">
+                Best regards,<br>
+                GalaPay Admin Team
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Admin password reset email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending admin password reset email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      throw new Error(`Failed to send admin password reset email: ${error.message}`);
+    }
+  }
+
   async sendWalletFundingAlert(
     email: string,
     amount: string,

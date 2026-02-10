@@ -2,12 +2,15 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  NotFoundException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../../database/database.service.js';
-import { AdminLoginDto, AdminRefreshTokenDto } from './dto/admin-login.dto.js';
+import { AdminLoginDto, AdminRefreshTokenDto, AdminForgotPasswordDto, AdminResetPasswordDto } from './dto/admin-login.dto.js';
+import { EmailService } from '../../users/email.service.js';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class AdminAuthService {
@@ -18,6 +21,7 @@ export class AdminAuthService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -241,6 +245,120 @@ export class AdminAuthService {
   async logout(adminId: string): Promise<{ message: string }> {
     // Future: Add token to blacklist in Redis
     return { message: 'Logged out successfully' };
+  }
+
+  /**
+   * Generate secure random token for password reset
+   */
+  private generatePasswordResetToken(): string {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  /**
+   * Forgot password - send password reset link via email
+   */
+  async forgotPassword(forgotPasswordDto: AdminForgotPasswordDto): Promise<{ message: string }> {
+    // Find admin by email (case-insensitive)
+    const admin = await this.databaseService.admin.findFirst({
+      where: {
+        email: {
+          equals: forgotPasswordDto.email,
+          mode: 'insensitive',
+        },
+      },
+    });
+
+    if (!admin) {
+      // Don't reveal if admin exists or not for security
+      return { message: 'If the email exists, a password reset link has been sent' };
+    }
+
+    // Check if account is active
+    if (!admin.isActive) {
+      // Still return generic message for security
+      return { message: 'If the email exists, a password reset link has been sent' };
+    }
+
+    // Generate reset token
+    const resetToken = this.generatePasswordResetToken();
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 15); // 15 minutes expiration
+
+    // Update admin with reset token
+    await this.databaseService.admin.update({
+      where: { id: admin.id },
+      data: {
+        passwordResetToken: resetToken,
+        passwordResetTokenExpiresAt: expiresAt,
+      },
+    });
+
+    // Construct reset link
+    const baseUrl = process.env.ADMIN_PORTAL_URL || process.env.PUBLIC_URL || 'http://localhost:3000';
+    const resetLink = `${baseUrl}/admin/reset-password?token=${resetToken}`;
+
+    // Send password reset email
+    try {
+      await this.emailService.sendAdminPasswordResetLink(admin.email, resetLink, resetToken);
+    } catch (emailError: any) {
+      this.logger.error(`Failed to send admin password reset email to ${admin.email}:`, emailError.message);
+      // Still return success message for security (don't reveal if email exists)
+    }
+
+    return { message: 'If the email exists, a password reset link has been sent' };
+  }
+
+  /**
+   * Reset password using token from email
+   */
+  async resetPassword(resetPasswordDto: AdminResetPasswordDto): Promise<{ message: string }> {
+    // Find admin by reset token
+    const admin = await this.databaseService.admin.findUnique({
+      where: {
+        passwordResetToken: resetPasswordDto.token,
+      },
+    });
+
+    if (!admin) {
+      throw new UnauthorizedException('Invalid or expired password reset token');
+    }
+
+    // Check if token has expired
+    if (!admin.passwordResetTokenExpiresAt || admin.passwordResetTokenExpiresAt < new Date()) {
+      // Clear expired token
+      await this.databaseService.admin.update({
+        where: { id: admin.id },
+        data: {
+          passwordResetToken: null,
+          passwordResetTokenExpiresAt: null,
+        },
+      });
+      throw new UnauthorizedException('Password reset token has expired. Please request a new one.');
+    }
+
+    // Check if account is active
+    if (!admin.isActive) {
+      throw new UnauthorizedException('Account is deactivated');
+    }
+
+    // Hash new password
+    const hashedPassword = await this.hashPassword(resetPasswordDto.newPassword);
+
+    // Update password and clear reset token
+    await this.databaseService.admin.update({
+      where: { id: admin.id },
+      data: {
+        password: hashedPassword,
+        passwordResetToken: null,
+        passwordResetTokenExpiresAt: null,
+        failedLoginAttempts: 0, // Reset failed attempts on password reset
+        lockedUntil: null, // Unlock account if locked
+      },
+    });
+
+    this.logger.log(`Admin password reset successful for ${admin.email}`);
+
+    return { message: 'Password reset successfully. You can now log in with your new password.' };
   }
 }
 

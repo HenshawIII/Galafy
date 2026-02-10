@@ -16,7 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AdminAuthService } from './admin-auth.service.js';
-import { AdminLoginDto, AdminRefreshTokenDto } from './dto/admin-login.dto.js';
+import { AdminLoginDto, AdminRefreshTokenDto, AdminForgotPasswordDto, AdminResetPasswordDto } from './dto/admin-login.dto.js';
 import { AdminJwtAuthGuard } from './admin-jwt-auth.guard.js';
 import { AdminPublic } from './decorators/public.decorator.js';
 
@@ -112,6 +112,55 @@ export class AdminAuthController {
   async logout(@Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminAuthService.logout(adminId);
+  }
+
+  @Post('forgot-password')
+  @AdminPublic()
+  @Throttle({ default: { limit: 5, ttl: 900000 } }) // 5 attempts per 15 minutes
+  @ApiOperation({
+    summary: 'Request password reset',
+    description: 'Send password reset link to admin email. Rate limited to 5 attempts per 15 minutes.',
+  })
+  @ApiBody({ type: AdminForgotPasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset link sent successfully (if email exists)',
+    schema: {
+      example: {
+        message: 'If the email exists, a password reset link has been sent',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many requests. Please try again later.',
+  })
+  async forgotPassword(@Body(ValidationPipe) forgotPasswordDto: AdminForgotPasswordDto) {
+    return this.adminAuthService.forgotPassword(forgotPasswordDto);
+  }
+
+  @Post('reset-password')
+  @AdminPublic()
+  @ApiOperation({
+    summary: 'Reset password with token',
+    description: 'Reset admin password using token from email. This endpoint is public and does not require authentication.',
+  })
+  @ApiBody({ type: AdminResetPasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset successfully',
+    schema: {
+      example: {
+        message: 'Password reset successfully. You can now log in with your new password.',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid or expired token',
+  })
+  async resetPassword(@Body(ValidationPipe) resetPasswordDto: AdminResetPasswordDto) {
+    return this.adminAuthService.resetPassword(resetPasswordDto);
   }
 }
 

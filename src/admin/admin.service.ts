@@ -9,7 +9,8 @@ import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
 import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
-import { AdminRole, KycRequestStatus, UtilityBillStatus, TransactionType, TransactionDirection, TransactionStatus, AlertStatus } from '../../generated/prisma/enums.js';
+import { AdminRole, KycRequestStatus, UtilityBillStatus, TransactionType, TransactionDirection, TransactionStatus, AlertStatus, EventStatus } from '../../generated/prisma/enums.js';
+import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as csv from 'fast-csv';
 import * as crypto from 'crypto';
@@ -785,6 +786,54 @@ export class AdminService {
   }
 
   /**
+   * Get dashboard overview metrics
+   * Returns: Total Users, Total Events, Revenue, Pending KYC count
+   */
+  async getDashboardMetrics() {
+    // Execute parallel queries for optimal performance
+    const [
+      totalUsers,
+      totalEvents,
+      activeEvents,
+      pendingKycRequests,
+      transactionSummary,
+    ] = await Promise.all([
+      // Total Users
+      this.databaseService.user.count({
+        where: {
+          isVerified: true, // Only count verified users
+        },
+      }),
+      // Total Events
+      this.databaseService.event.count(),
+      // Active Events (LIVE status)
+      this.databaseService.event.count({
+        where: {
+          status: 'LIVE',
+        },
+      }),
+      // Pending KYC Requests
+      this.databaseService.kycRequest.count({
+        where: {
+          status: KycRequestStatus.PENDING,
+        },
+      }),
+      // Revenue (Total Received from transaction analytics)
+      this.getTransactionAnalyticsSummary(),
+    ]);
+
+    return {
+      totalUsers,
+      totalEvents,
+      activeEvents,
+      pendingKyc: pendingKycRequests,
+      revenue: transactionSummary.totalReceived, // Total received in kobo
+      totalSprayers: 0, // TODO: Calculate from sprays if needed
+      totalAttendees: 0, // TODO: Calculate from event participants if needed
+    };
+  }
+
+  /**
    * Get AML alerts with filtering and pagination
    */
   async getAlerts(filters: GetAlertsDto) {
@@ -1543,5 +1592,1136 @@ export class AdminService {
 
     const { password, ...adminWithoutPassword } = updatedAdmin;
     return adminWithoutPassword;
+  }
+
+  // =====================
+  // EVENTS MANAGEMENT
+  // =====================
+
+  /**
+   * Get all events with pagination and filters
+   */
+  async getEvents(filters: GetEventsDto) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    if (filters.hostUserId) {
+      where.hostUserId = filters.hostUserId;
+    }
+
+    if (filters.startDate || filters.endDate) {
+      where.startsAt = {};
+      if (filters.startDate) {
+        where.startsAt.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.startsAt.lte = endDate;
+      }
+    }
+
+    if (filters.search) {
+      where.OR = [
+        { title: { contains: filters.search, mode: 'insensitive' } },
+        { hostUser: { firstName: { contains: filters.search, mode: 'insensitive' } } },
+        { hostUser: { lastName: { contains: filters.search, mode: 'insensitive' } } },
+        { hostUser: { email: { contains: filters.search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [events, total] = await Promise.all([
+      this.databaseService.event.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          hostUser: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+              username: true,
+            },
+          },
+          participants: {
+            select: {
+              id: true,
+              role: true,
+            },
+          },
+          sprays: {
+            select: {
+              id: true,
+              totalAmount: true,
+            },
+          },
+        },
+      }),
+      this.databaseService.event.count({ where }),
+    ]);
+
+    // Calculate stats for each event
+    const eventsWithStats = events.map((event) => {
+      const participantCount = event.participants.length;
+      const sprayCount = event.sprays.length;
+      const totalSprayed = event.sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
+      const uniqueSprayers = new Set(event.sprays.map((s) => s.id)).size;
+
+      return {
+        ...event,
+        participantCount,
+        sprayCount,
+        totalSprayed: totalSprayed.toString(),
+        uniqueSprayerCount: uniqueSprayers,
+        participants: undefined, // Remove detailed participants
+        sprays: undefined, // Remove detailed sprays
+      };
+    });
+
+    return {
+      events: eventsWithStats,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get event details by ID
+   */
+  async getEventDetails(eventId: string) {
+    const event = await this.databaseService.event.findUnique({
+      where: { id: eventId },
+      include: {
+        hostUser: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+            phone: true,
+          },
+        },
+        participants: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                username: true,
+              },
+            },
+            wallet: {
+              select: {
+                id: true,
+                virtualAccountNumber: true,
+                availableBalance: true,
+              },
+            },
+          },
+        },
+        sprays: {
+          include: {
+            sprayerWallet: {
+              include: {
+                customer: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        username: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            receiverWallet: {
+              include: {
+                customer: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        username: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    // Calculate stats
+    const participantCount = event.participants.length;
+    const sprayCount = event.sprays.length;
+    const totalSprayed = event.sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
+    const uniqueSprayers = new Set(event.sprays.map((s) => s.sprayerWallet.customer.userId)).size;
+
+    return {
+      ...event,
+      participantCount,
+      sprayCount,
+      totalSprayed: totalSprayed.toString(),
+      uniqueSprayerCount: uniqueSprayers,
+    };
+  }
+
+  /**
+   * Get spray activity feed for an event
+   */
+  async getEventSprayActivity(eventId: string, filters: GetSprayActivityDto) {
+    // Verify event exists
+    const event = await this.databaseService.event.findUnique({
+      where: { id: eventId },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      eventId,
+    };
+
+    if (filters.startDate || filters.endDate) {
+      where.createdAt = {};
+      if (filters.startDate) {
+        where.createdAt.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.createdAt.lte = endDate;
+      }
+    }
+
+    if (filters.minAmount) {
+      where.totalAmount = { gte: new Decimal(filters.minAmount) };
+    }
+
+    if (filters.maxAmount) {
+      where.totalAmount = {
+        ...where.totalAmount,
+        lte: new Decimal(filters.maxAmount),
+      };
+    }
+
+    if (filters.search) {
+      where.OR = [
+        {
+          sprayerWallet: {
+            customer: {
+              user: {
+                OR: [
+                  { firstName: { contains: filters.search, mode: 'insensitive' } },
+                  { lastName: { contains: filters.search, mode: 'insensitive' } },
+                  { email: { contains: filters.search, mode: 'insensitive' } },
+                  { username: { contains: filters.search, mode: 'insensitive' } },
+                ],
+              },
+            },
+          },
+        },
+        {
+          note: { contains: filters.search, mode: 'insensitive' },
+        },
+      ];
+    }
+
+    const [sprays, total] = await Promise.all([
+      this.databaseService.spray.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          sprayerWallet: {
+            include: {
+              customer: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      email: true,
+                      firstName: true,
+                      lastName: true,
+                      username: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          receiverWallet: {
+            include: {
+              customer: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      email: true,
+                      firstName: true,
+                      lastName: true,
+                      username: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.databaseService.spray.count({ where }),
+    ]);
+
+    return {
+      sprays: sprays.map((spray) => ({
+        id: spray.id,
+        totalAmount: spray.totalAmount.toString(),
+        note: spray.note,
+        createdAt: spray.createdAt,
+        sprayer: spray.sprayerWallet.customer.user,
+        receiver: spray.receiverWallet.customer.user,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get top sprayers leaderboard for an event
+   */
+  async getEventTopSprayers(eventId: string, filters: GetTopSprayersDto) {
+    // Verify event exists
+    const event = await this.databaseService.event.findUnique({
+      where: { id: eventId },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    const limit = filters.limit || 10;
+
+    // Get all sprays for the event
+    const sprays = await this.databaseService.spray.findMany({
+      where: {
+        eventId,
+      },
+      include: {
+        sprayerWallet: {
+          include: {
+            customer: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    email: true,
+                    firstName: true,
+                    lastName: true,
+                    username: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Aggregate by sprayer
+    const sprayerMap = new Map<string, { user: any; totalAmount: Decimal; sprayCount: number; firstSprayAt: Date; lastSprayAt: Date }>();
+
+    for (const spray of sprays) {
+      const userId = spray.sprayerWallet.customer.userId;
+      if (!userId) continue;
+
+      // Skip anonymous if not including them
+      if (!filters.includeAnonymous && !spray.sprayerWallet.customer.user) {
+        continue;
+      }
+
+      if (!sprayerMap.has(userId)) {
+        sprayerMap.set(userId, {
+          user: spray.sprayerWallet.customer.user,
+          totalAmount: new Decimal(0),
+          sprayCount: 0,
+          firstSprayAt: spray.createdAt,
+          lastSprayAt: spray.createdAt,
+        });
+      }
+
+      const entry = sprayerMap.get(userId)!;
+      entry.totalAmount = entry.totalAmount.plus(spray.totalAmount);
+      entry.sprayCount += 1;
+      if (spray.createdAt < entry.firstSprayAt) {
+        entry.firstSprayAt = spray.createdAt;
+      }
+      if (spray.createdAt > entry.lastSprayAt) {
+        entry.lastSprayAt = spray.createdAt;
+      }
+    }
+
+    // Convert to array and sort by total amount
+    const leaderboard = Array.from(sprayerMap.values())
+      .sort((a, b) => b.totalAmount.comparedTo(a.totalAmount))
+      .slice(0, limit)
+      .map((entry, index) => ({
+        rank: index + 1,
+        userId: entry.user?.id,
+        username: entry.user?.username,
+        email: entry.user?.email,
+        firstName: entry.user?.firstName,
+        lastName: entry.user?.lastName,
+        totalAmount: entry.totalAmount.toString(),
+        sprayCount: entry.sprayCount,
+        firstSprayAt: entry.firstSprayAt.toISOString(),
+        lastSprayAt: entry.lastSprayAt.toISOString(),
+      }));
+
+    return {
+      eventId,
+      eventTitle: event.title,
+      leaderboard,
+    };
+  }
+
+  /**
+   * Suspend event (change status to CANCELLED)
+   */
+  async suspendEvent(eventId: string, adminId: string) {
+    const event = await this.databaseService.event.findUnique({
+      where: { id: eventId },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    if (event.status === EventStatus.CANCELLED) {
+      throw new BadRequestException('Event is already cancelled');
+    }
+
+    const updatedEvent = await this.databaseService.event.update({
+      where: { id: eventId },
+      data: {
+        status: EventStatus.CANCELLED,
+      },
+    });
+
+    // Log admin action
+    await this.logAdminAction(adminId, 'EVENT_SUSPENDED', 'EVENT', eventId, {
+      eventTitle: event.title,
+      previousStatus: event.status,
+      newStatus: EventStatus.CANCELLED,
+    });
+
+    return updatedEvent;
+  }
+
+  /**
+   * Generate event report (CSV format for now)
+   */
+  async generateEventReport(eventId: string) {
+    const event = await this.getEventDetails(eventId);
+
+    // Generate CSV content
+    const csvRows: string[] = [];
+    
+    // Header
+    csvRows.push('Event Report');
+    csvRows.push(`Event: ${event.title}`);
+    csvRows.push(`Status: ${event.status}`);
+    csvRows.push(`Created: ${event.createdAt}`);
+    csvRows.push('');
+    
+    // Summary
+    csvRows.push('Summary');
+    csvRows.push(`Total Participants: ${event.participantCount}`);
+    csvRows.push(`Total Sprays: ${event.sprayCount}`);
+    csvRows.push(`Total Amount Sprayed: ${event.totalSprayed}`);
+    csvRows.push(`Unique Sprayers: ${event.uniqueSprayerCount}`);
+    csvRows.push('');
+    
+    // Participants
+    csvRows.push('Participants');
+    csvRows.push('User ID,Email,First Name,Last Name,Role');
+    for (const participant of event.participants) {
+      csvRows.push(
+        `${participant.user.id},${participant.user.email},${participant.user.firstName || ''},${participant.user.lastName || ''},${participant.role}`
+      );
+    }
+    csvRows.push('');
+    
+    // Sprays
+    csvRows.push('Sprays');
+    csvRows.push('Spray ID,Sprayer,Receiver,Amount,Note,Created At');
+    for (const spray of event.sprays) {
+      const sprayerName = spray.sprayerWallet.customer.user
+        ? `${spray.sprayerWallet.customer.user.firstName || ''} ${spray.sprayerWallet.customer.user.lastName || ''}`.trim() || spray.sprayerWallet.customer.user.email
+        : 'Anonymous';
+      const receiverName = spray.receiverWallet.customer.user
+        ? `${spray.receiverWallet.customer.user.firstName || ''} ${spray.receiverWallet.customer.user.lastName || ''}`.trim() || spray.receiverWallet.customer.user.email
+        : 'Unknown';
+      csvRows.push(
+        `${spray.id},${sprayerName},${receiverName},${spray.totalAmount.toString()},${spray.note || ''},${spray.createdAt.toISOString()}`
+      );
+    }
+
+    const csvContent = csvRows.join('\n');
+    const buffer = Buffer.from(csvContent, 'utf-8');
+    const filename = `event-report-${event.code}-${new Date().toISOString().split('T')[0]}.csv`;
+
+    return { buffer, filename };
+  }
+
+  // =====================
+  // TRANSACTIONS MANAGEMENT
+  // =====================
+
+  /**
+   * Get all transactions with pagination and filters
+   */
+  async getTransactions(filters: GetTransactionsDto) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    if (filters.type) {
+      where.type = filters.type;
+    }
+
+    if (filters.direction) {
+      where.direction = filters.direction;
+    }
+
+    if (filters.userId) {
+      where.wallet = {
+        customer: {
+          userId: filters.userId,
+        },
+      };
+    }
+
+    if (filters.walletId) {
+      where.walletId = filters.walletId;
+    }
+
+    if (filters.startDate || filters.endDate) {
+      where.createdAt = {};
+      if (filters.startDate) {
+        where.createdAt.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.createdAt.lte = endDate;
+      }
+    }
+
+    if (filters.search) {
+      where.OR = [
+        { reference: { contains: filters.search, mode: 'insensitive' } },
+        { narration: { contains: filters.search, mode: 'insensitive' } },
+        { externalReference: { contains: filters.search, mode: 'insensitive' } },
+        {
+          wallet: {
+            customer: {
+              user: {
+                OR: [
+                  { email: { contains: filters.search, mode: 'insensitive' } },
+                  { firstName: { contains: filters.search, mode: 'insensitive' } },
+                  { lastName: { contains: filters.search, mode: 'insensitive' } },
+                ],
+              },
+            },
+          },
+        },
+      ];
+    }
+
+    const [transactions, total] = await Promise.all([
+      this.databaseService.transaction.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          wallet: {
+            include: {
+              customer: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      email: true,
+                      firstName: true,
+                      lastName: true,
+                      username: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          spray: {
+            include: {
+              event: {
+                select: {
+                  id: true,
+                  title: true,
+                  code: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.databaseService.transaction.count({ where }),
+    ]);
+
+    return {
+      transactions: transactions.map((tx) => ({
+        ...tx,
+        amount: tx.amount.toString(),
+        user: tx.wallet?.customer?.user,
+        event: tx.spray?.event,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get transaction details by ID
+   */
+  async getTransactionDetails(transactionId: string) {
+    const transaction = await this.databaseService.transaction.findUnique({
+      where: { id: transactionId },
+      include: {
+        wallet: {
+          include: {
+            customer: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    email: true,
+                    firstName: true,
+                    lastName: true,
+                    username: true,
+                    phone: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        spray: {
+          include: {
+            event: {
+              select: {
+                id: true,
+                title: true,
+                code: true,
+                status: true,
+              },
+            },
+            sprayerWallet: {
+              include: {
+                customer: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        username: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            receiverWallet: {
+              include: {
+                customer: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        username: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        fundingTransaction: true,
+        payoutTransaction: true,
+      },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException('Transaction not found');
+    }
+
+    return {
+      ...transaction,
+      amount: transaction.amount.toString(),
+    };
+  }
+
+  /**
+   * Generate transaction receipt (CSV format for now)
+   */
+  async generateTransactionReceipt(transactionId: string) {
+    const transaction = await this.getTransactionDetails(transactionId);
+
+    // Generate CSV content
+    const csvRows: string[] = [];
+    
+    // Header
+    csvRows.push('Transaction Receipt');
+    csvRows.push(`Transaction ID: ${transaction.id}`);
+    csvRows.push(`Reference: ${transaction.reference}`);
+    csvRows.push(`Date: ${transaction.createdAt.toISOString()}`);
+    csvRows.push('');
+    
+    // Transaction Details
+    csvRows.push('Transaction Details');
+    csvRows.push(`Type: ${transaction.type}`);
+    csvRows.push(`Direction: ${transaction.direction}`);
+    csvRows.push(`Status: ${transaction.status}`);
+    csvRows.push(`Amount: ${transaction.amount}`);
+    csvRows.push(`Currency: ${transaction.currencyId || 'NGN'}`);
+    csvRows.push(`Narration: ${transaction.narration || ''}`);
+    csvRows.push(`External Reference: ${transaction.externalReference || ''}`);
+    csvRows.push('');
+    
+    // User Details
+    if (transaction.wallet?.customer?.user) {
+      csvRows.push('User Details');
+      csvRows.push(`User ID: ${transaction.wallet.customer.user.id}`);
+      csvRows.push(`Email: ${transaction.wallet.customer.user.email}`);
+      csvRows.push(`Name: ${transaction.wallet.customer.user.firstName || ''} ${transaction.wallet.customer.user.lastName || ''}`.trim());
+      csvRows.push('');
+    }
+    
+    // Event Details (if spray transaction)
+    if (transaction.spray?.event) {
+      csvRows.push('Event Details');
+      csvRows.push(`Event: ${transaction.spray.event.title}`);
+      csvRows.push(`Event Code: ${transaction.spray.event.code}`);
+      csvRows.push('');
+    }
+
+    const csvContent = csvRows.join('\n');
+    const buffer = Buffer.from(csvContent, 'utf-8');
+    const filename = `transaction-receipt-${transaction.reference}-${new Date().toISOString().split('T')[0]}.csv`;
+
+    return { buffer, filename };
+  }
+
+  // =====================
+  // WITHDRAWALS MANAGEMENT
+  // =====================
+
+  /**
+   * Get all withdrawals (payout transactions) with pagination and filters
+   */
+  async getWithdrawals(filters: GetWithdrawalsDto) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    if (filters.userId) {
+      where.wallet = {
+        customer: {
+          userId: filters.userId,
+        },
+      };
+    }
+
+    if (filters.startDate || filters.endDate) {
+      where.createdAt = {};
+      if (filters.startDate) {
+        where.createdAt.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.createdAt.lte = endDate;
+      }
+    }
+
+    const [withdrawals, total] = await Promise.all([
+      this.databaseService.payoutTransaction.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          wallet: {
+            include: {
+              customer: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      email: true,
+                      firstName: true,
+                      lastName: true,
+                      username: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          bankAccount: {
+            select: {
+              id: true,
+              accountName: true,
+              accountNumber: true,
+              bankName: true,
+              bankCode: true,
+            },
+          },
+          transaction: {
+            select: {
+              id: true,
+              reference: true,
+              status: true,
+              createdAt: true,
+            },
+          },
+        },
+      }),
+      this.databaseService.payoutTransaction.count({ where }),
+    ]);
+
+    return {
+      withdrawals: withdrawals.map((withdrawal) => ({
+        ...withdrawal,
+        amount: withdrawal.amount.toString(),
+        fee: withdrawal.fee.toString(),
+        user: withdrawal.wallet?.customer?.user,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Approve withdrawal (if manual approval workflow exists)
+   * Note: Withdrawals are typically auto-processed, but this endpoint can be used to trigger reprocessing
+   */
+  async approveWithdrawal(payoutTransactionId: string, adminId: string) {
+    const payoutTransaction = await this.databaseService.payoutTransaction.findUnique({
+      where: { id: payoutTransactionId },
+      include: {
+        transaction: true,
+        wallet: {
+          include: {
+            customer: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!payoutTransaction) {
+      throw new NotFoundException('Withdrawal not found');
+    }
+
+    // If already successful, return as-is
+    if (payoutTransaction.status === PayoutStatus.SUCCESS) {
+      return payoutTransaction;
+    }
+
+    // Update status to PROCESSING (will be processed by webhook or provider service)
+    // In a real implementation, you might trigger reprocessing here
+    const updatedPayout = await this.databaseService.payoutTransaction.update({
+      where: { id: payoutTransactionId },
+      data: {
+        status: PayoutStatus.PROCESSING,
+      },
+    });
+
+    // Log admin action
+    await this.logAdminAction(adminId, 'WITHDRAWAL_APPROVED', 'PAYOUT_TRANSACTION', payoutTransactionId, {
+      amount: payoutTransaction.amount.toString(),
+      previousStatus: payoutTransaction.status,
+      newStatus: PayoutStatus.PROCESSING,
+    });
+
+    return updatedPayout;
+  }
+
+  /**
+   * Reject withdrawal
+   */
+  async rejectWithdrawal(payoutTransactionId: string, adminId: string, dto: RejectWithdrawalDto) {
+    const payoutTransaction = await this.databaseService.payoutTransaction.findUnique({
+      where: { id: payoutTransactionId },
+      include: {
+        transaction: true,
+        wallet: {
+          include: {
+            customer: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!payoutTransaction) {
+      throw new NotFoundException('Withdrawal not found');
+    }
+
+    if (payoutTransaction.status === PayoutStatus.REJECTED) {
+      throw new BadRequestException('Withdrawal is already rejected');
+    }
+
+    if (payoutTransaction.status === PayoutStatus.SUCCESS) {
+      throw new BadRequestException('Cannot reject a successful withdrawal');
+    }
+
+    // Update status to REJECTED
+    const updatedPayout = await this.databaseService.payoutTransaction.update({
+      where: { id: payoutTransactionId },
+      data: {
+        status: PayoutStatus.REJECTED,
+      },
+    });
+
+    // Update related transaction status
+    await this.databaseService.transaction.update({
+      where: { id: payoutTransaction.transactionId },
+      data: {
+        status: TransactionStatus.FAILED,
+      },
+    });
+
+    // Log admin action
+    await this.logAdminAction(adminId, 'WITHDRAWAL_REJECTED', 'PAYOUT_TRANSACTION', payoutTransactionId, {
+      amount: payoutTransaction.amount.toString(),
+      previousStatus: payoutTransaction.status,
+      newStatus: PayoutStatus.REJECTED,
+      reason: dto.reason,
+    });
+
+    return updatedPayout;
+  }
+
+  // =====================
+  // NOTIFICATIONS MANAGEMENT
+  // =====================
+
+  /**
+   * Get admin notifications
+   * Note: Admin must have a linked userId to receive notifications
+   */
+  async getAdminNotifications(adminId: string, filters: GetNotificationsDto) {
+    // Get admin to check if they have a linked userId
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+      select: { userId: true },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    if (!admin.userId) {
+      throw new BadRequestException('Admin does not have a linked user account. Notifications require a user account.');
+    }
+
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      userId: admin.userId,
+    };
+
+    if (filters.read !== undefined) {
+      where.read = filters.read;
+    }
+
+    if (filters.type) {
+      where.type = filters.type;
+    }
+
+    if (filters.startDate || filters.endDate) {
+      where.createdAt = {};
+      if (filters.startDate) {
+        where.createdAt.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.createdAt.lte = endDate;
+      }
+    }
+
+    const [notifications, total] = await Promise.all([
+      this.databaseService.notification.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.databaseService.notification.count({ where }),
+    ]);
+
+    return {
+      notifications,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Mark notification as read
+   */
+  async markNotificationAsRead(adminId: string, notificationId: string) {
+    // Get admin to check if they have a linked userId
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+      select: { userId: true },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    if (!admin.userId) {
+      throw new BadRequestException('Admin does not have a linked user account. Notifications require a user account.');
+    }
+
+    // Verify notification belongs to admin's user
+    const notification = await this.databaseService.notification.findUnique({
+      where: { id: notificationId },
+    });
+
+    if (!notification) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    if (notification.userId !== admin.userId) {
+      throw new ForbiddenException('Notification does not belong to this admin');
+    }
+
+    const updatedNotification = await this.databaseService.notification.update({
+      where: { id: notificationId },
+      data: { read: true },
+    });
+
+    return updatedNotification;
+  }
+
+  /**
+   * Get unread notification count
+   */
+  async getUnreadNotificationCount(adminId: string) {
+    // Get admin to check if they have a linked userId
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+      select: { userId: true },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    if (!admin.userId) {
+      throw new BadRequestException('Admin does not have a linked user account. Notifications require a user account.');
+    }
+
+    const count = await this.databaseService.notification.count({
+      where: {
+        userId: admin.userId,
+        read: false,
+      },
+    });
+
+    return { unreadCount: count };
   }
 }

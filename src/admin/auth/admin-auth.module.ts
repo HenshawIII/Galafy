@@ -8,12 +8,14 @@ import { AdminJwtAuthGuard } from './admin-jwt-auth.guard.js';
 import { RolesGuard } from './guards/roles.guard.js';
 import { PermissionsGuard } from './guards/permissions.guard.js';
 import { DatabaseModule } from '../../database/database.module.js';
+import { UsersModule } from '../../users/users.module.js';
 import { config } from 'dotenv';
 config();
 
 @Module({
   imports: [
     DatabaseModule,
+    UsersModule, // Import UsersModule to access EmailService
     PassportModule,
     JwtModule.register({
       secret:
