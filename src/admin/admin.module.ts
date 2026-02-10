@@ -5,9 +5,16 @@ import { DatabaseModule } from '../database/database.module.js';
 import { ConfigModule } from '../config/config.module.js';
 import { AdminAuthModule } from './auth/admin-auth.module.js';
 import { CacheModule } from '../cache/cache.module.js';
+import { UsersModule } from '../users/users.module.js';
 
 @Module({
-  imports: [DatabaseModule, ConfigModule, AdminAuthModule, CacheModule],
+  imports: [
+    DatabaseModule,
+    ConfigModule,
+    AdminAuthModule,
+    CacheModule,
+    UsersModule, // Import UsersModule to access EmailService
+  ],
   controllers: [AdminController],
   providers: [AdminService],
 })

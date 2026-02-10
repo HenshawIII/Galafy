@@ -24,6 +24,7 @@ import {
 import {
   CreateCustomerWithBvnDto,
   UpgradeWithNinAndAddressDto,
+  NinAndUtilityBillDto,
 } from './dto/kyc-utility.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 
@@ -269,5 +270,51 @@ export class CustomerKycController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.customerKycService.submitUtilityBill(userId, dto);
+  }
+
+  @Post('utility/nin-and-bill')
+  @ApiOperation({ 
+    summary: 'Verify NIN and submit utility bill in one request',
+    description: 'This endpoint verifies NIN first (skips if already verified), then submits utility bill if customer is Tier 2. Customer must have BVN verification to become Tier 2.'
+  })
+  @ApiBody({ type: NinAndUtilityBillDto })
+  @ApiResponse({
+    status: 200,
+    description: 'NIN verified and utility bill submitted successfully',
+    schema: {
+      example: {
+        ninVerification: {
+          id: 1,
+          customerId: 'customer-uuid',
+          nin: '12345678901',
+          status: 'verified',
+          ninCheckStatus: 'verified',
+        },
+        utilityBillSubmission: {
+          id: 'submission-uuid',
+          customerId: 'customer-uuid',
+          utilityBillUrl: 'https://example.com/utility-bill.jpg',
+          status: 'PENDING',
+          createdAt: '2025-02-08T12:00:00.000Z',
+        },
+        message: 'NIN verification completed. Utility bill submitted successfully.',
+      },
+    },
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'NIN verification failed, customer is not Tier 2, or submission already exists' 
+  })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiResponse({ status: 409, description: 'Utility bill submission already pending' })
+  async verifyNinAndSubmitUtilityBill(
+    @Request() req: any,
+    @Body(ValidationPipe) dto: NinAndUtilityBillDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.customerKycService.verifyNinAndSubmitUtilityBill(userId, dto);
   }
 }

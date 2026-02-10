@@ -12,6 +12,7 @@ import {
   Request,
   ValidationPipe,
   Res,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
@@ -30,6 +31,7 @@ import { RolesGuard } from './auth/guards/roles.guard.js';
 import { PermissionsGuard } from './auth/guards/permissions.guard.js';
 import { Roles } from './auth/decorators/roles.decorator.js';
 import { RequirePermission } from './auth/decorators/permissions.decorator.js';
+import { AdminPublic } from './auth/decorators/public.decorator.js';
 import { PERMISSIONS } from './auth/permissions.js';
 import { AdminRole } from '../../generated/prisma/enums.js';
 import { GetConfigDto, UpdateConfigDto, CreateConfigDto } from './dto/config.dto.js';
@@ -38,6 +40,8 @@ import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-manage
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
+import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
+import { GetRolesDto } from './dto/role-management.dto.js';
 
 @ApiTags('admin')
 @Controller('admin')
@@ -663,4 +667,186 @@ export class AdminController {
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.send(buffer);
     }
+
+  // =====================
+  // ADMIN MANAGEMENT
+  // =====================
+
+  @Post('admins/invite')
+  @RequirePermission(PERMISSIONS.MANAGE_ADMINS)
+  @ApiOperation({
+    summary: 'Invite a new admin user',
+    description: 'Send an invitation to a new admin user. They will receive an email with an invite token.',
+  })
+  @ApiBody({ type: InviteAdminDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Admin invite sent successfully',
+    schema: {
+      example: {
+        id: 'invite-uuid',
+        email: 'newadmin@example.com',
+        role: 'COMPLIANCE',
+        expiresAt: '2025-02-15T12:00:00.000Z',
+        message: 'Invite created successfully. Token sent via email.',
+      },
+    },
+  })
+  @ApiResponse({ status: 409, description: 'Admin already exists or active invite exists' })
+  async inviteAdmin(@Request() req: any, @Body(ValidationPipe) dto: InviteAdminDto) {
+    const inviterId = req.admin?.id;
+    return this.adminService.inviteAdmin(dto, inviterId);
+  }
+
+  @Post('admins/accept-invite')
+  @AdminPublic()
+  @ApiOperation({
+    summary: 'Accept admin invite and create account',
+    description: 'Accept an admin invitation using the token from the invite email and set a password. This endpoint is public and does not require authentication.',
+  })
+  @ApiBody({ type: AcceptInviteDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Admin account created successfully',
+    schema: {
+      example: {
+        id: 'admin-uuid',
+        email: 'newadmin@example.com',
+        role: 'COMPLIANCE',
+        message: 'Admin account created successfully. You can now log in.',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid token, expired, or already used' })
+  @ApiResponse({ status: 404, description: 'Invite not found' })
+  async acceptInvite(@Body(ValidationPipe) dto: AcceptInviteDto) {
+    return this.adminService.acceptInvite(dto);
+  }
+
+  @Get('admins')
+  @RequirePermission(PERMISSIONS.VIEW_ADMINS)
+  @ApiOperation({
+    summary: 'List all admins',
+    description: 'Get paginated list of admins with filtering options',
+  })
+  @ApiResponse({ status: 200, description: 'Admins retrieved successfully' })
+  async getAdmins(@Query(ValidationPipe) filters: GetAdminsDto) {
+    return this.adminService.getAdmins(filters);
+  }
+
+  @Get('admins/:adminId')
+  @RequirePermission(PERMISSIONS.VIEW_ADMINS)
+  @ApiOperation({
+    summary: 'Get admin details',
+    description: 'Get detailed information about a specific admin including invite history',
+  })
+  @ApiParam({ name: 'adminId', description: 'Admin ID' })
+  @ApiResponse({ status: 200, description: 'Admin details retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Admin not found' })
+  async getAdminById(@Param('adminId') adminId: string) {
+    return this.adminService.getAdminById(adminId);
+  }
+
+  @Patch('admins/:adminId')
+  @RequirePermission(PERMISSIONS.MANAGE_ADMINS)
+  @ApiOperation({
+    summary: 'Update admin',
+    description: 'Update admin role or active status. Cannot deactivate own account.',
+  })
+  @ApiParam({ name: 'adminId', description: 'Admin ID' })
+  @ApiBody({ type: UpdateAdminDto })
+  @ApiResponse({ status: 200, description: 'Admin updated successfully' })
+  @ApiResponse({ status: 404, description: 'Admin not found' })
+  @ApiResponse({ status: 400, description: 'Cannot deactivate own account' })
+  async updateAdmin(
+    @Param('adminId') adminId: string,
+    @Body(ValidationPipe) dto: UpdateAdminDto,
+    @Request() req: any,
+  ) {
+    const updaterId = req.admin?.id;
+    return this.adminService.updateAdmin(adminId, dto, updaterId);
+  }
+
+  @Delete('admins/:adminId')
+  @RequirePermission(PERMISSIONS.MANAGE_ADMINS)
+  @ApiOperation({
+    summary: 'Deactivate admin',
+    description: 'Deactivate an admin account (soft delete). Cannot deactivate own account.',
+  })
+  @ApiParam({ name: 'adminId', description: 'Admin ID' })
+  @ApiResponse({ status: 200, description: 'Admin deactivated successfully' })
+  @ApiResponse({ status: 404, description: 'Admin not found' })
+  @ApiResponse({ status: 400, description: 'Cannot deactivate own account' })
+  async deactivateAdmin(@Param('adminId') adminId: string, @Request() req: any) {
+    const deactivatorId = req.admin?.id;
+    return this.adminService.deactivateAdmin(adminId, deactivatorId);
+  }
+
+  // =====================
+  // ROLE MANAGEMENT
+  // =====================
+
+  @Get('roles')
+  @RequirePermission(PERMISSIONS.VIEW_ADMINS)
+  @ApiOperation({
+    summary: 'Get all roles with user counts',
+    description: 'Get list of all admin roles with the number of active admins in each role',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Roles retrieved successfully',
+    schema: {
+      example: {
+        roles: [
+          { role: 'SUPER_ADMIN', userCount: 2 },
+          { role: 'COMPLIANCE', userCount: 5 },
+          { role: 'OPERATIONS', userCount: 3 },
+        ],
+      },
+    },
+  })
+  async getRoles() {
+    return this.adminService.getRoles();
+  }
+
+  @Get('roles/:roleName')
+  @RequirePermission(PERMISSIONS.VIEW_ADMINS)
+  @ApiOperation({
+    summary: 'Get role details with assigned admins',
+    description: 'Get details of a specific role and list of admins assigned to it',
+  })
+  @ApiParam({ name: 'roleName', enum: AdminRole, description: 'Role name' })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, example: 20 })
+  @ApiResponse({ status: 200, description: 'Role details retrieved successfully' })
+  async getRoleDetails(
+    @Param('roleName') roleName: AdminRole,
+    @Query(ValidationPipe) filters: GetRolesDto,
+  ) {
+    return this.adminService.getRoleDetails(roleName, filters);
+  }
+
+  @Post('roles/:roleName/assign')
+  @RequirePermission(PERMISSIONS.MANAGE_ADMINS)
+  @ApiOperation({
+    summary: 'Assign role to admin',
+    description: 'Assign a specific role to an admin user',
+  })
+  @ApiParam({ name: 'roleName', enum: AdminRole, description: 'Role name to assign' })
+  @ApiBody({ type: AssignRoleDto })
+  @ApiResponse({ status: 200, description: 'Role assigned successfully' })
+  @ApiResponse({ status: 404, description: 'Admin not found' })
+  @ApiResponse({ status: 400, description: 'Invalid role name' })
+  async assignRoleToAdmin(
+    @Param('roleName') roleName: AdminRole,
+    @Body(ValidationPipe) dto: AssignRoleDto,
+    @Request() req: any,
+  ) {
+    // Validate role name
+    if (!Object.values(AdminRole).includes(roleName)) {
+      throw new BadRequestException('Invalid role name');
+    }
+    const assignerId = req.admin?.id;
+    return this.adminService.assignRoleToAdmin(dto.adminId, roleName, assignerId);
+  }
 }

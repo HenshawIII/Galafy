@@ -19,6 +19,7 @@ import {
 import {
   CreateCustomerWithBvnDto,
   UpgradeWithNinAndAddressDto,
+  NinAndUtilityBillDto,
 } from './dto/kyc-utility.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
@@ -976,5 +977,102 @@ export class CustomerKycService {
 
     this.logger.log(`Utility bill submitted for customer ${customer.id} by user ${userId}`);
     return submission;
+  }
+
+  /**
+   * Verify NIN and submit utility bill in one request
+   * - First verifies NIN (skips if already verified)
+   * - Then submits utility bill if customer is Tier 2 after NIN verification
+   */
+  async verifyNinAndSubmitUtilityBill(userId: string, dto: NinAndUtilityBillDto) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      include: {
+        ninVerification: true,
+        bvnVerification: true,
+        utilityBillSubmissions: {
+          where: {
+            status: UtilityBillStatus.PENDING,
+          },
+        },
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (!customer.providerCustomerId) {
+      throw new BadRequestException('Customer does not have a provider customer ID');
+    }
+
+    const results: any = {
+      ninVerification: null,
+      utilityBillSubmission: null,
+      message: '',
+    };
+
+    // Step 1: NIN Verification (skip if already verified)
+    if (customer.ninVerification) {
+      this.logger.log(`NIN verification already exists for customer ${customer.id}, skipping NIN verification`);
+      results.ninVerification = customer.ninVerification;
+      results.message += 'NIN already verified. ';
+    } else {
+      try {
+        // Verify NIN
+        const ninDto: CreateNinVerificationDto = {
+          nin: dto.nin,
+        };
+        results.ninVerification = await this.upgradeWithNin(customer.id, ninDto);
+        results.message += 'NIN verification completed. ';
+      } catch (error: any) {
+        throw new BadRequestException(`NIN verification failed: ${error.message}`);
+      }
+    }
+
+    // Refresh customer to get updated tier after NIN verification
+    const updatedCustomer = await this.databaseService.customer.findUnique({
+      where: { id: customer.id },
+      include: {
+        utilityBillSubmissions: {
+          where: {
+            status: UtilityBillStatus.PENDING,
+          },
+        },
+      },
+    });
+
+    if (!updatedCustomer) {
+      throw new NotFoundException('Customer not found after NIN verification');
+    }
+
+    // Step 2: Submit Utility Bill (only if customer is Tier 2)
+    if (updatedCustomer.tier !== KycTier.Tier_2) {
+      throw new BadRequestException(
+        `Customer must be Tier 2 to submit utility bill. Current tier: ${updatedCustomer.tier}. Please complete BVN verification first.`
+      );
+    }
+
+    // Check if there's already a pending submission
+    if (updatedCustomer.utilityBillSubmissions.length > 0) {
+      throw new ConflictException('You already have a pending utility bill submission. Please wait for review.');
+    }
+
+    // Create utility bill submission
+    try {
+      results.utilityBillSubmission = await this.databaseService.utilityBillSubmission.create({
+        data: {
+          customerId: updatedCustomer.id,
+          utilityBillUrl: dto.utilityBillUrl,
+          status: UtilityBillStatus.PENDING,
+        },
+      });
+      results.message += 'Utility bill submitted successfully.';
+      this.logger.log(`NIN verified and utility bill submitted for customer ${updatedCustomer.id} by user ${userId}`);
+    } catch (error: any) {
+      throw new BadRequestException(`Failed to submit utility bill: ${error.message}`);
+    }
+
+    return results;
   }
 }

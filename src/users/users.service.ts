@@ -215,8 +215,12 @@ export class UsersService {
 
     // Send welcome email after successful verification (don't fail verification if email fails)
     try {
-      // Use firstName from original user object to ensure it's captured
-      await this.emailService.sendWelcomeEmail(updatedUser.email, user.firstName || undefined);
+      // Pass all available user data (firstName, lastName, username) for better greeting
+      await this.emailService.sendWelcomeEmail(updatedUser.email, {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
+      });
     } catch (emailError) {
       // Log error but don't fail verification
       console.error('Failed to send welcome email (verification still succeeded):', emailError.message);

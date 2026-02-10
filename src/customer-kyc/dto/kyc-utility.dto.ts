@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEmail, IsEnum } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEmail, IsEnum, IsUrl } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DiscoCode } from './disco-code.enum.js';
 
@@ -99,5 +99,27 @@ export class UpgradeWithNinAndAddressDto {
   @IsString({ message: 'Account name must be a string' })
   @IsNotEmpty({ message: 'Account name is required' })
   accountName: string;
+}
+
+/**
+ * DTO for NIN verification and utility bill submission in one request
+ * This endpoint verifies NIN first, then submits utility bill if customer becomes Tier 2
+ */
+export class NinAndUtilityBillDto {
+  // NIN verification field
+  @ApiProperty({ example: '12345678901', description: 'National Identification Number (NIN)' })
+  @IsString({ message: 'NIN must be a string' })
+  @IsNotEmpty({ message: 'NIN is required' })
+  nin: string;
+
+  // Utility bill field
+  @ApiProperty({
+    example: 'https://example.com/utility-bill.jpg',
+    description: 'URL of the utility bill image',
+  })
+  @IsString({ message: 'Utility bill URL must be a string' })
+  @IsNotEmpty({ message: 'Utility bill URL is required' })
+  @IsUrl({}, { message: 'Utility bill URL must be a valid URL' })
+  utilityBillUrl: string;
 }
 
