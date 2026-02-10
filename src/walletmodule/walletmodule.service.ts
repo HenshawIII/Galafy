@@ -109,7 +109,7 @@ export class WalletmoduleService {
     const tempWallet = await this.databaseService.wallet.create({
       data: {
         customerId: customer.id,
-        currencyId: createWalletDto.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+        currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         walletGroupId: createWalletDto.walletGroupId || undefined,
         walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
         walletClassificationId: createWalletDto.walletClassificationId || undefined,
@@ -130,7 +130,7 @@ export class WalletmoduleService {
     const providerRequest = {
       id: walletId,
       customerId: customer.providerCustomerId,
-      currencyId: createWalletDto.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+      currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       walletGroupId: createWalletDto.walletGroupId || undefined,
       walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
       walletClassificationId: createWalletDto.walletClassificationId || undefined,
@@ -149,7 +149,7 @@ export class WalletmoduleService {
     try {
       providerResponse = await this.providerService.createWallet(providerRequest);
     } catch (error) {
-      // Delete the temporary wallet if provider call fails
+      // Delete the temporary wallet if provider call fals
       await this.databaseService.wallet.delete({ where: { id: walletId } });
       this.logger.error(`Failed to create wallet with provider: ${error.message}`);
       throw new BadRequestException(error.message || 'Failed to create wallet with provider service');
@@ -387,7 +387,7 @@ export class WalletmoduleService {
       fromWalletId: fromWallet.virtualAccountNumber,
       toWalletId: toWallet.virtualAccountNumber,
       amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       description: transferDto.description,
       reference: internalReference,
     });
@@ -411,7 +411,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.DEBIT,
         status: TransactionStatus.SUCCESS,
         amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         reference: internalReference,
         externalReference: null, // Wallet-to-wallet (sprays) only use internal reference
         groupReference: groupReference,
@@ -427,7 +427,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.CREDIT,
         status: TransactionStatus.SUCCESS,
         amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
         reference: `SPRAY-CREDIT-${randomUUID()}`, // Unique reference for credit side
         externalReference: null,
         groupReference: groupReference, // Same group reference to link transactions
@@ -574,7 +574,7 @@ export class WalletmoduleService {
       sourceAccountName: sourceAccountName,
       remarks: transferDto.description || 'Fast wallet transfer',
       amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       customerTransactionReference: transactionReference,
     });
 
@@ -669,7 +669,7 @@ export class WalletmoduleService {
       amount: amount.toString(),
       description: initiateDto.description,
       recipientName: destinationAccountName,
-      currencyId: initiateDto.currencyId || fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+      currencyId: initiateDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
       sourceAccountName,
       walletId: fromWallet.id,
     };
@@ -862,7 +862,7 @@ export class WalletmoduleService {
           fromWalletId: fromWallet.virtualAccountNumber,
           toWalletId: adminWalletAccountNumber, // Use account number directly from env
           amount: grossAmount.toNumber(),
-          currencyId: fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+          currencyId: fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
           description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
           reference: userTransactionRef,
         });

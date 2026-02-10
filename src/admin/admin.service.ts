@@ -9,8 +9,11 @@ import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
 import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
-import { AdminRole, KycRequestStatus, UtilityBillStatus, TransactionType, TransactionDirection, TransactionStatus, AlertStatus, EventStatus } from '../../generated/prisma/enums.js';
+import { AdminRole, KycRequestStatus, UtilityBillStatus, TransactionType, TransactionDirection, TransactionStatus, AlertStatus, EventStatus, PayoutStatus } from '../../generated/prisma/enums.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
+import { GetTransactionsDto } from './dto/transactions-management.dto.js';
+import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
+import { GetNotificationsDto } from './dto/notifications-management.dto.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as csv from 'fast-csv';
 import * as crypto from 'crypto';
@@ -1125,22 +1128,12 @@ export class AdminService {
       }
     }
 
-    // Fetch all matching logs (no pagination for export)
-    const logs = await this.databaseService.adminActionLog.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        admin: {
-          select: {
-            id: true,
-            email: true,
-            role: true,
-          },
-        },
-      },
-    });
-
-    return new Promise((resolve, reject) => {
+    // Use streaming to avoid loading all logs into memory
+    // Limit to 100,000 records max to prevent memory issues
+    const MAX_EXPORT_RECORDS = 100000;
+    
+    return new Promise(async (resolve, reject) => {
+      const chunks: Buffer[] = [];
       const rows: any[] = [];
 
       // Add header row
@@ -1156,40 +1149,78 @@ export class AdminService {
         'Details',
       ]);
 
-      // Add log rows
-      logs.forEach((log) => {
-        const date = new Date(log.createdAt);
-        const dateStr = date.toISOString().split('T')[0];
-        const timeStr = date.toTimeString().split(' ')[0];
+      try {
+        let skip = 0;
+        const batchSize = 1000; // Process in batches
+        let totalProcessed = 0;
 
-        rows.push([
-          dateStr,
-          timeStr,
-          log.admin.email || '',
-          log.admin.role || '',
-          log.actionType || '',
-          log.targetType || '',
-          log.targetId || '',
-          log.reason || '',
-          log.details ? JSON.stringify(log.details) : '',
-        ]);
-      });
+        while (totalProcessed < MAX_EXPORT_RECORDS) {
+          const logs = await this.databaseService.adminActionLog.findMany({
+            where,
+            skip,
+            take: batchSize,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              createdAt: true,
+              actionType: true,
+              targetType: true,
+              targetId: true,
+              reason: true,
+              details: true,
+              admin: {
+                select: {
+                  email: true,
+                  role: true,
+                },
+              },
+            },
+          });
 
-      // Convert to CSV using fast-csv
-      const chunks: Buffer[] = [];
-      const stream = csv.write(rows, { headers: false });
+          if (logs.length === 0) break;
 
-      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-      stream.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        const filename = filters.startDate && filters.endDate
-          ? `admin-action-logs-${filters.startDate.split('T')[0]}-to-${filters.endDate.split('T')[0]}.csv`
-          : 'admin-action-logs-all.csv';
-        resolve({ buffer, filename });
-      });
-      stream.on('error', (error) => {
+          // Add batch rows
+          for (const log of logs) {
+            const date = new Date(log.createdAt);
+            const dateStr = date.toISOString().split('T')[0];
+            const timeStr = date.toTimeString().split(' ')[0];
+
+            rows.push([
+              dateStr,
+              timeStr,
+              log.admin.email || '',
+              log.admin.role || '',
+              log.actionType || '',
+              log.targetType || '',
+              log.targetId || '',
+              log.reason || '',
+              log.details ? JSON.stringify(log.details) : '',
+            ]);
+          }
+
+          totalProcessed += logs.length;
+          skip += batchSize;
+
+          // If we got fewer records than batch size, we're done
+          if (logs.length < batchSize) break;
+        }
+
+        // Convert to CSV using fast-csv (now with limited rows)
+        const stream = csv.write(rows, { headers: false });
+
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          const filename = filters.startDate && filters.endDate
+            ? `admin-action-logs-${filters.startDate.split('T')[0]}-to-${filters.endDate.split('T')[0]}.csv`
+            : 'admin-action-logs-all.csv';
+          resolve({ buffer, filename });
+        });
+        stream.on('error', (error) => {
+          reject(error);
+        });
+      } catch (error) {
         reject(error);
-      });
+      }
     });
   }
 
@@ -1717,6 +1748,7 @@ export class AdminService {
           },
         },
         participants: {
+          take: 1000, // Limit participants to prevent memory issues
           include: {
             user: {
               select: {
@@ -1737,6 +1769,7 @@ export class AdminService {
           },
         },
         sprays: {
+          take: 1000, // Limit sprays to prevent memory issues
           include: {
             sprayerWallet: {
               include: {
@@ -2445,7 +2478,6 @@ export class AdminService {
               id: true,
               accountName: true,
               accountNumber: true,
-              bankName: true,
               bankCode: true,
             },
           },

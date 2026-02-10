@@ -53,12 +53,12 @@ export class CreateCustomerDto {
   @IsString({ message: 'Organization ID must be a string' })
   organizationId?: string;
 
-  @ApiPropertyOptional({ example: 'c92d5158-a4c5-4418-83f7-a813d3989a85', description: 'Customer type ID' })
+  @ApiPropertyOptional({ example: 'f671da57-e281-4b40-965f-a96f4205405e', description: 'Customer type ID' })
   @IsOptional()
   @IsString({ message: 'Customer type ID must be a string' })
   customerTypeId?: string;
 
-  @ApiPropertyOptional({ example: '4aa9d59e-04e7-4984-9794-85a55489d433', description: 'Country ID' })
+  @ApiPropertyOptional({ example: 'c15ad9ae-c4d7-4342-b70f-de5508627e3b', description: 'Country ID' })
   @IsOptional()
   @IsString({ message: 'Country ID must be a string' })
   countryId?: string;

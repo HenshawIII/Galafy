@@ -34,7 +34,7 @@ export class WalletToWalletTransferDto {
   })
   amount: string;
 
-  @ApiPropertyOptional({ example: '45852f0c-84fa-410c-b66c-1ffec56e5cd8', description: 'Currency ID' })
+  @ApiPropertyOptional({ example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9', description: 'Currency ID' })
   @IsOptional()
   @IsString({ message: 'Currency ID must be a string' })
   currencyId?: string;
@@ -88,7 +88,7 @@ export class FastWalletTransferDto {
   })
   amount: string;
 
-  @ApiPropertyOptional({ example: '45852f0c-84fa-410c-b66c-1ffec56e5cd8', description: 'Currency ID' })
+  @ApiPropertyOptional({ example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9', description: 'Currency ID' })
   @IsOptional()
   @IsString({ message: 'Currency ID must be a string' })
   currencyId?: string;
