@@ -192,7 +192,11 @@ export class AuthService {
         
         // Send welcome email after successful Google signup (don't fail signup if email fails)
         try {
-            await this.emailService.sendWelcomeEmail(dbUser.email, dbUser.firstName || firstName || undefined);
+            await this.emailService.sendWelcomeEmail(dbUser.email, {
+                firstName: dbUser.firstName || firstName,
+                lastName: dbUser.lastName,
+                username: dbUser.username,
+            });
         } catch (emailError) {
             // Log error but don't fail signup - email sending is non-critical
             console.error('Failed to send welcome email (Google signup still succeeded):', emailError.message);

@@ -7,6 +7,21 @@ config();
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
 
+  /**
+   * Get the app icon URL for email templates
+   * Uses environment variable APP_ICON_URL or constructs from PUBLIC_URL
+   */
+  private getAppIconUrl(): string {
+    if (process.env.APP_ICON_URL) {
+      return process.env.APP_ICON_URL;
+    }
+    if (process.env.PUBLIC_URL) {
+      return `${process.env.PUBLIC_URL}/icon.svg`;
+    }
+    // Fallback - should be configured in production
+    return 'https://yourdomain.com/icon.svg';
+  }
+
   constructor() {
     // Set SendGrid API key
     const apiKey = process.env.SENDGRID_API_KEY;
@@ -21,9 +36,24 @@ export class EmailService {
     // sgMail.setDataResidency('eu');
   }
 
-  async sendWelcomeEmail(email: string, firstName?: string): Promise<void> {
-    // Get user's first name or default greeting
-    const userName = firstName || 'there';
+  async sendWelcomeEmail(
+    email: string,
+    userData?: {
+      firstName?: string | null;
+      lastName?: string | null;
+      username?: string | null;
+    },
+  ): Promise<void> {
+    // Get user's display name: prefer firstName, then username, then lastName, then default
+    // Handle null, undefined, and empty strings
+    let userName = 'there';
+    if (userData?.firstName && userData.firstName.trim()) {
+      userName = userData.firstName.trim();
+    } else if (userData?.username && userData.username.trim()) {
+      userName = userData.username.trim();
+    } else if (userData?.lastName && userData.lastName.trim()) {
+      userName = userData.lastName.trim();
+    }
     
     const msg = {
       to: email,
@@ -42,9 +72,7 @@ export class EmailService {
             <!-- Header with Galafy Logo -->
             <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
               <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
-                <span style="display: inline-block; width: 30px; height: 30px; background-color: #ffffff; border-radius: 4px; position: relative;">
-                  <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #007bff; font-weight: bold; font-size: 20px;">G</span>
-                </span>
+                <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
                 Galafy
               </div>
             </div>
@@ -329,9 +357,7 @@ export class EmailService {
             <!-- Header with Galafy Logo -->
             <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
               <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
-                <span style="display: inline-block; width: 30px; height: 30px; background-color: #ffffff; border-radius: 4px; position: relative;">
-                  <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #007bff; font-weight: bold; font-size: 20px;">G</span>
-                </span>
+                <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
                 Galafy
               </div>
             </div>
@@ -473,9 +499,7 @@ export class EmailService {
             <!-- Header with Galafy Logo -->
             <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
               <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
-                <span style="display: inline-block; width: 30px; height: 30px; background-color: #ffffff; border-radius: 4px; position: relative;">
-                  <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #007bff; font-weight: bold; font-size: 20px;">G</span>
-                </span>
+                <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
                 Galafy
               </div>
             </div>
@@ -624,9 +648,7 @@ export class EmailService {
             <!-- Header with Galafy Logo -->
             <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
               <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
-                <span style="display: inline-block; width: 30px; height: 30px; background-color: #ffffff; border-radius: 4px; position: relative;">
-                  <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #007bff; font-weight: bold; font-size: 20px;">G</span>
-                </span>
+                <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
                 Galafy
               </div>
             </div>
@@ -702,6 +724,126 @@ export class EmailService {
         this.logger.error('SendGrid error details:', error.response.body);
       }
       // Don't throw - email failure shouldn't break the account update process
+    }
+  }
+
+  async sendAdminInviteEmail(
+    email: string,
+    inviteData: {
+      inviteLink: string;
+      role: string;
+      expiresAt: Date;
+      inviterEmail?: string;
+    },
+  ): Promise<void> {
+    const expiryDate = new Date(inviteData.expiresAt).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const roleDisplayName = inviteData.role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: `Admin Portal Invitation - ${roleDisplayName} Role`,
+      text: `You have been invited to join the Galafy Admin Portal as a ${roleDisplayName}.
+
+Click the link below to accept your invitation and set up your account:
+${inviteData.inviteLink}
+
+This invitation will expire on ${expiryDate}.
+
+${inviteData.inviterEmail ? `Invited by: ${inviteData.inviterEmail}` : ''}
+
+If you did not expect this invitation, please ignore this email.`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+            <!-- Header -->
+            <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
+              <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
+                <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
+                Galafy Admin Portal
+              </div>
+            </div>
+            
+            <!-- Main Content -->
+            <div style="padding: 30px 20px;">
+              <h1 style="color: #333333; font-size: 24px; font-weight: bold; margin: 0 0 15px 0;">You've Been Invited! 🎉</h1>
+              
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                You have been invited to join the <strong>Galafy Admin Portal</strong> as a <strong>${roleDisplayName}</strong>.
+              </p>
+              
+              ${inviteData.inviterEmail ? `
+              <p style="color: #666666; font-size: 14px; margin: 0 0 20px 0;">
+                Invited by: <strong>${inviteData.inviterEmail}</strong>
+              </p>
+              ` : ''}
+              
+              <!-- Invite Box -->
+              <div style="background-color: #e7f3ff; border-left: 4px solid #007bff; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="color: #333333; font-size: 18px; font-weight: bold; margin: 0 0 15px 0;">Accept Your Invitation</h3>
+                <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                  Click the button below to accept your invitation and set up your admin account. You'll be able to choose your password during the setup process.
+                </p>
+                <a href="${inviteData.inviteLink}" style="display: inline-block; background-color: #007bff; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">
+                  Accept Invitation
+                </a>
+              </div>
+              
+              <!-- Expiry Notice -->
+              <div style="background-color: #fff3cd; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <p style="color: #856404; font-size: 14px; margin: 0;">
+                  <strong>⏰ Important:</strong> This invitation will expire on <strong>${expiryDate}</strong>. Please accept it before then.
+                </p>
+              </div>
+              
+              <!-- Alternative Link -->
+              <p style="color: #666666; font-size: 12px; margin: 30px 0 0 0;">
+                If the button doesn't work, copy and paste this link into your browser:<br>
+                <a href="${inviteData.inviteLink}" style="color: #007bff; word-break: break-all;">${inviteData.inviteLink}</a>
+              </p>
+              
+              <!-- Security Notice -->
+              <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 4px; border-left: 4px solid #6c757d;">
+                <p style="color: #495057; font-size: 12px; margin: 0;">
+                  <strong>🔒 Security Notice:</strong> If you did not expect this invitation, please ignore this email. Do not click the link or share it with anyone.
+                </p>
+              </div>
+              
+              <!-- Closing -->
+              <p style="color: #333333; font-size: 14px; margin: 30px 0 0 0;">
+                Welcome to the team!<br>
+                The Galafy Admin Team
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Admin invite email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending admin invite email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      // Don't throw - email failure shouldn't break the invite process, but log it
+      throw new Error(`Failed to send admin invite email: ${error.message}`);
     }
   }
 }

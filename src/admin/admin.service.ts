@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { CacheService } from '../cache/cache.service.js';
@@ -8,9 +8,13 @@ import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-manage
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
+import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
 import { AdminRole, KycRequestStatus, UtilityBillStatus, TransactionType, TransactionDirection, TransactionStatus, AlertStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as csv from 'fast-csv';
+import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';
+import { EmailService } from '../users/email.service.js';
 
 @Injectable()
 export class AdminService {
@@ -24,7 +28,15 @@ export class AdminService {
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
+    private readonly emailService: EmailService,
   ) {}
+
+  /**
+   * Generate secure random token for admin invite
+   */
+  private generateInviteToken(): string {
+    return crypto.randomBytes(32).toString('hex');
+  }
 
   /**
    * Check if admin has write permissions
@@ -1130,5 +1142,406 @@ export class AdminService {
         reject(error);
       });
     });
+  }
+
+  // =====================
+  // ADMIN MANAGEMENT
+  // =====================
+
+  /**
+   * Invite a new admin user
+   */
+  async inviteAdmin(dto: InviteAdminDto, inviterId: string) {
+    // Check if admin with this email already exists
+    const existingAdmin = await this.databaseService.admin.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingAdmin) {
+      throw new ConflictException('An admin with this email already exists');
+    }
+
+    // Check if there's a pending invite for this email
+    const existingInvite = await this.databaseService.adminInvite.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingInvite && !existingInvite.accepted && new Date() < existingInvite.expiresAt) {
+      throw new ConflictException('An active invite already exists for this email');
+    }
+
+    // Get inviter details for email
+    const inviter = await this.databaseService.admin.findUnique({
+      where: { id: inviterId },
+      select: { email: true },
+    });
+
+    // Generate invite token
+    const token = this.generateInviteToken();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
+
+    // Create invite
+    const invite = await this.databaseService.adminInvite.create({
+      data: {
+        email: dto.email,
+        token,
+        role: dto.role,
+        invitedBy: inviterId,
+        expiresAt,
+      },
+    });
+
+    // Log admin action
+    await this.logAdminAction(inviterId, 'ADMIN_INVITED', 'ADMIN_INVITE', invite.id, {
+      email: dto.email,
+      role: dto.role,
+    });
+
+    // Generate invite link
+    const adminPortalUrl = process.env.ADMIN_PORTAL_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+    const inviteLink = `${adminPortalUrl}/admin/accept-invite?token=${token}`;
+
+    // Send invite email
+    try {
+      await this.emailService.sendAdminInviteEmail(dto.email, {
+        inviteLink,
+        role: dto.role,
+        expiresAt: invite.expiresAt,
+        inviterEmail: inviter?.email,
+      });
+      this.logger.log(`Admin invite email sent to ${dto.email}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to send admin invite email to ${dto.email}:`, error.message);
+      // Continue even if email fails - invite is still created
+      // In production, you might want to handle this differently
+    }
+
+    return {
+      id: invite.id,
+      email: invite.email,
+      role: invite.role,
+      expiresAt: invite.expiresAt,
+      // Only return token in development mode for testing
+      token: process.env.NODE_ENV === 'development' ? token : undefined,
+      message: 'Invite created successfully. Invitation email sent.',
+    };
+  }
+
+  /**
+   * Accept admin invite and create admin account
+   */
+  async acceptInvite(dto: AcceptInviteDto) {
+    // Find invite by token
+    const invite = await this.databaseService.adminInvite.findUnique({
+      where: { token: dto.token },
+      include: { inviter: { select: { email: true, role: true } } },
+    });
+
+    if (!invite) {
+      throw new NotFoundException('Invalid invite token');
+    }
+
+    // Check if invite is already used
+    if (invite.accepted || invite.usedAt) {
+      throw new BadRequestException('This invite has already been used');
+    }
+
+    // Check if invite is expired
+    if (new Date() > invite.expiresAt) {
+      throw new BadRequestException('This invite has expired');
+    }
+
+    // Check if admin already exists
+    const existingAdmin = await this.databaseService.admin.findUnique({
+      where: { email: invite.email },
+    });
+
+    if (existingAdmin) {
+      throw new ConflictException('An admin with this email already exists');
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+    // Create admin account
+    const admin = await this.databaseService.admin.create({
+      data: {
+        email: invite.email,
+        password: hashedPassword,
+        role: invite.role,
+        isActive: true,
+      },
+    });
+
+    // Mark invite as used
+    await this.databaseService.adminInvite.update({
+      where: { id: invite.id },
+      data: {
+        accepted: true,
+        usedAt: new Date(),
+      },
+    });
+
+    // Log admin action
+    await this.logAdminAction(admin.id, 'ADMIN_CREATED', 'ADMIN', admin.id, {
+      email: admin.email,
+      role: admin.role,
+      viaInvite: true,
+    });
+
+    this.logger.log(`Admin account created via invite: ${admin.email}`);
+
+    return {
+      id: admin.id,
+      email: admin.email,
+      role: admin.role,
+      message: 'Admin account created successfully. You can now log in.',
+    };
+  }
+
+  /**
+   * Get all admins with filtering and pagination
+   */
+  async getAdmins(filters: GetAdminsDto) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (filters.search) {
+      where.email = {
+        contains: filters.search,
+        mode: 'insensitive',
+      };
+    }
+
+    if (filters.role) {
+      where.role = filters.role;
+    }
+
+    if (filters.isActive !== undefined) {
+      where.isActive = filters.isActive;
+    }
+
+    const [admins, total] = await Promise.all([
+      this.databaseService.admin.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          isActive: true,
+          lastLoginAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.databaseService.admin.count({ where }),
+    ]);
+
+    return {
+      admins,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get admin by ID
+   */
+  async getAdminById(adminId: string) {
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        isActive: true,
+        lastLoginAt: true,
+        failedLoginAttempts: true,
+        lockedUntil: true,
+        createdAt: true,
+        updatedAt: true,
+        sentInvites: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            accepted: true,
+            expiresAt: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        },
+      },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    return admin;
+  }
+
+  /**
+   * Update admin
+   */
+  async updateAdmin(adminId: string, dto: UpdateAdminDto, updaterId: string) {
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    // Prevent self-deactivation
+    if (adminId === updaterId && dto.isActive === false) {
+      throw new BadRequestException('You cannot deactivate your own account');
+    }
+
+    const updatedAdmin = await this.databaseService.admin.update({
+      where: { id: adminId },
+      data: {
+        ...(dto.role && { role: dto.role }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
+    });
+
+    // Log admin action
+    await this.logAdminAction(updaterId, 'ADMIN_UPDATED', 'ADMIN', adminId, {
+      changes: dto,
+    });
+
+    const { password, ...adminWithoutPassword } = updatedAdmin;
+    return adminWithoutPassword;
+  }
+
+  /**
+   * Deactivate admin (soft delete)
+   */
+  async deactivateAdmin(adminId: string, deactivatorId: string) {
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    // Prevent self-deactivation
+    if (adminId === deactivatorId) {
+      throw new BadRequestException('You cannot deactivate your own account');
+    }
+
+    const updatedAdmin = await this.databaseService.admin.update({
+      where: { id: adminId },
+      data: { isActive: false },
+    });
+
+    // Log admin action
+    await this.logAdminAction(deactivatorId, 'ADMIN_DEACTIVATED', 'ADMIN', adminId, {
+      email: admin.email,
+    });
+
+    const { password, ...adminWithoutPassword } = updatedAdmin;
+    return adminWithoutPassword;
+  }
+
+  /**
+   * Get all roles with user counts
+   */
+  async getRoles() {
+    const roles = Object.values(AdminRole);
+    const roleStats = await Promise.all(
+      roles.map(async (role) => {
+        const count = await this.databaseService.admin.count({
+          where: { role, isActive: true },
+        });
+        return { role, userCount: count };
+      }),
+    );
+
+    return {
+      roles: roleStats,
+    };
+  }
+
+  /**
+   * Get role details with assigned admins
+   */
+  async getRoleDetails(roleName: AdminRole, filters?: { page?: number; limit?: number }) {
+    const page = filters?.page || 1;
+    const limit = filters?.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [admins, total] = await Promise.all([
+      this.databaseService.admin.findMany({
+        where: { role: roleName, isActive: true },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          isActive: true,
+          lastLoginAt: true,
+          createdAt: true,
+        },
+      }),
+      this.databaseService.admin.count({
+        where: { role: roleName, isActive: true },
+      }),
+    ]);
+
+    return {
+      role: roleName,
+      admins,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Assign role to admin
+   */
+  async assignRoleToAdmin(adminId: string, role: AdminRole, assignerId: string) {
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    const updatedAdmin = await this.databaseService.admin.update({
+      where: { id: adminId },
+      data: { role },
+    });
+
+    // Log admin action
+    await this.logAdminAction(assignerId, 'ADMIN_ROLE_ASSIGNED', 'ADMIN', adminId, {
+      email: admin.email,
+      previousRole: admin.role,
+      newRole: role,
+    });
+
+    const { password, ...adminWithoutPassword } = updatedAdmin;
+    return adminWithoutPassword;
   }
 }

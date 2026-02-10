@@ -745,9 +745,31 @@ model Admin {
   kycRequests KycRequest[]
   utilityBillReviews UtilityBillSubmission[]
   actionLogs AdminActionLog[]
+  sentInvites AdminInvite[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
+}
+
+model AdminInvite {
+  id String @id @default(uuid())
+
+  email     String    @unique
+  token     String    @unique
+  role      AdminRole
+  invitedBy String    // Admin ID who sent the invite
+  inviter   Admin     @relation(fields: [invitedBy], references: [id])
+
+  expiresAt DateTime
+  usedAt    DateTime?
+  accepted  Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+
+  @@index([token])
+  @@index([email])
+  @@index([invitedBy])
 }
 
 model KycRequest {
