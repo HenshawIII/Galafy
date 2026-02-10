@@ -125,7 +125,7 @@ export class InterBankTransferDto {
   @Min(0.01, { message: 'Amount must be greater than 0' })
   amount: number;
 
-  @ApiProperty({ example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9', description: 'Currency ID (NGN UUID)' })
+  @ApiProperty({ example: '45852f0c-84fa-410c-b66c-1ffec56e5cd8', description: 'Currency ID (NGN UUID)' })
   @IsString({ message: 'Currency ID must be a string' })
   @IsNotEmpty({ message: 'Currency ID is required' })
   currencyId: string;

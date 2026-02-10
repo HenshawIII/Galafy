@@ -171,7 +171,7 @@ export class WebhooksService {
           fromWalletId: lockedUserWallet.virtualAccountNumber,
           toWalletId: adminWalletAccountNumber,
           amount: adminFee.toNumber(),
-          currencyId: wallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+          currencyId: wallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
           description: `Admin fee from funding: ${data.reference}`,
           reference: feeTransferRef,
         });
@@ -614,7 +614,7 @@ export class WebhooksService {
                 fromWalletId: adminWalletAccountNumber,
                 toWalletId: userWallet.virtualAccountNumber,
                 amount: grossAmount.toNumber(),
-                currencyId: userWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+                currencyId: userWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
                 description: `Payout refund: ${data.paymentReference}`,
                 reference: refundReference,
               });
@@ -662,7 +662,7 @@ export class WebhooksService {
                     direction: TransactionDirection.CREDIT, // Credit because it's a refund
                     status: TransactionStatus.SUCCESS,
                     amount: grossAmount,
-                    currencyId: userWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+                    currencyId: userWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
                     reference: refundReference,
                     externalReference: data.paymentReference,
                     narration: `Payout refund: ${data.deliveryStatusMessage || 'Payout failed'}`,

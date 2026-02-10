@@ -42,6 +42,10 @@ import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
 import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
 import { GetRolesDto } from './dto/role-management.dto.js';
+import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
+import { GetTransactionsDto } from './dto/transactions-management.dto.js';
+import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
+import { GetNotificationsDto } from './dto/notifications-management.dto.js';
 
 @ApiTags('admin')
 @Controller('admin')
@@ -55,10 +59,10 @@ export class AdminController {
    * Get all configurations
    */
   @Get('config')
-  @RequirePermission(PERMISSIONS.VIEW_CONFIG)
+  @AdminPublic()
   @ApiOperation({
     summary: 'Get all configurations',
-    description: 'Retrieves all system configurations with optional filtering by category and active status. Read access available to all authenticated admins.',
+    description: 'Retrieves all system configurations with optional filtering by category and active status. Public endpoint accessible from mobile app.',
   })
   @ApiQuery({ name: 'category', required: false, description: 'Filter by category (e.g., FEES, RISK, DEVICE_ABUSE)', example: 'FEES' })
   @ApiQuery({ name: 'isActive', required: false, description: 'Filter by active status', example: true, type: Boolean })
@@ -459,6 +463,193 @@ export class AdminController {
   }
 
   // =====================
+  // DASHBOARD
+  // =====================
+
+  @Get('dashboard/metrics')
+  @RequirePermission(PERMISSIONS.VIEW_DASHBOARD)
+  @ApiOperation({
+    summary: 'Get dashboard overview metrics',
+    description: 'Returns dashboard metrics: Total Users, Total Events, Active Events, Revenue, Pending KYC count',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Dashboard metrics retrieved successfully',
+    schema: {
+      example: {
+        totalUsers: 1000,
+        totalEvents: 109,
+        activeEvents: 28,
+        pendingKyc: 18,
+        revenue: '8650000000', // Total received in kobo
+        totalSprayers: 0,
+        totalAttendees: 0,
+      },
+    },
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  async getDashboardMetrics() {
+    return this.adminService.getDashboardMetrics();
+  }
+
+  // =====================
+  // EVENTS MANAGEMENT
+  // =====================
+
+  @Get('events')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'List all events',
+    description: 'Get paginated list of events with filtering options',
+  })
+  @ApiResponse({ status: 200, description: 'Events retrieved successfully' })
+  async getEvents(@Query(ValidationPipe) filters: GetEventsDto) {
+    return this.adminService.getEvents(filters);
+  }
+
+  @Get('events/:id')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'Get event details',
+    description: 'Get detailed information about a specific event including participants and sprays',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({ status: 200, description: 'Event details retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async getEventDetails(@Param('id') eventId: string) {
+    return this.adminService.getEventDetails(eventId);
+  }
+
+  @Get('events/:id/spray-activity')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'Get spray activity feed',
+    description: 'Get paginated list of sprays for an event with filtering options',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({ status: 200, description: 'Spray activity retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async getEventSprayActivity(
+    @Param('id') eventId: string,
+    @Query(ValidationPipe) filters: GetSprayActivityDto,
+  ) {
+    return this.adminService.getEventSprayActivity(eventId, filters);
+  }
+
+  @Get('events/:id/top-sprayers')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'Get top sprayers leaderboard',
+    description: 'Get ranked list of top sprayers by total amount for an event',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({ status: 200, description: 'Top sprayers retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async getEventTopSprayers(
+    @Param('id') eventId: string,
+    @Query(ValidationPipe) filters: GetTopSprayersDto,
+  ) {
+    return this.adminService.getEventTopSprayers(eventId, filters);
+  }
+
+  @Post('events/:id/suspend')
+  @RequirePermission(PERMISSIONS.MANAGE_EVENTS)
+  @ApiOperation({
+    summary: 'Suspend event',
+    description: 'Suspend an event by changing its status to CANCELLED',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({ status: 200, description: 'Event suspended successfully' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  @ApiResponse({ status: 400, description: 'Event is already cancelled' })
+  async suspendEvent(@Param('id') eventId: string, @Request() req: any) {
+    const adminId = req.admin?.id;
+    return this.adminService.suspendEvent(eventId, adminId);
+  }
+
+  @Get('events/:id/report')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'Download event report',
+    description: 'Download event report as CSV file including participants and sprays',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Event report downloaded successfully',
+    content: {
+      'text/csv': {
+        schema: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async getEventReport(@Param('id') eventId: string, @Res() res: Response) {
+    const { buffer, filename } = await this.adminService.generateEventReport(eventId);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
+  // =====================
+  // TRANSACTIONS MANAGEMENT
+  // =====================
+
+  @Get('transactions')
+  @RequirePermission(PERMISSIONS.VIEW_TRANSACTIONS)
+  @ApiOperation({
+    summary: 'List all transactions',
+    description: 'Get paginated list of transactions with filtering options',
+  })
+  @ApiResponse({ status: 200, description: 'Transactions retrieved successfully' })
+  async getTransactions(@Query(ValidationPipe) filters: GetTransactionsDto) {
+    return this.adminService.getTransactions(filters);
+  }
+
+  @Get('transactions/:id')
+  @RequirePermission(PERMISSIONS.VIEW_TRANSACTIONS)
+  @ApiOperation({
+    summary: 'Get transaction details',
+    description: 'Get detailed information about a specific transaction',
+  })
+  @ApiParam({ name: 'id', description: 'Transaction ID' })
+  @ApiResponse({ status: 200, description: 'Transaction details retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Transaction not found' })
+  async getTransactionDetails(@Param('id') transactionId: string) {
+    return this.adminService.getTransactionDetails(transactionId);
+  }
+
+  @Get('transactions/:id/receipt')
+  @RequirePermission(PERMISSIONS.VIEW_TRANSACTIONS)
+  @ApiOperation({
+    summary: 'Download transaction receipt',
+    description: 'Download transaction receipt as CSV file',
+  })
+  @ApiParam({ name: 'id', description: 'Transaction ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Transaction receipt downloaded successfully',
+    content: {
+      'text/csv': {
+        schema: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Transaction not found' })
+  async getTransactionReceipt(@Param('id') transactionId: string, @Res() res: Response) {
+    const { buffer, filename } = await this.adminService.generateTransactionReceipt(transactionId);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
+  // =====================
   // AML ALERTS
   // =====================
 
@@ -848,5 +1039,110 @@ export class AdminController {
     }
     const assignerId = req.admin?.id;
     return this.adminService.assignRoleToAdmin(dto.adminId, roleName, assignerId);
+  }
+
+  // =====================
+  // WITHDRAWALS MANAGEMENT
+  // =====================
+
+  @Get('withdrawals')
+  @RequirePermission(PERMISSIONS.VIEW_WITHDRAWALS)
+  @ApiOperation({
+    summary: 'List all withdrawals',
+    description: 'Get paginated list of payout transactions (withdrawals) with filtering options',
+  })
+  @ApiResponse({ status: 200, description: 'Withdrawals retrieved successfully' })
+  async getWithdrawals(@Query(ValidationPipe) filters: GetWithdrawalsDto) {
+    return this.adminService.getWithdrawals(filters);
+  }
+
+  @Post('withdrawals/:id/approve')
+  @RequirePermission(PERMISSIONS.MANAGE_WITHDRAWALS)
+  @ApiOperation({
+    summary: 'Approve withdrawal',
+    description: 'Approve a pending withdrawal. Note: Withdrawals are typically auto-processed, but this can trigger reprocessing.',
+  })
+  @ApiParam({ name: 'id', description: 'Payout Transaction ID' })
+  @ApiResponse({ status: 200, description: 'Withdrawal approved successfully' })
+  @ApiResponse({ status: 404, description: 'Withdrawal not found' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  async approveWithdrawal(@Param('id') payoutTransactionId: string, @Request() req: any) {
+    const adminId = req.admin?.id;
+    return this.adminService.approveWithdrawal(payoutTransactionId, adminId);
+  }
+
+  @Post('withdrawals/:id/reject')
+  @RequirePermission(PERMISSIONS.MANAGE_WITHDRAWALS)
+  @ApiOperation({
+    summary: 'Reject withdrawal',
+    description: 'Reject a pending withdrawal with a reason',
+  })
+  @ApiParam({ name: 'id', description: 'Payout Transaction ID' })
+  @ApiBody({ type: RejectWithdrawalDto })
+  @ApiResponse({ status: 200, description: 'Withdrawal rejected successfully' })
+  @ApiResponse({ status: 404, description: 'Withdrawal not found' })
+  @ApiResponse({ status: 400, description: 'Withdrawal is already rejected or successful' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  async rejectWithdrawal(
+    @Param('id') payoutTransactionId: string,
+    @Body(ValidationPipe) dto: RejectWithdrawalDto,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    return this.adminService.rejectWithdrawal(payoutTransactionId, adminId, dto);
+  }
+
+  // =====================
+  // NOTIFICATIONS MANAGEMENT
+  // =====================
+
+  @Get('notifications')
+  @RequirePermission(PERMISSIONS.VIEW_NOTIFICATIONS)
+  @ApiOperation({
+    summary: 'List admin notifications',
+    description: 'Get paginated list of notifications for the current admin. Note: Admin must have a linked userId.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'read', required: false, type: Boolean, description: 'Filter by read status' })
+  @ApiQuery({ name: 'type', required: false, type: String, description: 'Filter by notification type' })
+  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Filter from date (ISO 8601)' })
+  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter to date (ISO 8601)' })
+  @ApiResponse({ status: 200, description: 'Notifications retrieved successfully' })
+  @ApiResponse({ status: 400, description: 'Admin does not have a linked user account' })
+  async getNotifications(
+    @Query(ValidationPipe) filters: GetNotificationsDto,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    return this.adminService.getAdminNotifications(adminId, filters);
+  }
+
+  @Patch('notifications/:id/read')
+  @RequirePermission(PERMISSIONS.VIEW_NOTIFICATIONS)
+  @ApiOperation({
+    summary: 'Mark notification as read',
+    description: 'Mark a notification as read for the current admin',
+  })
+  @ApiParam({ name: 'id', description: 'Notification ID' })
+  @ApiResponse({ status: 200, description: 'Notification marked as read' })
+  @ApiResponse({ status: 404, description: 'Notification not found' })
+  @ApiResponse({ status: 400, description: 'Admin does not have a linked user account' })
+  async markNotificationAsRead(@Param('id') notificationId: string, @Request() req: any) {
+    const adminId = req.admin?.id;
+    return this.adminService.markNotificationAsRead(adminId, notificationId);
+  }
+
+  @Get('notifications/unread-count')
+  @RequirePermission(PERMISSIONS.VIEW_NOTIFICATIONS)
+  @ApiOperation({
+    summary: 'Get unread notification count',
+    description: 'Get count of unread notifications for the current admin',
+  })
+  @ApiResponse({ status: 200, description: 'Unread count retrieved successfully' })
+  @ApiResponse({ status: 400, description: 'Admin does not have a linked user account' })
+  async getUnreadNotificationCount(@Request() req: any) {
+    const adminId = req.admin?.id;
+    return this.adminService.getUnreadNotificationCount(adminId);
   }
 }

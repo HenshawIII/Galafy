@@ -70,6 +70,10 @@ export class AdminJwtAuthGuard extends AuthGuard('admin-jwt') {
       );
     }
 
+    // IMPORTANT: Attach admin to request.admin (Passport attaches to request.user by default)
+    const request = context.switchToHttp().getRequest();
+    request.admin = admin;
+
     return admin;
   }
 }
