@@ -1006,17 +1006,9 @@ export class AdminService {
   async getDashboardMetrics() {
     // Calculate date ranges for growth calculations
     const now = new Date();
-    const last7DaysStart = new Date(now);
-    last7DaysStart.setDate(now.getDate() - 7);
-    last7DaysStart.setHours(0, 0, 0, 0);
-
-    const previous7DaysStart = new Date(now);
-    previous7DaysStart.setDate(now.getDate() - 14);
-    previous7DaysStart.setHours(0, 0, 0, 0);
-
-    const previous7DaysEnd = new Date(now);
-    previous7DaysEnd.setDate(now.getDate() - 7);
-    previous7DaysEnd.setHours(23, 59, 59, 999);
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 7);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
 
     // Execute parallel queries for optimal performance
     const [
@@ -1027,15 +1019,12 @@ export class AdminService {
       pendingKycRequests,
       // All-time revenue from AdminFee
       allTimeRevenueResult,
-      // Growth period data
-      last7DaysUsers,
-      previous7DaysUsers,
-      last7DaysEvents,
-      previous7DaysEvents,
-      last7DaysRevenue,
-      previous7DaysRevenue,
+      // Growth period data - total counts 7 days ago
+      totalUsers7DaysAgo,
+      totalEvents7DaysAgo,
+      totalRevenue7DaysAgo,
     ] = await Promise.all([
-      // Total Users - count ALL users
+      // Total Users - count ALL users (current)
       this.databaseService.user.count(),
       // Verified Users - count only verified users
       this.databaseService.user.count({
@@ -1043,7 +1032,7 @@ export class AdminService {
           isVerified: true,
         },
       }),
-      // Total Events
+      // Total Events (current)
       this.databaseService.event.count(),
       // Active Events (LIVE status)
       this.databaseService.event.count({
@@ -1066,59 +1055,28 @@ export class AdminService {
           amount: true,
         },
       }),
-      // Last 7 days users
+      // Total Users 7 days ago (users created before 7 days ago)
       this.databaseService.user.count({
         where: {
           createdAt: {
-            gte: last7DaysStart,
+            lt: sevenDaysAgo,
           },
         },
       }),
-      // Previous 7 days users
-      this.databaseService.user.count({
-        where: {
-          createdAt: {
-            gte: previous7DaysStart,
-            lte: previous7DaysEnd,
-          },
-        },
-      }),
-      // Last 7 days events
+      // Total Events 7 days ago (events created before 7 days ago)
       this.databaseService.event.count({
         where: {
           createdAt: {
-            gte: last7DaysStart,
+            lt: sevenDaysAgo,
           },
         },
       }),
-      // Previous 7 days events
-      this.databaseService.event.count({
-        where: {
-          createdAt: {
-            gte: previous7DaysStart,
-            lte: previous7DaysEnd,
-          },
-        },
-      }),
-      // Last 7 days revenue
+      // Total Revenue 7 days ago (AdminFee collected before 7 days ago)
       this.databaseService.adminFee.aggregate({
         where: {
           status: 'COLLECTED',
           createdAt: {
-            gte: last7DaysStart,
-          },
-        },
-        _sum: {
-          amount: true,
-        },
-      }),
-      // Previous 7 days revenue
-      this.databaseService.adminFee.aggregate({
-        where: {
-          status: 'COLLECTED',
-          createdAt: {
-            gte: previous7DaysStart,
-            lte: previous7DaysEnd,
+            lt: sevenDaysAgo,
           },
         },
         _sum: {
@@ -1128,6 +1086,7 @@ export class AdminService {
     ]);
 
     // Calculate growth percentages
+    // Growth compares current total vs total 7 days ago
     const calculateGrowth = (current: number, previous: number): number => {
       if (previous === 0) {
         return current > 0 ? 100 : 0;
@@ -1135,20 +1094,31 @@ export class AdminService {
       return Number((((current - previous) / previous) * 100).toFixed(1));
     };
 
-    const totalUsersLast7Days = last7DaysUsers;
-    const totalUsersPrevious7Days = previous7DaysUsers;
-    const totalUsersGrowth = calculateGrowth(totalUsersLast7Days, totalUsersPrevious7Days);
+    // Total Users Growth: current total vs total 7 days ago
+    const totalUsersGrowth = calculateGrowth(totalUsers, totalUsers7DaysAgo);
 
-    const totalEventsLast7Days = last7DaysEvents;
-    const totalEventsPrevious7Days = previous7DaysEvents;
-    const totalEventsGrowth = calculateGrowth(totalEventsLast7Days, totalEventsPrevious7Days);
+    // Total Events Growth: current total vs total 7 days ago
+    const totalEventsGrowth = calculateGrowth(totalEvents, totalEvents7DaysAgo);
 
-    const revenueLast7Days = last7DaysRevenue._sum.amount || new Decimal(0);
-    const revenuePrevious7Days = previous7DaysRevenue._sum.amount || new Decimal(0);
-    const revenueGrowth = calculateGrowth(
-      Number(revenueLast7Days.toString()),
-      Number(revenuePrevious7Days.toString()),
-    );
+    // Revenue Growth: current total revenue vs total revenue 7 days ago
+    // Current: Sum of all AdminFee with status='COLLECTED' (all time)
+    // 7 days ago: Sum of all AdminFee with status='COLLECTED' that were created before 7 days ago
+    const totalRevenue7DaysAgoAmount = totalRevenue7DaysAgo._sum.amount || new Decimal(0);
+    const currentTotalRevenue = allTimeRevenueResult._sum.amount || new Decimal(0);
+    
+    // Convert to numbers for comparison (handle Decimal type properly)
+    const currentAmount = currentTotalRevenue instanceof Decimal 
+      ? Number(currentTotalRevenue.toString()) 
+      : Number(currentTotalRevenue) || 0;
+    const previousAmount = totalRevenue7DaysAgoAmount instanceof Decimal
+      ? Number(totalRevenue7DaysAgoAmount.toString())
+      : Number(totalRevenue7DaysAgoAmount) || 0;
+    
+    // Calculate growth: if same, should be 0%; negative only if fees were reversed/refunded
+    // Current = sum of all COLLECTED fees (all time)
+    // Previous = sum of COLLECTED fees created before 7 days ago
+    // If they're equal, growth = 0%
+    const revenueGrowth = calculateGrowth(currentAmount, previousAmount);
 
     const allTimeRevenue = allTimeRevenueResult._sum.amount || new Decimal(0);
 

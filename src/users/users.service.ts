@@ -77,11 +77,11 @@ export class UsersService {
     });
 
     if (existingPhone) {
-      throw new ConflictException('Unable to complete registration.');
+      throw new ConflictException('An account with those details already exists. Please log in or reset your password if you’ve forgotten it.');
     }
 
     if (existingUser) {
-      throw new ConflictException('Unable to complete registration.');
+      throw new ConflictException('An account with those details already exists. Please log in or reset your password if you’ve forgotten it.');
     }
 
     // Hash password
@@ -335,7 +335,7 @@ export class UsersService {
 
     if (!user) {
       // Don't reveal if user exists or not for security
-      return { message: 'If the email exists, a password reset OTP has been sent' };
+      return { message: 'If an account is associated with this email, you will receive a password reset link shortly.' };
     }
 
     // Generate 6-digit OTP for password reset
@@ -358,7 +358,7 @@ export class UsersService {
       // Still return success message for security (don't reveal if email exists)
     }
 
-    return { message: 'If the email exists, a password reset OTP has been sent' };
+    return { message: 'If an account is associated with this email, you will receive a password reset link shortly.' };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
