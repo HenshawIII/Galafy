@@ -35,7 +35,7 @@ import { AdminPublic } from './auth/decorators/public.decorator.js';
 import { PERMISSIONS } from './auth/permissions.js';
 import { AdminRole } from '../../generated/prisma/enums.js';
 import { GetConfigDto, UpdateConfigDto, CreateConfigDto } from './dto/config.dto.js';
-import { GetUsersDto, RestrictUserDto } from './dto/user-management.dto.js';
+import { GetUsersDto, RestrictUserDto, SearchUsersDto } from './dto/user-management.dto.js';
 import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-management.dto.js';
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
@@ -286,6 +286,58 @@ export class AdminController {
     return this.adminService.getUsers(filters);
   }
 
+  @Get('users/search')
+  @RequirePermission(PERMISSIONS.VIEW_USERS)
+  @ApiOperation({
+    summary: 'Search users',
+    description: 'Search for users by email, phone, or username. Auto-detects search type: email (exact match), phone (exact match), or username (partial match). Returns array with single user for email/phone, multiple users for username.',
+  })
+  @ApiQuery({
+    name: 'q',
+    required: true,
+    description: 'Search query - email, phone, or username',
+    example: 'john@example.com',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Users found successfully',
+    schema: {
+      example: {
+        users: [
+          {
+            id: 'user-uuid',
+            email: 'john@example.com',
+            firstName: 'John',
+            lastName: 'Doe',
+            username: 'johndoe',
+            phone: '+2341234567890',
+            profilePicture: 'https://example.com/profile.jpg',
+            isVerified: true,
+            customer: {
+              id: 'customer-uuid',
+              tier: 'Tier_2',
+              isAmlRestricted: false,
+              walletCount: 1,
+              totalBalance: '5000000',
+              wallets: [
+                {
+                  id: 'wallet-uuid',
+                  availableBalance: '5000000',
+                  ledgerBalance: '5000000',
+                  currencyId: 'currency-uuid',
+                },
+              ],
+            },
+            createdAt: '2024-01-01T00:00:00Z',
+          },
+        ],
+      },
+    },
+  })
+  async searchUsers(@Query(ValidationPipe) searchDto: SearchUsersDto) {
+    return this.adminService.searchUsers(searchDto.q);
+  }
+
   @Get('users/:userId')
   @RequirePermission(PERMISSIONS.VIEW_USERS)
   @ApiOperation({ summary: 'Get user details', description: 'Get detailed information about a specific user' })
@@ -449,6 +501,23 @@ export class AdminController {
         totalWalletBalance: '5000000000',
         totalWithdrawn: '2000000000',
         totalReceived: '7000000000',
+        chartData: [
+          {
+            date: '2025-02-01',
+            amount: '50000000',
+            count: 25,
+          },
+          {
+            date: '2025-02-02',
+            amount: '75000000',
+            count: 30,
+          },
+          {
+            date: '2025-02-03',
+            amount: '60000000',
+            count: 28,
+          },
+        ],
         cached: false,
         timestamp: '2025-02-08T14:30:00.000Z',
         startDate: '2025-01-01T00:00:00.000Z',
@@ -470,7 +539,7 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_DASHBOARD)
   @ApiOperation({
     summary: 'Get dashboard overview metrics',
-    description: 'Returns dashboard metrics: Total Users, Total Events, Active Events, Revenue, Pending KYC count',
+    description: 'Returns dashboard metrics: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count. Includes growth percentages comparing last 7 days vs previous 7 days.',
   })
   @ApiResponse({
     status: 200,
@@ -478,10 +547,14 @@ export class AdminController {
     schema: {
       example: {
         totalUsers: 1000,
+        totalUsersGrowth: 4.2,
+        verifiedUsers: 950,
         totalEvents: 109,
+        totalEventsGrowth: 4.2,
         activeEvents: 28,
         pendingKyc: 18,
-        revenue: '8650000000', // Total received in kobo
+        revenue: '8650000000', // All-time AdminFee total in kobo
+        revenueGrowth: 4.2,
         totalSprayers: 0,
         totalAttendees: 0,
       },
@@ -505,6 +578,49 @@ export class AdminController {
   @ApiResponse({ status: 200, description: 'Events retrieved successfully' })
   async getEvents(@Query(ValidationPipe) filters: GetEventsDto) {
     return this.adminService.getEvents(filters);
+  }
+
+  @Get('events/top-by-sprayers')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'Get top 5 events by sprayers',
+    description: 'Get ranked list of top 5 events based on number of unique sprayers. Ties are broken by earliest start date.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Top events retrieved successfully',
+    schema: {
+      example: {
+        events: [
+          {
+            rank: 1,
+            id: 'event-id-1',
+            title: 'Event Title',
+            code: 'EVENT001',
+            status: 'LIVE',
+            startsAt: '2025-02-08T10:00:00.000Z',
+            startDate: '2025-02-08T10:00:00.000Z',
+            location: 'Lagos',
+            category: 'Concert',
+            imageUrl: 'https://example.com/image.jpg',
+            hostUser: {
+              id: 'user-id',
+              email: 'host@example.com',
+              firstName: 'John',
+              lastName: 'Doe',
+              username: 'johndoe',
+              phone: '+2341234567890',
+              profilePicture: 'https://example.com/profile.jpg',
+            },
+            sprayerCount: 150,
+            createdAt: '2025-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+    },
+  })
+  async getTopEventsBySprayers() {
+    return this.adminService.getTopEventsBySprayers();
   }
 
   @Get('events/:id')
