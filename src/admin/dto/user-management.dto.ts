@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsBoolean, IsInt, Min } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsBoolean, IsInt, Min , IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { KycTier } from '../../users/dto/create-user-dto.js';
@@ -39,5 +39,15 @@ export class RestrictUserDto {
   @ApiProperty({ example: 'Suspicious transaction activity detected', description: 'Reason for restriction' })
   @IsString()
   reason: string;
+}
+
+export class SearchUsersDto {
+  @ApiProperty({
+    example: 'john@example.com',
+    description: 'Search query - can be email, phone, or username. Email and phone use exact match, username uses partial match.',
+  })
+  @IsString({ message: 'Search query must be a string' })
+  @IsNotEmpty({ message: 'Search query is required' })
+  q: string;
 }
 

@@ -252,6 +252,152 @@ export class AdminService {
   }
 
   /**
+   * Search users by email, phone, or username
+   * Auto-detects search type: email (contains @), phone (digits/+/spaces), or username (partial match)
+   */
+  async searchUsers(query: string) {
+    const trimmedQuery = query.trim();
+
+    if (!trimmedQuery) {
+      return { users: [] };
+    }
+
+    let users: any[] = [];
+
+    // Detect search type
+    if (trimmedQuery.includes('@')) {
+      // Email search - exact match
+      const user = await this.databaseService.user.findUnique({
+        where: { email: trimmedQuery },
+        include: {
+          customer: {
+            include: {
+              wallets: {
+                select: {
+                  id: true,
+                  availableBalance: true,
+                  ledgerBalance: true,
+                  currencyId: true,
+                },
+              },
+              withdrawalLimit: true,
+            },
+          },
+        },
+      });
+      users = user ? [user] : [];
+    } else if (/^[\d+\s\-()]+$/.test(trimmedQuery)) {
+      // Phone search - exact match (contains only digits, +, spaces, hyphens, parentheses)
+      // Try exact match first, then try normalized (without spaces)
+      const normalizedPhone = trimmedQuery.replace(/\s+/g, ''); // Remove spaces for matching
+      let user = await this.databaseService.user.findUnique({
+        where: { phone: trimmedQuery },
+        include: {
+          customer: {
+            include: {
+              wallets: {
+                select: {
+                  id: true,
+                  availableBalance: true,
+                  ledgerBalance: true,
+                  currencyId: true,
+                },
+              },
+              withdrawalLimit: true,
+            },
+          },
+        },
+      });
+      
+      // If not found with original format, try normalized format
+      if (!user && normalizedPhone !== trimmedQuery) {
+        user = await this.databaseService.user.findUnique({
+          where: { phone: normalizedPhone },
+          include: {
+            customer: {
+              include: {
+                wallets: {
+                  select: {
+                    id: true,
+                    availableBalance: true,
+                    ledgerBalance: true,
+                    currencyId: true,
+                  },
+                },
+                withdrawalLimit: true,
+              },
+            },
+          },
+        });
+      }
+      users = user ? [user] : [];
+    } else {
+      // Username search - partial match (case-insensitive)
+      users = await this.databaseService.user.findMany({
+        where: {
+          username: {
+            contains: trimmedQuery,
+            mode: 'insensitive',
+          },
+        },
+        include: {
+          customer: {
+            include: {
+              wallets: {
+                select: {
+                  id: true,
+                  availableBalance: true,
+                  ledgerBalance: true,
+                  currencyId: true,
+                },
+              },
+              withdrawalLimit: true,
+            },
+          },
+        },
+        take: 50, // Limit username results to prevent too many results
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    // Format response
+    return {
+      users: users.map((user) => {
+        const walletCount = user.customer?.wallets?.length || 0;
+        const totalBalance = user.customer?.wallets?.reduce(
+          (sum: Decimal, wallet: any) => sum.plus(wallet.availableBalance || 0),
+          new Decimal(0),
+        ) || new Decimal(0);
+
+        return {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          username: user.username,
+          phone: user.phone,
+          profilePicture: user.profilePicture,
+          isVerified: user.isVerified,
+          customer: user.customer
+            ? {
+                id: user.customer.id,
+                tier: user.customer.tier,
+                isAmlRestricted: user.customer.isAmlRestricted,
+                amlRestrictedAt: user.customer.amlRestrictedAt,
+                amlRestrictionReason: user.customer.amlRestrictionReason,
+                wallets: user.customer.wallets,
+                withdrawalLimit: user.customer.withdrawalLimit,
+                walletCount,
+                totalBalance: totalBalance.toString(),
+              }
+            : null,
+          createdAt: user.createdAt,
+        };
+      }),
+    };
+  }
+
+  /**
    * Get user details
    */
   async getUserDetails(userId: string) {
@@ -762,10 +908,74 @@ export class AdminService {
     const totalWithdrawn = withdrawnResult._sum.amount || new Decimal(0);
     const totalReceived = receivedResult._sum.amount || new Decimal(0);
 
+    // Generate chart data - default to last 7 days if no date filters provided
+    let chartData: Array<{ date: string; amount: string; count: number }> = [];
+    
+    // Determine date range for chart data
+    const chartStartDate = filters?.startDate 
+      ? new Date(filters.startDate)
+      : (() => {
+          const date = new Date();
+          date.setDate(date.getDate() - 7);
+          date.setHours(0, 0, 0, 0);
+          return date;
+        })();
+    
+    const chartEndDate = filters?.endDate
+      ? (() => {
+          const date = new Date(filters.endDate);
+          date.setHours(23, 59, 59, 999);
+          return date;
+        })()
+      : new Date();
+
+    // Fetch all successful transactions for chart data
+    const chartTransactions = await this.databaseService.transaction.findMany({
+      where: {
+        status: TransactionStatus.SUCCESS,
+        createdAt: {
+          gte: chartStartDate,
+          lte: chartEndDate,
+        },
+      },
+      select: {
+        amount: true,
+        createdAt: true,
+      },
+    });
+
+    // Group transactions by date
+    const transactionsByDate = new Map<string, { amount: Decimal; count: number }>();
+    
+    chartTransactions.forEach((tx) => {
+      const dateKey = tx.createdAt.toISOString().split('T')[0]; // YYYY-MM-DD format
+      const existing = transactionsByDate.get(dateKey);
+      
+      if (existing) {
+        existing.amount = existing.amount.plus(tx.amount);
+        existing.count += 1;
+      } else {
+        transactionsByDate.set(dateKey, {
+          amount: tx.amount,
+          count: 1,
+        });
+      }
+    });
+
+    // Convert to array and sort by date
+    chartData = Array.from(transactionsByDate.entries())
+      .map(([date, data]) => ({
+        date,
+        amount: data.amount.toString(),
+        count: data.count,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     const result = {
       totalWalletBalance: totalWalletBalance.toString(),
       totalWithdrawn: totalWithdrawn.toString(),
       totalReceived: totalReceived.toString(),
+      chartData,
       cached: false,
       timestamp: new Date().toISOString(),
       ...(filters?.startDate && { startDate: filters.startDate }),
@@ -790,21 +1000,47 @@ export class AdminService {
 
   /**
    * Get dashboard overview metrics
-   * Returns: Total Users, Total Events, Revenue, Pending KYC count
+   * Returns: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count (utility bill submissions)
+   * Includes growth percentages comparing last 7 days vs previous 7 days
    */
   async getDashboardMetrics() {
+    // Calculate date ranges for growth calculations
+    const now = new Date();
+    const last7DaysStart = new Date(now);
+    last7DaysStart.setDate(now.getDate() - 7);
+    last7DaysStart.setHours(0, 0, 0, 0);
+
+    const previous7DaysStart = new Date(now);
+    previous7DaysStart.setDate(now.getDate() - 14);
+    previous7DaysStart.setHours(0, 0, 0, 0);
+
+    const previous7DaysEnd = new Date(now);
+    previous7DaysEnd.setDate(now.getDate() - 7);
+    previous7DaysEnd.setHours(23, 59, 59, 999);
+
     // Execute parallel queries for optimal performance
     const [
       totalUsers,
+      verifiedUsers,
       totalEvents,
       activeEvents,
       pendingKycRequests,
-      transactionSummary,
+      // All-time revenue from AdminFee
+      allTimeRevenueResult,
+      // Growth period data
+      last7DaysUsers,
+      previous7DaysUsers,
+      last7DaysEvents,
+      previous7DaysEvents,
+      last7DaysRevenue,
+      previous7DaysRevenue,
     ] = await Promise.all([
-      // Total Users
+      // Total Users - count ALL users
+      this.databaseService.user.count(),
+      // Verified Users - count only verified users
       this.databaseService.user.count({
         where: {
-          isVerified: true, // Only count verified users
+          isVerified: true,
         },
       }),
       // Total Events
@@ -815,22 +1051,117 @@ export class AdminService {
           status: 'LIVE',
         },
       }),
-      // Pending KYC Requests
-      this.databaseService.kycRequest.count({
+      // Pending KYC Requests - count pending utility bill submissions
+      this.databaseService.utilityBillSubmission.count({
         where: {
-          status: KycRequestStatus.PENDING,
+          status: UtilityBillStatus.PENDING,
         },
       }),
-      // Revenue (Total Received from transaction analytics)
-      this.getTransactionAnalyticsSummary(),
+      // All-time Revenue from AdminFee (status = COLLECTED)
+      this.databaseService.adminFee.aggregate({
+        where: {
+          status: 'COLLECTED',
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+      // Last 7 days users
+      this.databaseService.user.count({
+        where: {
+          createdAt: {
+            gte: last7DaysStart,
+          },
+        },
+      }),
+      // Previous 7 days users
+      this.databaseService.user.count({
+        where: {
+          createdAt: {
+            gte: previous7DaysStart,
+            lte: previous7DaysEnd,
+          },
+        },
+      }),
+      // Last 7 days events
+      this.databaseService.event.count({
+        where: {
+          createdAt: {
+            gte: last7DaysStart,
+          },
+        },
+      }),
+      // Previous 7 days events
+      this.databaseService.event.count({
+        where: {
+          createdAt: {
+            gte: previous7DaysStart,
+            lte: previous7DaysEnd,
+          },
+        },
+      }),
+      // Last 7 days revenue
+      this.databaseService.adminFee.aggregate({
+        where: {
+          status: 'COLLECTED',
+          createdAt: {
+            gte: last7DaysStart,
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+      // Previous 7 days revenue
+      this.databaseService.adminFee.aggregate({
+        where: {
+          status: 'COLLECTED',
+          createdAt: {
+            gte: previous7DaysStart,
+            lte: previous7DaysEnd,
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
     ]);
+
+    // Calculate growth percentages
+    const calculateGrowth = (current: number, previous: number): number => {
+      if (previous === 0) {
+        return current > 0 ? 100 : 0;
+      }
+      return Number((((current - previous) / previous) * 100).toFixed(1));
+    };
+
+    const totalUsersLast7Days = last7DaysUsers;
+    const totalUsersPrevious7Days = previous7DaysUsers;
+    const totalUsersGrowth = calculateGrowth(totalUsersLast7Days, totalUsersPrevious7Days);
+
+    const totalEventsLast7Days = last7DaysEvents;
+    const totalEventsPrevious7Days = previous7DaysEvents;
+    const totalEventsGrowth = calculateGrowth(totalEventsLast7Days, totalEventsPrevious7Days);
+
+    const revenueLast7Days = last7DaysRevenue._sum.amount || new Decimal(0);
+    const revenuePrevious7Days = previous7DaysRevenue._sum.amount || new Decimal(0);
+    const revenueGrowth = calculateGrowth(
+      Number(revenueLast7Days.toString()),
+      Number(revenuePrevious7Days.toString()),
+    );
+
+    const allTimeRevenue = allTimeRevenueResult._sum.amount || new Decimal(0);
 
     return {
       totalUsers,
+      totalUsersGrowth,
+      verifiedUsers,
       totalEvents,
+      totalEventsGrowth,
       activeEvents,
       pendingKyc: pendingKycRequests,
-      revenue: transactionSummary.totalReceived, // Total received in kobo
+      revenue: allTimeRevenue.toString(), // All-time AdminFee total in kobo
+      revenueGrowth,
       totalSprayers: 0, // TODO: Calculate from sprays if needed
       totalAttendees: 0, // TODO: Calculate from event participants if needed
     };
@@ -1682,6 +2013,8 @@ export class AdminService {
               firstName: true,
               lastName: true,
               username: true,
+              phone: true,
+              profilePicture: true,
             },
           },
           participants: {
@@ -1710,6 +2043,7 @@ export class AdminService {
 
       return {
         ...event,
+        startDate: event.startsAt, // Include starDate field
         participantCount,
         sprayCount,
         totalSprayed: totalSprayed.toString(),
@@ -1731,6 +2065,92 @@ export class AdminService {
   }
 
   /**
+   * Get top 5 events by number of sprayers
+   * Ranks events by unique sprayer count, with tie-breaking based on earliest start date
+   */
+  async getTopEventsBySprayers() {
+    // Get all events with their sprays
+    const events = await this.databaseService.event.findMany({
+      include: {
+        sprays: {
+          select: {
+            sprayerWalletId: true,
+            sprayerWallet: {
+              select: {
+                customer: {
+                  select: {
+                    userId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        hostUser: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+            phone: true,
+            profilePicture: true,
+          },
+        },
+      },
+      orderBy: {
+        startsAt: 'asc', // Pre-sort by start date for tie-breaking
+      },
+    });
+
+    // Calculate unique sprayer count for each event and prepare data
+    const eventsWithSprayerCount = events.map((event) => {
+      // Count unique sprayers by userId
+      const uniqueSprayers = new Set(
+        event.sprays
+          .map((spray) => spray.sprayerWallet?.customer?.userId)
+          .filter((userId) => userId !== null && userId !== undefined),
+      );
+      const sprayerCount = uniqueSprayers.size;
+
+      return {
+        id: event.id,
+        title: event.title,
+        code: event.code,
+        status: event.status,
+        startsAt: event.startsAt,
+        startDate: event.startsAt,
+        location: event.location,
+        category: event.category,
+        imageUrl: event.imageUrl,
+        hostUser: event.hostUser,
+        sprayerCount,
+        createdAt: event.createdAt,
+      };
+    });
+
+    // Sort by sprayer count (descending), then by start date (ascending for tie-breaking)
+    eventsWithSprayerCount.sort((a, b) => {
+      // First sort by sprayer count (descending)
+      if (b.sprayerCount !== a.sprayerCount) {
+        return b.sprayerCount - a.sprayerCount;
+      }
+      // If sprayer count is the same (or both 0), sort by start date (ascending - earlier events rank higher)
+      return a.startsAt.getTime() - b.startsAt.getTime();
+    });
+
+    // Get top 5 and assign ranks
+    const top5Events = eventsWithSprayerCount.slice(0, 5).map((event, index) => ({
+      rank: index + 1,
+      ...event,
+    }));
+
+    return {
+      events: top5Events,
+    };
+  }
+
+  /**
    * Get event details by ID
    */
   async getEventDetails(eventId: string) {
@@ -1745,6 +2165,7 @@ export class AdminService {
             lastName: true,
             username: true,
             phone: true,
+            profilePicture: true,
           },
         },
         participants: {
