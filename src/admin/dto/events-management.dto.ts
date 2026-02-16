@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsDateString, IsInt, Min, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsDateString, IsInt, Min, IsBoolean, IsArray } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { EventStatus } from '../../../generated/prisma/enums.js';
@@ -18,10 +18,23 @@ export class GetEventsDto {
   @Min(1)
   limit?: number;
 
-  @ApiPropertyOptional({ enum: EventStatus, description: 'Filter by event status' })
+  @ApiPropertyOptional({ 
+    enum: EventStatus, 
+    description: 'Filter by event status. UI values map as: "Upcoming" → SCHEDULED, "Live" → LIVE, "Completed" → ENDED, "All" → omit parameter' 
+  })
   @IsOptional()
   @IsEnum(EventStatus)
   status?: EventStatus;
+
+  @ApiPropertyOptional({ 
+    example: ['Birthday', 'Wedding'], 
+    description: 'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate',
+    type: [String]
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  categories?: string[];
 
   @ApiPropertyOptional({ example: 'concert', description: 'Search by event title or host name' })
   @IsOptional()
@@ -33,7 +46,7 @@ export class GetEventsDto {
   @IsString()
   hostUserId?: string;
 
-  @ApiPropertyOptional({ example: '2025-01-01T00:00:00.000Z', description: 'Filter events starting from this date' })
+  @ApiPropertyOptional({ example: '2025-01-01T00:00:00.000Z', description: 'Filter events starting from this date. Quick options (Today, This Week, This Month, Last 90 days) are calculated on frontend and sent as startDate/endDate' })
   @IsOptional()
   @IsDateString()
   startDate?: string;

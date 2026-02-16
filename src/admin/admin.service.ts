@@ -227,8 +227,10 @@ export class AdminService {
       users: users.map((user) => ({
         id: user.id,
         email: user.email,
+        username: user.username,
         firstName: user.firstName,
         lastName: user.lastName,
+        profilePicture: user.profilePicture,
         customer: user.customer
           ? {
               id: user.customer.id,
@@ -249,6 +251,148 @@ export class AdminService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Export users as CSV with filters applied
+   * Uses the same filter logic as getUsers() but exports all matching records
+   */
+  async exportUsersCSV(filters: GetUsersDto): Promise<{ buffer: Buffer; filename: string }> {
+    // Build where clause (same logic as getUsers)
+    const where: any = {
+      customer: {
+        ...(filters.tier && { tier: filters.tier }),
+        ...(filters.isAmlRestricted !== undefined && { isAmlRestricted: filters.isAmlRestricted }),
+      },
+    };
+
+    if (filters.search) {
+      where.OR = [
+        { email: { contains: filters.search, mode: 'insensitive' } },
+        { firstName: { contains: filters.search, mode: 'insensitive' } },
+        { lastName: { contains: filters.search, mode: 'insensitive' } },
+        {
+          customer: {
+            OR: [
+              { firstName: { contains: filters.search, mode: 'insensitive' } },
+              { lastName: { contains: filters.search, mode: 'insensitive' } },
+              { emailAddress: { contains: filters.search, mode: 'insensitive' } },
+            ],
+          },
+        },
+      ];
+    }
+
+    // Use streaming to avoid loading all users into memory
+    // Limit to 100,000 records max to prevent memory issues
+    const MAX_EXPORT_RECORDS = 100000;
+
+    return new Promise(async (resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const rows: any[] = [];
+
+      // Add header row
+      rows.push([
+        'User ID',
+        'Email',
+        'Username',
+        'First Name',
+        'Last Name',
+        'Profile Picture',
+        'Phone',
+        'KYC Tier',
+        'AML Restricted',
+        'AML Restricted At',
+        'AML Restriction Reason',
+        'Total Wallets',
+        'Total Wallet Balance',
+        'Created Date',
+      ]);
+
+      try {
+        let skip = 0;
+        const batchSize = 1000; // Process in batches
+        let totalProcessed = 0;
+
+        while (totalProcessed < MAX_EXPORT_RECORDS) {
+          const users = await this.databaseService.user.findMany({
+            where,
+            skip,
+            take: batchSize,
+            orderBy: { createdAt: 'desc' },
+            include: {
+              customer: {
+                include: {
+                  wallets: {
+                    select: {
+                      availableBalance: true,
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          if (users.length === 0) break;
+
+          // Add batch rows
+          for (const user of users) {
+            // Calculate total wallet balance
+            const totalWalletBalance = user.customer?.wallets
+              ? user.customer.wallets.reduce(
+                  (sum, wallet) => sum.plus(wallet.availableBalance),
+                  new Decimal(0),
+                )
+              : new Decimal(0);
+
+            // Format dates
+            const createdDate = user.createdAt ? user.createdAt.toISOString().split('T')[0] : '';
+            const amlRestrictedAt = user.customer?.amlRestrictedAt
+              ? user.customer.amlRestrictedAt.toISOString().split('T')[0]
+              : '';
+
+            rows.push([
+              user.id || '',
+              user.email || '',
+              user.username || '',
+              user.firstName || '',
+              user.lastName || '',
+              user.profilePicture || '',
+              user.phone || '',
+              user.customer?.tier || '',
+              user.customer?.isAmlRestricted ? 'Yes' : 'No',
+              amlRestrictedAt,
+              user.customer?.amlRestrictionReason || '',
+              user.customer?.wallets?.length || 0,
+              totalWalletBalance.toString(),
+              createdDate,
+            ]);
+          }
+
+          totalProcessed += users.length;
+          skip += batchSize;
+
+          // If we got fewer records than batch size, we're done
+          if (users.length < batchSize) break;
+        }
+
+        // Convert to CSV using fast-csv
+        const stream = csv.write(rows, { headers: false });
+
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          const today = new Date().toISOString().split('T')[0];
+          const filename = `users-export-${today}.csv`;
+          resolve({ buffer, filename });
+        });
+        stream.on('error', (error) => {
+          reject(error);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   /**
@@ -1944,6 +2088,10 @@ export class AdminService {
       where.status = filters.status;
     }
 
+    if (filters.categories && filters.categories.length > 0) {
+      where.category = { in: filters.categories };
+    }
+
     if (filters.hostUserId) {
       where.hostUserId = filters.hostUserId;
     }
@@ -2031,6 +2179,317 @@ export class AdminService {
         total,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  /**
+   * Export events as CSV with filters applied
+   * Uses the same filter logic as getEvents() but exports all matching records
+   */
+  async exportEventsCSV(filters: GetEventsDto): Promise<{ buffer: Buffer; filename: string }> {
+    // Build where clause (same logic as getEvents)
+    const where: any = {};
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    if (filters.categories && filters.categories.length > 0) {
+      where.category = { in: filters.categories };
+    }
+
+    if (filters.hostUserId) {
+      where.hostUserId = filters.hostUserId;
+    }
+
+    if (filters.startDate || filters.endDate) {
+      where.startsAt = {};
+      if (filters.startDate) {
+        where.startsAt.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.startsAt.lte = endDate;
+      }
+    }
+
+    if (filters.search) {
+      where.OR = [
+        { title: { contains: filters.search, mode: 'insensitive' } },
+        { hostUser: { firstName: { contains: filters.search, mode: 'insensitive' } } },
+        { hostUser: { lastName: { contains: filters.search, mode: 'insensitive' } } },
+        { hostUser: { email: { contains: filters.search, mode: 'insensitive' } } },
+      ];
+    }
+
+    // Use streaming to avoid loading all events into memory
+    // Limit to 100,000 records max to prevent memory issues
+    const MAX_EXPORT_RECORDS = 100000;
+
+    return new Promise(async (resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const rows: any[] = [];
+
+      // Add header row
+      rows.push([
+        'Event Name',
+        'Event Code',
+        'Date',
+        'Revenue',
+        'Attendees',
+        'Status',
+        'Location',
+        'Category',
+        'Host User',
+        'Created Date',
+      ]);
+
+      try {
+        let skip = 0;
+        const batchSize = 1000; // Process in batches
+        let totalProcessed = 0;
+
+        while (totalProcessed < MAX_EXPORT_RECORDS) {
+          const events = await this.databaseService.event.findMany({
+            where,
+            skip,
+            take: batchSize,
+            orderBy: { createdAt: 'desc' },
+            include: {
+              hostUser: {
+                select: {
+                  email: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+              sprays: {
+                select: {
+                  id: true,
+                  totalAmount: true,
+                  sprayerWallet: {
+                    select: {
+                      customer: {
+                        select: {
+                          userId: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          if (events.length === 0) break;
+
+          // Add batch rows
+          for (const event of events) {
+            // Calculate stats (same logic as getEvents)
+            const totalSprayed = event.sprays.reduce(
+              (sum, spray) => sum.plus(spray.totalAmount),
+              new Decimal(0),
+            );
+            const uniqueSprayers = new Set(
+              event.sprays
+                .map((s) => s.sprayerWallet?.customer?.userId)
+                .filter((userId) => userId !== null && userId !== undefined),
+            );
+
+            // Format dates
+            const eventDate = event.startsAt ? event.startsAt.toISOString().split('T')[0] : '';
+            const createdDate = event.createdAt ? event.createdAt.toISOString().split('T')[0] : '';
+
+            // Format host user name
+            let hostUserName = '';
+            if (event.hostUser) {
+              if (event.hostUser.firstName || event.hostUser.lastName) {
+                hostUserName = `${event.hostUser.firstName || ''} ${event.hostUser.lastName || ''}`.trim();
+              }
+              if (!hostUserName && event.hostUser.email) {
+                hostUserName = event.hostUser.email;
+              }
+            }
+
+            rows.push([
+              event.title || '',
+              event.code || '',
+              eventDate,
+              totalSprayed.toString(),
+              uniqueSprayers.size.toString(),
+              event.status || '',
+              event.location || '',
+              event.category || '',
+              hostUserName,
+              createdDate,
+            ]);
+          }
+
+          totalProcessed += events.length;
+          skip += batchSize;
+
+          // If we got fewer records than batch size, we're done
+          if (events.length < batchSize) break;
+        }
+
+        // Convert to CSV using fast-csv
+        const stream = csv.write(rows, { headers: false });
+
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          const today = new Date().toISOString().split('T')[0];
+          const filename = `events-export-${today}.csv`;
+          resolve({ buffer, filename });
+        });
+        stream.on('error', (error) => {
+          reject(error);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Get event metrics with growth percentages
+   * Returns aggregated metrics for all events with 7-day growth comparisons
+   */
+  async getEventMetrics() {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 7);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    // Calculate growth helper function
+    const calculateGrowth = (current: number, previous: number): number => {
+      if (previous === 0) {
+        return current > 0 ? 100 : 0;
+      }
+      return Number((((current - previous) / previous) * 100).toFixed(1));
+    };
+
+    // Current metrics - ALL events
+    const [
+      totalEvents,
+      activeEvents,
+      allSprays,
+      allSprays7DaysAgo,
+      totalEvents7DaysAgo,
+      activeEvents7DaysAgo,
+    ] = await Promise.all([
+      // Total Events (current)
+      this.databaseService.event.count(),
+      // Active Events (LIVE status)
+      this.databaseService.event.count({
+        where: {
+          status: 'LIVE',
+        },
+      }),
+      // All sprays (for unique sprayers and total sprayed)
+      this.databaseService.spray.findMany({
+        select: {
+          sprayerWalletId: true,
+          totalAmount: true,
+          sprayerWallet: {
+            select: {
+              customer: {
+                select: {
+                  userId: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      // All sprays created before 7 days ago
+      this.databaseService.spray.findMany({
+        where: {
+          createdAt: {
+            lt: sevenDaysAgo,
+          },
+        },
+        select: {
+          sprayerWalletId: true,
+          totalAmount: true,
+          sprayerWallet: {
+            select: {
+              customer: {
+                select: {
+                  userId: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      // Total Events 7 days ago
+      this.databaseService.event.count({
+        where: {
+          createdAt: {
+            lt: sevenDaysAgo,
+          },
+        },
+      }),
+      // Active Events 7 days ago (LIVE status AND created before 7 days ago)
+      this.databaseService.event.count({
+        where: {
+          status: 'LIVE',
+          createdAt: {
+            lt: sevenDaysAgo,
+          },
+        },
+      }),
+    ]);
+
+    // Calculate current metrics
+    // Unique sprayers: count distinct userIds from sprayerWallet.customer.userId
+    const uniqueSprayerIds = new Set(
+      allSprays
+        .map((spray) => spray.sprayerWallet?.customer?.userId)
+        .filter((userId) => userId !== null && userId !== undefined),
+    );
+    const totalAttendees = uniqueSprayerIds.size;
+
+    // Total sprayed: sum of all spray amounts
+    const totalSprayed = allSprays.reduce(
+      (sum, spray) => sum.plus(spray.totalAmount),
+      new Decimal(0),
+    );
+
+    // Calculate 7 days ago metrics
+    const uniqueSprayerIds7DaysAgo = new Set(
+      allSprays7DaysAgo
+        .map((spray) => spray.sprayerWallet?.customer?.userId)
+        .filter((userId) => userId !== null && userId !== undefined),
+    );
+    const totalAttendees7DaysAgo = uniqueSprayerIds7DaysAgo.size;
+
+    const totalSprayed7DaysAgo = allSprays7DaysAgo.reduce(
+      (sum, spray) => sum.plus(spray.totalAmount),
+      new Decimal(0),
+    );
+
+    // Calculate growth percentages
+    const totalEventsGrowth = calculateGrowth(totalEvents, totalEvents7DaysAgo);
+    const activeEventsGrowth = calculateGrowth(activeEvents, activeEvents7DaysAgo);
+    const totalAttendeesGrowth = calculateGrowth(totalAttendees, totalAttendees7DaysAgo);
+
+    // Convert Decimal to number for growth calculation
+    const currentSprayedAmount = Number(totalSprayed.toString());
+    const previousSprayedAmount = Number(totalSprayed7DaysAgo.toString());
+    const totalSprayedGrowth = calculateGrowth(currentSprayedAmount, previousSprayedAmount);
+
+    return {
+      totalEvents,
+      totalEventsGrowth,
+      activeEvents,
+      activeEventsGrowth,
+      totalAttendees,
+      totalAttendeesGrowth,
+      totalSprayed: totalSprayed.toString(),
+      totalSprayedGrowth,
     };
   }
 
@@ -2148,6 +2607,7 @@ export class AdminService {
                 firstName: true,
                 lastName: true,
                 username: true,
+                profilePicture: true,
               },
             },
             wallet: {
@@ -2173,6 +2633,7 @@ export class AdminService {
                         firstName: true,
                         lastName: true,
                         username: true,
+                        profilePicture: true,
                       },
                     },
                   },
@@ -2190,6 +2651,7 @@ export class AdminService {
                         firstName: true,
                         lastName: true,
                         username: true,
+                        profilePicture: true,
                       },
                     },
                   },
@@ -2383,6 +2845,12 @@ export class AdminService {
                     firstName: true,
                     lastName: true,
                     username: true,
+                    profilePicture: true,
+                    settings: {
+                      select: {
+                        showOnLeaderboard: true,
+                      },
+                    },
                   },
                 },
               },
@@ -2436,6 +2904,8 @@ export class AdminService {
         email: entry.user?.email,
         firstName: entry.user?.firstName,
         lastName: entry.user?.lastName,
+        profilePicture: entry.user?.profilePicture,
+        showOnLeaderboard: entry.user?.settings?.showOnLeaderboard ?? false,
         totalAmount: entry.totalAmount.toString(),
         sprayCount: entry.sprayCount,
         firstSprayAt: entry.firstSprayAt.toISOString(),

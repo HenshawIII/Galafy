@@ -607,6 +607,11 @@ export class EventsService {
                           id: true,
                           username: true,
                           profilePicture: true,
+                          settings: {
+                            select: {
+                              showOnLeaderboard: true,
+                            },
+                          },
                         },
                       },
                     },
@@ -622,6 +627,11 @@ export class EventsService {
                           id: true,
                           username: true,
                           profilePicture: true,
+                          settings: {
+                            select: {
+                              showOnLeaderboard: true,
+                            },
+                          },
                         },
                       },
                     },
@@ -670,11 +680,13 @@ export class EventsService {
             id: spray.sprayerWallet.customer.user.id,
             username: spray.sprayerWallet.customer.user.username,
             profilePicture: spray.sprayerWallet.customer.user.profilePicture,
+            showOnLeaderboard: spray.sprayerWallet.customer.user.settings?.showOnLeaderboard ?? true,
           },
           receiver: {
             id: spray.receiverWallet.customer.user.id,
             username: spray.receiverWallet.customer.user.username,
             profilePicture: spray.receiverWallet.customer.user.profilePicture,
+            showOnLeaderboard: spray.receiverWallet.customer.user.settings?.showOnLeaderboard ?? true,
           },
         }));
 
@@ -1517,6 +1529,11 @@ export class EventsService {
                     email: true,
                     firstName: true,
                     lastName: true,
+                    settings: {
+                      select: {
+                        showOnLeaderboard: true,
+                      },
+                    },
                   },
                 },
               },
@@ -1538,6 +1555,7 @@ export class EventsService {
         email: string;
         firstName: string | null;
         lastName: string | null;
+        showOnLeaderboard: boolean;
         totalAmount: Decimal;
         sprayCount: number;
         firstSprayAt: Date;
@@ -1577,6 +1595,7 @@ export class EventsService {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
+          showOnLeaderboard: user.settings?.showOnLeaderboard ?? true,
           totalAmount: spray.totalAmount,
           sprayCount: 1,
           firstSprayAt: spray.createdAt,
@@ -1594,6 +1613,7 @@ export class EventsService {
         email: entry.email,
         firstName: entry.firstName,
         lastName: entry.lastName,
+        showOnLeaderboard: entry.showOnLeaderboard,
         totalAmount: entry.totalAmount.toString(),
         sprayCount: entry.sprayCount,
         firstSprayAt: entry.firstSprayAt.toISOString(),
