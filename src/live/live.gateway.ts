@@ -158,6 +158,11 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
                           id: true,
                           username: true,
                           profilePicture: true,
+                          settings: {
+                            select: {
+                              showOnLeaderboard: true,
+                            },
+                          },
                         },
                       },
                     },
@@ -173,6 +178,11 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
                           id: true,
                           username: true,
                           profilePicture: true,
+                          settings: {
+                            select: {
+                              showOnLeaderboard: true,
+                            },
+                          },
                         },
                       },
                     },
@@ -217,6 +227,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
             id: spray.sprayerWallet.customer.user.id,
             username: spray.sprayerWallet.customer.user.username,
             profilePicture: spray.sprayerWallet.customer.user.profilePicture,
+            showOnLeaderboard: spray.sprayerWallet.customer.user.settings?.showOnLeaderboard ?? true,
           },
           receiver: {
             id: spray.receiverWallet.customer.user.id,

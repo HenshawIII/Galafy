@@ -286,6 +286,37 @@ export class AdminController {
     return this.adminService.getUsers(filters);
   }
 
+  @Get('users/export')
+  @RequirePermission(PERMISSIONS.VIEW_USERS)
+  @ApiOperation({
+    summary: 'Export users to CSV',
+    description: 'Exports all users matching the provided filters to CSV format. Uses the same filter parameters as GET /admin/users. Maximum 100,000 records.',
+  })
+  @ApiQuery({ name: 'search', required: false, type: String, description: 'Search by email or name' })
+  @ApiQuery({ name: 'tier', required: false, enum: ['Tier_0', 'Tier_1', 'Tier_2', 'Tier_3'], description: 'Filter by KYC tier' })
+  @ApiQuery({ name: 'isAmlRestricted', required: false, type: Boolean, description: 'Filter by AML restriction status' })
+  @ApiResponse({
+    status: 200,
+    description: 'Users exported successfully',
+    content: {
+      'text/csv': {
+        schema: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  async exportUsersCSV(
+    @Query(ValidationPipe) filters: GetUsersDto,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.adminService.exportUsersCSV(filters);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
   @Get('users/search')
   @RequirePermission(PERMISSIONS.VIEW_USERS)
   @ApiOperation({
@@ -578,6 +609,66 @@ export class AdminController {
   @ApiResponse({ status: 200, description: 'Events retrieved successfully' })
   async getEvents(@Query(ValidationPipe) filters: GetEventsDto) {
     return this.adminService.getEvents(filters);
+  }
+
+  @Get('events/metrics')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'Get event metrics with growth percentages',
+    description: 'Returns aggregated event metrics (totalEvents, activeEvents, totalAttendees, totalSprayed) with 7-day growth percentages. Calculates metrics for ALL events in the system.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Event metrics retrieved successfully',
+    schema: {
+      example: {
+        totalEvents: 50,
+        totalEventsGrowth: 4.2,
+        activeEvents: 0,
+        activeEventsGrowth: 0,
+        totalAttendees: 25,
+        totalAttendeesGrowth: 4.2,
+        totalSprayed: '4285000.00',
+        totalSprayedGrowth: 4.2,
+      },
+    },
+  })
+  async getEventMetrics() {
+    return this.adminService.getEventMetrics();
+  }
+
+  @Get('events/export')
+  @RequirePermission(PERMISSIONS.VIEW_EVENTS)
+  @ApiOperation({
+    summary: 'Export events to CSV',
+    description: 'Exports all events matching the provided filters to CSV format. Uses the same filter parameters as GET /admin/events. Maximum 100,000 records.',
+  })
+  @ApiQuery({ name: 'status', required: false, enum: ['DRAFT', 'SCHEDULED', 'LIVE', 'ENDED', 'CANCELLED'], description: 'Filter by event status. UI values: "Upcoming" → SCHEDULED, "Live" → LIVE, "Completed" → ENDED' })
+  @ApiQuery({ name: 'categories', required: false, type: [String], description: 'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate' })
+  @ApiQuery({ name: 'search', required: false, type: String, description: 'Search by event title or host name' })
+  @ApiQuery({ name: 'hostUserId', required: false, type: String, description: 'Filter by host user ID' })
+  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Filter events starting from this date (ISO 8601). Quick options (Today, This Week, This Month, Last 90 days) are calculated on frontend.' })
+  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter events starting before this date (ISO 8601)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Events exported successfully',
+    content: {
+      'text/csv': {
+        schema: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  async exportEventsCSV(
+    @Query(ValidationPipe) filters: GetEventsDto,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.adminService.exportEventsCSV(filters);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }
 
   @Get('events/top-by-sprayers')

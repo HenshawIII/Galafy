@@ -563,6 +563,11 @@ export class SpraysService {
         id: true,
         username: true,
         profilePicture: true,
+        settings: {
+          select: {
+            showOnLeaderboard: true,
+          },
+        },
       },
     });
 
@@ -572,6 +577,11 @@ export class SpraysService {
         id: true,
         username: true,
         profilePicture: true,
+        settings: {
+          select: {
+            showOnLeaderboard: true,
+          },
+        },
       },
     });
 
@@ -594,6 +604,11 @@ export class SpraysService {
                             id: true,
                             username: true,
                             profilePicture: true,
+                            settings: {
+                              select: {
+                                showOnLeaderboard: true,
+                              },
+                            },
                           },
                         },
                       },
@@ -609,6 +624,11 @@ export class SpraysService {
                             id: true,
                             username: true,
                             profilePicture: true,
+                            settings: {
+                              select: {
+                                showOnLeaderboard: true,
+                              },
+                            },
                           },
                         },
                       },
@@ -637,11 +657,13 @@ export class SpraysService {
                 id: spray.sprayerWallet.customer.user.id,
                 username: spray.sprayerWallet.customer.user.username,
                 profilePicture: spray.sprayerWallet.customer.user.profilePicture,
+                showOnLeaderboard: spray.sprayerWallet.customer.user.settings?.showOnLeaderboard ?? true,
               },
               receiver: {
                 id: spray.receiverWallet.customer.user.id,
                 username: spray.receiverWallet.customer.user.username,
                 profilePicture: spray.receiverWallet.customer.user.profilePicture,
+                showOnLeaderboard: spray.receiverWallet.customer.user.settings?.showOnLeaderboard ?? true,
               },
             }));
         }
@@ -663,11 +685,13 @@ export class SpraysService {
             id: sprayerUser?.id || userId,
             username: sprayerUser?.username || null,
             profilePicture: sprayerUser?.profilePicture || null,
+            showOnLeaderboard: sprayerUser?.settings?.showOnLeaderboard ?? true,
           },
           receiver: {
             id: receiverUser?.id || receiverParticipant.userId,
             username: receiverUser?.username || null,
             profilePicture: receiverUser?.profilePicture || null,
+            showOnLeaderboard: receiverUser?.settings?.showOnLeaderboard ?? true,
           },
         },
         eventTotals: {
