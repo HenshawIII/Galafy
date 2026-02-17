@@ -6,8 +6,10 @@ import { getCurrentWATAsUTC } from '../../common/utils/timezone.util.js';
 @Injectable()
 export class WithdrawalLimitService {
   private readonly logger = new Logger(WithdrawalLimitService.name);
-  private readonly DEFAULT_TIER_2_LIMIT = new Decimal(100000000); // 1M in kobo
-  private readonly APPROVED_TIER_2_LIMIT = new Decimal(1000000000); // 10M in kobo
+  // 1 million Naira = 100,000,000,000 (based on divide by 100000 conversion in error messages)
+  private readonly DEFAULT_TIER_2_LIMIT = new Decimal(100000000000); // 1M Naira
+  // 10 million Naira = 1,000,000,000,000
+  private readonly APPROVED_TIER_2_LIMIT = new Decimal(1000000000000); // 10M Naira
 
   constructor(private readonly databaseService: DatabaseService) {}
 

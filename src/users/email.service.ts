@@ -915,5 +915,260 @@ If you did not expect this invitation, please ignore this email.`,
       throw new Error(`Failed to send admin invite email: ${error.message}`);
     }
   }
+
+  async sendKycReminderEmail(
+    email: string,
+    userData?: {
+      firstName?: string | null;
+      lastName?: string | null;
+      username?: string | null;
+    },
+  ): Promise<void> {
+    // Get user's display name: prefer firstName, then username, then lastName, then default
+    let userName = 'there';
+    if (userData?.firstName && userData.firstName.trim()) {
+      userName = userData.firstName.trim();
+    } else if (userData?.username && userData.username.trim()) {
+      userName = userData.username.trim();
+    } else if (userData?.lastName && userData.lastName.trim()) {
+      userName = userData.lastName.trim();
+    }
+
+    const kycUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL}/kyc` : '#';
+    
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'Complete Your KYC Verification - Galafy',
+      text: `Hello ${userName}, We noticed you haven't completed your KYC (Know Your Customer) verification yet. Completing your KYC will unlock higher withdrawal limits and full account access. Visit ${kycUrl} to complete your verification today.`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+            <!-- Header with Galafy Logo -->
+            <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
+              <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
+                <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
+                Galafy
+              </div>
+            </div>
+            
+            <!-- Main Content -->
+            <div style="padding: 30px 20px;">
+              <!-- Greeting -->
+              <h1 style="color: #333333; font-size: 24px; font-weight: bold; margin: 0 0 15px 0;">Hello, ${userName}! 👋</h1>
+              
+              <!-- Main Message -->
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                We noticed you haven't completed your <strong>KYC (Know Your Customer) verification</strong> yet. Completing your KYC is quick and easy, and it unlocks powerful benefits for your account.
+              </p>
+              
+              <!-- Benefits Box (Light Blue) -->
+              <div style="background-color: #e7f3ff; border-left: 4px solid #007bff; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <div style="display: flex; align-items: center; margin-bottom: 15px;">
+                  <span style="font-size: 24px; margin-right: 10px;">✨</span>
+                  <h3 style="color: #333333; font-size: 18px; font-weight: bold; margin: 0;">Benefits of Completing KYC</h3>
+                </div>
+                <ul style="color: #333333; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                  <li>Higher withdrawal limits for your transactions</li>
+                  <li>Full access to all platform features</li>
+                  <li>Enhanced account security and protection</li>
+                  <li>Faster transaction processing</li>
+                </ul>
+              </div>
+              
+              <!-- Call to Action -->
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${kycUrl}" style="display: inline-block; background-color: #007bff; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">
+                  Complete KYC Verification
+                </a>
+              </div>
+              
+              <!-- Info Box (Light Yellow) -->
+              <div style="background-color: #fff3cd; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <div style="display: flex; align-items: flex-start;">
+                  <span style="font-size: 20px; margin-right: 10px; color: #ff9800;">ℹ️</span>
+                  <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0;">
+                    The verification process is simple and secure. You'll need to provide some basic information and documents, which typically takes just a few minutes.
+                  </p>
+                </div>
+              </div>
+              
+              <!-- Support Information -->
+              <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 4px; border-left: 4px solid #6c757d;">
+                <p style="color: #495057; font-size: 12px; margin: 0;">
+                  <strong>Need help?</strong> If you have any questions about the KYC process, our support team is here to assist you. Feel free to reach out anytime.
+                </p>
+              </div>
+              
+              <!-- Closing -->
+              <p style="color: #333333; font-size: 14px; margin: 30px 0 0 0;">
+                We look forward to helping you unlock the full potential of your Galafy account!
+              </p>
+              <p style="color: #333333; font-size: 14px; margin: 20px 0 0 0;">
+                Best regards,<br>
+                The Galafy Team
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`KYC reminder email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending KYC reminder email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      throw new Error(`Failed to send KYC reminder email: ${error.message}`);
+    }
+  }
+
+  async sendAccountRestrictionEmail(
+    email: string,
+    userData?: {
+      firstName?: string | null;
+      lastName?: string | null;
+      username?: string | null;
+    },
+    restrictionReason?: string,
+  ): Promise<void> {
+    // Get user's display name: prefer firstName, then username, then lastName, then default
+    let userName = 'there';
+    if (userData?.firstName && userData.firstName.trim()) {
+      userName = userData.firstName.trim();
+    } else if (userData?.username && userData.username.trim()) {
+      userName = userData.username.trim();
+    } else if (userData?.lastName && userData.lastName.trim()) {
+      userName = userData.lastName.trim();
+    }
+
+    const supportEmail = process.env.SUPPORT_EMAIL || 'support@galafy.com';
+    const supportUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL}/support` : '#';
+    
+    const msg = {
+      to: email,
+      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      subject: 'Important: Your Account Has Been Restricted - Galafy',
+      text: `Hello ${userName}, Your Galafy account has been restricted due to compliance reasons. ${restrictionReason ? `Reason: ${restrictionReason}` : ''} Please contact our support team at ${supportEmail} for more information and assistance.`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+            <!-- Header with Warning Color -->
+            <div style="background-color: #dc3545; padding: 30px 20px; text-align: center;">
+              <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
+                <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
+                Galafy
+              </div>
+            </div>
+            
+            <!-- Main Content -->
+            <div style="padding: 30px 20px;">
+              <!-- Greeting -->
+              <h1 style="color: #333333; font-size: 24px; font-weight: bold; margin: 0 0 15px 0;">Important Account Notice</h1>
+              
+              <!-- Main Message -->
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                Hello ${userName},
+              </p>
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                We are writing to inform you that your <strong>Galafy account has been restricted</strong> due to compliance and security reasons.
+              </p>
+              
+              <!-- Warning Box (Red/Orange) -->
+              <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <div style="display: flex; align-items: center; margin-bottom: 15px;">
+                  <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
+                  <h3 style="color: #721c24; font-size: 18px; font-weight: bold; margin: 0;">Account Restriction</h3>
+                </div>
+                <p style="color: #721c24; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
+                  Your account has been flagged for review under our Anti-Money Laundering (AML) compliance policies.
+                </p>
+                ${restrictionReason ? `
+                <div style="background-color: #ffffff; padding: 15px; border-radius: 4px; margin-top: 15px;">
+                  <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0;">
+                    <strong>Reason:</strong> ${restrictionReason}
+                  </p>
+                </div>
+                ` : ''}
+              </div>
+              
+              <!-- What This Means -->
+              <div style="background-color: #fff3cd; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="color: #856404; font-size: 16px; font-weight: bold; margin: 0 0 15px 0;">What This Means</h3>
+                <ul style="color: #856404; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                  <li>Certain account features may be temporarily unavailable</li>
+                  <li>Withdrawal and transaction capabilities may be limited</li>
+                  <li>Your account is under review by our compliance team</li>
+                </ul>
+              </div>
+              
+              <!-- Support Information -->
+              <div style="background-color: #e7f3ff; border-left: 4px solid #007bff; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="color: #333333; font-size: 18px; font-weight: bold; margin: 0 0 15px 0;">Need Help?</h3>
+                <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
+                  If you have questions about this restriction or believe this is an error, please contact our support team immediately. We're here to help resolve any issues.
+                </p>
+                <div style="margin-top: 15px;">
+                  <p style="color: #333333; font-size: 14px; margin: 5px 0;">
+                    <strong>Email:</strong> <a href="mailto:${supportEmail}" style="color: #007bff; text-decoration: none;">${supportEmail}</a>
+                  </p>
+                  ${supportUrl !== '#' ? `
+                  <p style="color: #333333; font-size: 14px; margin: 5px 0;">
+                    <strong>Support Portal:</strong> <a href="${supportUrl}" style="color: #007bff; text-decoration: none;">${supportUrl}</a>
+                  </p>
+                  ` : ''}
+                </div>
+              </div>
+              
+              <!-- Security Notice -->
+              <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 4px; border-left: 4px solid #6c757d;">
+                <p style="color: #495057; font-size: 12px; margin: 0;">
+                  <strong>🔒 Security Notice:</strong> This is an automated notification from Galafy. If you did not expect this message, please contact our support team immediately.
+                </p>
+              </div>
+              
+              <!-- Closing -->
+              <p style="color: #333333; font-size: 14px; margin: 30px 0 0 0;">
+                We appreciate your understanding and cooperation.
+              </p>
+              <p style="color: #333333; font-size: 14px; margin: 20px 0 0 0;">
+                Best regards,<br>
+                The Galafy Compliance Team
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Account restriction email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending account restriction email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      // Don't throw - email failure shouldn't break the restriction operation, but log it
+      this.logger.warn(`Failed to send restriction email to ${email}, but restriction was applied`);
+    }
+  }
 }
 

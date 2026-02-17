@@ -46,6 +46,7 @@ import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/even
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
 import { GetNotificationsDto } from './dto/notifications-management.dto.js';
+import { NormalizeArrayQueryPipe } from './pipes/normalize-array-query.pipe.js';
 
 @ApiTags('admin')
 @Controller('admin')
@@ -379,13 +380,47 @@ export class AdminController {
     return this.adminService.getUserDetails(userId);
   }
 
+  @Post('users/:userId/send-kyc-reminder')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE, AdminRole.SUPPORT)
+  @RequirePermission(PERMISSIONS.SEND_KYC_REMINDERS)
+  @ApiOperation({ 
+    summary: 'Send KYC reminder email', 
+    description: 'Send a KYC reminder email to a user to encourage them to complete their KYC verification. The email will only be sent to users with verified email addresses.' 
+  })
+  @ApiParam({ name: 'userId', description: 'User ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'KYC reminder email sent successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'KYC reminder email sent successfully' },
+        userId: { type: 'string', example: 'user-uuid' },
+        email: { type: 'string', example: 'user@example.com' },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({ status: 400, description: 'User email is not verified or email sending failed' })
+  async sendKycReminder(
+    @Param('userId') userId: string,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    return this.adminService.sendKycReminder(userId, adminId);
+  }
+
   @Post('users/:userId/restrict')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
   @RequirePermission(PERMISSIONS.RESTRICT_USERS)
-  @ApiOperation({ summary: 'Restrict user (AML flagging)', description: 'Restrict a user due to AML compliance issues' })
+  @ApiOperation({ 
+    summary: 'Restrict user (AML flagging)', 
+    description: 'Restrict a user due to AML compliance issues. An email notification will be automatically sent to the user (if their email is verified) informing them of the restriction and the reason.' 
+  })
   @ApiParam({ name: 'userId', description: 'User ID' })
   @ApiBody({ type: RestrictUserDto })
-  @ApiResponse({ status: 200, description: 'User restricted successfully' })
+  @ApiResponse({ status: 200, description: 'User restricted successfully. Email notification sent if user email is verified.' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async restrictUser(
     @Param('userId') userId: string,
@@ -607,7 +642,7 @@ export class AdminController {
     description: 'Get paginated list of events with filtering options',
   })
   @ApiResponse({ status: 200, description: 'Events retrieved successfully' })
-  async getEvents(@Query(ValidationPipe) filters: GetEventsDto) {
+  async getEvents(@Query(NormalizeArrayQueryPipe, ValidationPipe) filters: GetEventsDto) {
     return this.adminService.getEvents(filters);
   }
 
@@ -662,7 +697,7 @@ export class AdminController {
     },
   })
   async exportEventsCSV(
-    @Query(ValidationPipe) filters: GetEventsDto,
+    @Query(NormalizeArrayQueryPipe, ValidationPipe) filters: GetEventsDto,
     @Res() res: Response,
   ) {
     const { buffer, filename } = await this.adminService.exportEventsCSV(filters);
@@ -1267,7 +1302,7 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.MANAGE_WITHDRAWALS)
   @ApiOperation({
     summary: 'Approve withdrawal',
-    description: 'Approve a pending withdrawal. Note: Withdrawals are typically auto-processed, but this can trigger reprocessing.',
+    description: 'Approve a pending withdrawal. For withdrawals that require approval (exceed daily limit), this will process the payout (debit wallet, call provider). For other withdrawals, this updates status to PROCESSING. Status will be updated to SUCCESS by webhook when provider confirms.',
   })
   @ApiParam({ name: 'id', description: 'Payout Transaction ID' })
   @ApiResponse({ status: 200, description: 'Withdrawal approved successfully' })
@@ -1282,7 +1317,7 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.MANAGE_WITHDRAWALS)
   @ApiOperation({
     summary: 'Reject withdrawal',
-    description: 'Reject a pending withdrawal with a reason',
+    description: 'Reject a pending withdrawal with a reason. For withdrawals that require approval, this will delete the placeholder transaction and mark as REJECTED without debiting the wallet. For processed withdrawals, this updates status to REJECTED.',
   })
   @ApiParam({ name: 'id', description: 'Payout Transaction ID' })
   @ApiBody({ type: RejectWithdrawalDto })

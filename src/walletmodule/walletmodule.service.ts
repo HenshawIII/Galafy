@@ -758,22 +758,116 @@ export class WalletmoduleService {
           );
         }
 
-        // Check withdrawal limit for Tier 2 users
-        if (fromWallet.customer.tier === KycTier.Tier_2) {
+        // Only Tier_2 and Tier_3 users are allowed to withdraw
+        if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
+          throw new ForbiddenException(
+            'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
+          );
+        }
+
+        // Check withdrawal limit for Tier 2 and Tier 3 users
+        let requiresApproval = false;
+        if (fromWallet.customer.tier === KycTier.Tier_2 || fromWallet.customer.tier === KycTier.Tier_3) {
           const limitCheck = await this.withdrawalLimitService.checkDailyLimit(
             fromWallet.customer.id,
             grossAmount,
           );
 
           if (!limitCheck.allowed) {
-            const limitInNaira = limitCheck.currentLimit.dividedBy(100000).toFixed(2);
-            const usedInNaira = limitCheck.used.dividedBy(100000).toFixed(2);
-            const remainingInNaira = limitCheck.remaining.dividedBy(100000).toFixed(2);
-            const requestedInNaira = grossAmount.dividedBy(100000).toFixed(2);
+            // Instead of throwing error, create a pending approval request
+            requiresApproval = true;
+            
+            // Get destination account name if not provided
+            let destinationAccountName = payoutData.recipientName as string;
+            if (!destinationAccountName) {
+              try {
+                const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
+                  payoutData.bankCode as string,
+                  payoutData.toAccountNumber as string,
+                );
+                destinationAccountName = nameEnquiry.accountName;
+              } catch (error) {
+                this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
+                destinationAccountName = 'Unknown';
+              }
+            }
 
-            throw new BadRequestException(
-              `Withdrawal limit exceeded. Daily limit: ₦${limitInNaira}, Used: ₦${usedInNaira}, Remaining: ₦${remainingInNaira}, Requested: ₦${requestedInNaira}`,
-            );
+            // Find or create bank account record
+            let bankAccount = await tx.bankAccount.findFirst({
+              where: {
+                customerId: fromWallet.customerId,
+                accountNumber: payoutData.toAccountNumber as string,
+                bankCode: payoutData.bankCode as string,
+              },
+            });
+
+            if (!bankAccount) {
+              bankAccount = await tx.bankAccount.create({
+                data: {
+                  customerId: fromWallet.customerId,
+                  accountName: destinationAccountName,
+                  accountNumber: payoutData.toAccountNumber as string,
+                  bankCode: payoutData.bankCode as string,
+                  isVerified: true,
+                },
+              });
+            }
+
+            // Create a placeholder transaction for the pending approval
+            const placeholderTransaction = await tx.transaction.create({
+              data: {
+                walletId: fromWallet.id,
+                type: TransactionType.PAYOUT,
+                direction: TransactionDirection.DEBIT,
+                status: TransactionStatus.PENDING,
+                amount: grossAmount,
+                currencyId: fromWallet.currencyId,
+                reference: `PAYOUT-PENDING-${randomUUID()}`,
+                externalReference: null,
+                narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'} (Pending Approval)`,
+                metadata: {
+                  fee: fee.toString(),
+                  netAmount: netAmount.toString(),
+                  feePercentage: feePercentage.toString(),
+                  feeType: 'payout',
+                  destinationAccount: payoutData.toAccountNumber,
+                  destinationBank: payoutData.bankCode,
+                  requiresApproval: true,
+                  approvalReason: 'Exceeds daily withdrawal limit',
+                },
+              },
+            });
+
+            // Create PayoutTransaction with requiresApproval flag
+            const pendingPayoutTransaction = await tx.payoutTransaction.create({
+              data: {
+                walletId: fromWallet.id,
+                bankAccountId: bankAccount.id,
+                amount: grossAmount,
+                fee,
+                status: 'PENDING',
+                transactionId: placeholderTransaction.id,
+                requiresApproval: true,
+                approvalReason: 'Exceeds daily withdrawal limit',
+                providerPayload: {
+                  payoutData: payoutData,
+                  limitCheck: {
+                    currentLimit: limitCheck.currentLimit.toString(),
+                    used: limitCheck.used.toString(),
+                    remaining: limitCheck.remaining.toString(),
+                  },
+                },
+              },
+            });
+
+            // Return early - no wallet debit, no provider calls
+            return {
+              success: true,
+              message: 'Withdrawal request submitted for admin approval. You will be notified once it is reviewed.',
+              requiresApproval: true,
+              payoutTransactionId: pendingPayoutTransaction.id,
+              transactionId: placeholderTransaction.id,
+            };
           }
         }
 
@@ -849,288 +943,56 @@ export class WalletmoduleService {
           );
         }
 
-        // Get admin wallet account number (for tracking purposes)
-        const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
-
-        // Generate transaction references
-        const userTransactionRef = `PAYOUT-${randomUUID()}`;
-        const providerTransactionRef = randomUUID();
-
-        // Step 1: Transfer full amount from user wallet to organization wallet (wallet-to-wallet)
-        // Execute with provider - use account number directly
-        const userToOrgProviderResponse = await this.providerService.walletToWalletTransfer({
-          fromWalletId: fromWallet.virtualAccountNumber,
-          toWalletId: adminWalletAccountNumber, // Use account number directly from env
-          amount: grossAmount.toNumber(),
-          currencyId: fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
-          description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
-          reference: userTransactionRef,
-        });
-
-        if (!userToOrgProviderResponse.success) {
-          throw new BadRequestException(
-            `Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`,
-          );
-        }
-
-        // Log PAYOUT LEG 1: User wallet → Organization wallet
-        this.logger.log(
-          `💸 PAYOUT LEG 1 (User→Org): Amount=${grossAmount.toString()}, ` +
-          `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
-          `To=${adminWalletAccountNumber}, ` +
-          `Reference=${userTransactionRef}, ` +
-          `ProviderResponse=${JSON.stringify(userToOrgProviderResponse.data)}`,
+        // Process payout using helper method (normal flow - within limit)
+        return await this.processPayoutTransaction(
+          tx,
+          fromWallet,
+          payoutData,
+          grossAmount,
+          fee,
+          netAmount,
+          feePercentage,
         );
-
-        // Create DEBIT transaction for user wallet (full amount)
-        // Transaction table only tracks user-facing transactions
-        const userDebitTransaction = await tx.transaction.create({
-          data: {
-            walletId: fromWallet.id,
-            type: TransactionType.PAYOUT,
-            direction: TransactionDirection.DEBIT,
-            status: TransactionStatus.SUCCESS,
-            amount: grossAmount,
-            currencyId: fromWallet.currencyId,
-            reference: userTransactionRef,
-            externalReference: null,
-            narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'}`,
-            metadata: {
-              fee: fee.toString(),
-              netAmount: netAmount.toString(),
-              feePercentage: feePercentage.toString(),
-              feeType: 'payout',
-              destinationAccount: payoutData.toAccountNumber,
-              destinationBank: payoutData.bankCode,
-            },
-          },
-        });
-
-        // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
-        // Get destination account name if not provided
-        let destinationAccountName = payoutData.recipientName as string;
-        if (!destinationAccountName) {
-          try {
-            const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
-              payoutData.bankCode as string,
-              payoutData.toAccountNumber as string,
-            );
-            destinationAccountName = nameEnquiry.accountName;
-          } catch (error) {
-            this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
-            destinationAccountName = 'Unknown';
-          }
-        }
-
-        // Get source account name
-        const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
-          ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
-          : null;
-        const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
-          ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
-          : null;
-        const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
-
-        // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
-        // Execute inter-bank transfer from organization wallet
-        // Use admin wallet account number directly from env
-        const orgToBankProviderResponse = await this.providerService.interBankTransfer({
-          destinationBankCode: payoutData.bankCode as string,
-          destinationAccountNumber: payoutData.toAccountNumber as string,
-          destinationAccountName: destinationAccountName,
-          sourceAccountNumber: adminWalletAccountNumber, // Use account number directly from env
-          sourceAccountName: sourceAccountName,
-          remarks: (payoutData.description as string) || 'Wallet payout',
-          amount: netAmount.toNumber(), // Transfer net amount (97%)
-          currencyId: payoutData.currencyId as string,
-          customerTransactionReference: providerTransactionRef,
-        });
-
-        // Log PAYOUT LEG 2: Organization wallet → External bank
-        this.logger.log(
-          `💸 PAYOUT LEG 2 (Org→Bank): NetAmount=${netAmount.toString()}, ` +
-          `GrossAmount=${grossAmount.toString()}, Fee=${fee.toString()}, ` +
-          `From=${adminWalletAccountNumber}, ` +
-          `To=${payoutData.toAccountNumber} (${payoutData.bankCode}), ` +
-          `RecipientName="${destinationAccountName}", ` +
-          `ProviderRef=${providerTransactionRef}, ` +
-          `UserTxId=${userDebitTransaction.id}, ` +
-          `ProviderResponse=${JSON.stringify(orgToBankProviderResponse)}`,
-        );
-
-        // Update user wallet balance (deduct full amount)
-        const newUserAvailableBalance = normalizeToKobo(lockedUserWallet.availableBalance.minus(grossAmount));
-        const newUserLedgerBalance = normalizeToKobo(lockedUserWallet.ledgerBalance.minus(grossAmount));
-
-        // Update user wallet
-        await tx.wallet.update({
-          where: { id: fromWallet.id },
-          data: {
-            availableBalance: newUserAvailableBalance,
-            ledgerBalance: newUserLedgerBalance,
-          },
-        });
-
-        // Find or create bank account record
-        let bankAccount = await tx.bankAccount.findFirst({
-          where: {
-            customerId: fromWallet.customerId,
-            accountNumber: payoutData.toAccountNumber as string,
-            bankCode: payoutData.bankCode as string,
-          },
-        });
-
-        if (!bankAccount) {
-          bankAccount = await tx.bankAccount.create({
-            data: {
-              customerId: fromWallet.customerId,
-              accountName: destinationAccountName,
-              accountNumber: payoutData.toAccountNumber as string,
-              bankCode: payoutData.bankCode as string,
-              isVerified: true,
-            },
-          });
-        }
-
-        // Create PayoutTransaction record
-        const payoutTransaction = await tx.payoutTransaction.create({
-          data: {
-            walletId: fromWallet.id,
-            bankAccountId: bankAccount.id,
-            amount: grossAmount, // Full amount requested
-            fee, // 3% fee
-            status: 'PENDING', // Will be updated by webhook
-            transactionId: userDebitTransaction.id, // Link to user debit transaction
-            providerTransactionRef, // Link to provider transaction
-            providerPayload: {
-              userToOrgTransfer: userToOrgProviderResponse.data,
-              orgToBankTransfer: orgToBankProviderResponse,
-              netAmount: netAmount.toString(),
-            },
-          },
-        });
-
-        // Create AdminFee record (separate table for fee tracking)
-        // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
-        // feePercentage should be between 0 and 1 (e.g., 0.03 for 3%), so we ensure it's properly formatted
-        const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
-        
-        // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
-        if (normalizedFeePercentage.gte(new Decimal('10'))) {
-          this.logger.error(
-            `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
-            `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.03 for 3%), not percentage (e.g., 3).`,
-          );
-          throw new BadRequestException(
-            `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
-            `Fee percentage must be less than 10. Please check ADMIN_PAYOUT_FEE environment variable.`,
-          );
-        }
-
-        await tx.adminFee.create({
-          data: {
-            walletId: fromWallet.id,
-            customerId: fromWallet.customerId,
-            amount: fee, // 3% fee
-            feeType: 'payout',
-            feePercentage: normalizedFeePercentage,
-            relatedTransactionId: userDebitTransaction.id, // Link to user's payout transaction
-            payoutTransactionId: payoutTransaction.id, // Link to payout transaction
-            status: 'COLLECTED',
-            grossAmount: grossAmount,
-            netAmount: netAmount,
-            adminWalletAccountNumber: adminWalletAccountNumber,
-            metadata: {
-              destinationAccount: payoutData.toAccountNumber,
-              destinationBank: payoutData.bankCode,
-              recipientName: destinationAccountName,
-              providerTransactionRef: providerTransactionRef,
-              userToOrgTransfer: userToOrgProviderResponse.data,
-              orgToBankTransfer: orgToBankProviderResponse,
-            },
-          },
-        });
-
-        // Get bank name from bank code
-        let bankName: string | null = null;
-        try {
-          const banks = await this.providerService.getBanks();
-          
-          // Helper function to normalize bank codes for comparison (remove leading zeros)
-          const normalizeBankCode = (code: string | number | null | undefined): string => {
-            if (code === null || code === undefined) return '';
-            return String(code).trim().replace(/^0+/, '') || '0';
-          };
-
-          const payoutBankCode = normalizeBankCode(payoutData.bankCode);
-          
-          // Find matching bank using normalized comparison
-          const bank = banks.find(b => {
-            const bankCode = normalizeBankCode(b.bankcode);
-            return bankCode === payoutBankCode;
-          });
-          
-          bankName = bank?.bankname || null;
-        } catch (error: any) {
-          this.logger.warn(`Failed to fetch bank name for code ${payoutData.bankCode}: ${error.message}`);
-          // Continue without bank name - not critical
-        }
-
-        // Record withdrawal for Tier 2 users (outside transaction to avoid blocking)
-        if (fromWallet.customer.tier === KycTier.Tier_2) {
-          this.withdrawalLimitService.recordWithdrawal(fromWallet.customer.id, grossAmount).catch((error) => {
-            this.logger.error(`Failed to record withdrawal for customer ${fromWallet.customer.id}: ${error.message}`);
-          });
-        }
-
-        // Log complete payout transaction
-        this.logger.log(
-          `✅ PAYOUT CONFIRMED: GrossAmount=${grossAmount.toString()}, ` +
-          `Fee=${fee.toString()}, NetAmount=${netAmount.toString()}, ` +
-          `WalletId=${fromWallet.id}, ` +
-          `ToAccount=${payoutData.toAccountNumber}, ` +
-          `BankCode=${payoutData.bankCode}, ` +
-          `PayoutTxId=${payoutTransaction.id}, ` +
-          `UserTxId=${userDebitTransaction.id}, ` +
-          `ProviderRef=${providerTransactionRef}`,
-        );
-
-        return {
-          success: true,
-          message: orgToBankProviderResponse.message || 'Payout initiated successfully',
-          transactionRef: providerTransactionRef,
-          fromWalletId: fromWallet.id,
-          toAccountNumber: payoutData.toAccountNumber,
-          bankCode: payoutData.bankCode,
-          bankName: bankName,
-          amount: grossAmount.toString(),
-          fee: fee.toString(),
-          netAmount: netAmount.toString(),
-          payoutTransactionId: payoutTransaction.id,
-        };
       },
       {
         timeout: 15000, // 15 second timeout for payout transaction
       },
     );
 
-    // Recalculate risk score after payout (outside transaction to avoid blocking)
-    this.walletRiskService.updateWalletRiskScore(result.fromWalletId).catch((error) => {
-      this.logger.error(`Failed to update risk score after payout: ${error.message}`);
-    });
+    // Handle post-payout actions only for successful payouts (not approval-required)
+    // Use type guard: check if 'requiresApproval' exists in result to narrow the union type
+    if (result.success && !('requiresApproval' in result)) {
+      // TypeScript now knows this is a successful payout with fromWalletId, toAccountNumber, etc.
+      const successfulResult = result as {
+        success: boolean;
+        message: string;
+        transactionRef: string;
+        fromWalletId: string;
+        toAccountNumber: string;
+        bankCode: string;
+        bankName: string | null;
+        amount: string;
+        fee: string;
+        netAmount: string;
+        payoutTransactionId: string;
+      };
 
-    // Send email notification for withdrawal request (PENDING status)
-    if (result.success) {
+      // Recalculate risk score after payout (outside transaction to avoid blocking)
+      this.walletRiskService.updateWalletRiskScore(successfulResult.fromWalletId).catch((error) => {
+        this.logger.error(`Failed to update risk score after payout: ${error.message}`);
+      });
+
+      // Send email notification for withdrawal request (PENDING status)
       // Fetch wallet with user info and bank account for email
       const walletWithUser = await this.databaseService.wallet.findUnique({
-        where: { id: result.fromWalletId },
+        where: { id: successfulResult.fromWalletId },
         include: {
           customer: {
             include: {
               user: true,
               bankAccounts: {
                 where: {
-                  accountNumber: result.toAccountNumber,
+                  accountNumber: successfulResult.toAccountNumber,
                 },
                 take: 1,
               },
@@ -1146,10 +1008,10 @@ export class WalletmoduleService {
         
         this.emailService.sendWithdrawalStatusAlert(
           walletWithUser.customer.user.email,
-          result.amount,
+          successfulResult.amount,
           'PENDING',
-          result.toAccountNumber,
-          result.transactionRef,
+          successfulResult.toAccountNumber,
+          successfulResult.transactionRef,
           'Your withdrawal request has been submitted and is being processed.',
           firstName,
           bankName,
@@ -1158,9 +1020,315 @@ export class WalletmoduleService {
           this.logger.error(`Failed to send withdrawal request email: ${error.message}`);
         });
       }
+    } else if (result.success && 'requiresApproval' in result) {
+      // For approval-required withdrawals, we could send a different email notification
+      // but for now, we'll skip the risk score update and email since it's pending approval
+      const approvalResult = result as {
+        success: boolean;
+        message: string;
+        requiresApproval: boolean;
+        payoutTransactionId: string;
+        transactionId: string;
+      };
+      this.logger.log(`Withdrawal requires approval. Skipping risk score update and email notification. PayoutTransactionId: ${approvalResult.payoutTransactionId}`);
     }
 
     return result;
+  }
+
+  /**
+   * Process payout transaction - helper method for executing payout
+   * This method handles the actual payout processing: wallet debit, provider calls, transaction creation
+   * Can be called from confirmPayout (normal flow) or approveWithdrawal (admin approval flow)
+   */
+  async processPayoutTransaction(
+    tx: Prisma.TransactionClient,
+    fromWallet: any,
+    payoutData: any,
+    grossAmount: Decimal,
+    fee: Decimal,
+    netAmount: Decimal,
+    feePercentage: Decimal,
+  ) {
+    // Get admin wallet account number (for tracking purposes)
+    const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
+
+    // Generate transaction references
+    const userTransactionRef = `PAYOUT-${randomUUID()}`;
+    const providerTransactionRef = randomUUID();
+
+    // Step 1: Transfer full amount from user wallet to organization wallet (wallet-to-wallet)
+    // Execute with provider - use account number directly
+    const userToOrgProviderResponse = await this.providerService.walletToWalletTransfer({
+      fromWalletId: fromWallet.virtualAccountNumber,
+      toWalletId: adminWalletAccountNumber, // Use account number directly from env
+      amount: grossAmount.toNumber(),
+      currencyId: fromWallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
+      description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
+      reference: userTransactionRef,
+    });
+
+    if (!userToOrgProviderResponse.success) {
+      throw new BadRequestException(
+        `Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`,
+      );
+    }
+
+    // Log PAYOUT LEG 1: User wallet → Organization wallet
+    this.logger.log(
+      `💸 PAYOUT LEG 1 (User→Org): Amount=${grossAmount.toString()}, ` +
+      `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
+      `To=${adminWalletAccountNumber}, ` +
+      `Reference=${userTransactionRef}, ` +
+      `ProviderResponse=${JSON.stringify(userToOrgProviderResponse.data)}`,
+    );
+
+    // Lock user wallet for balance update
+    await tx.$queryRaw`
+      SELECT id FROM "Wallet" WHERE id = ${fromWallet.id} FOR UPDATE
+    `;
+
+    // Re-fetch with lock to get latest balance
+    const lockedUserWallet = await tx.wallet.findUnique({
+      where: { id: fromWallet.id },
+      select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
+    });
+
+    if (!lockedUserWallet) {
+      throw new NotFoundException('User wallet not found after lock');
+    }
+
+    // Re-check balance (in case it changed)
+    if (lockedUserWallet.availableBalance.lt(grossAmount)) {
+      throw new BadRequestException('Insufficient balance');
+    }
+
+    // Create DEBIT transaction for user wallet (full amount)
+    // Transaction table only tracks user-facing transactions
+    const userDebitTransaction = await tx.transaction.create({
+      data: {
+        walletId: fromWallet.id,
+        type: TransactionType.PAYOUT,
+        direction: TransactionDirection.DEBIT,
+        status: TransactionStatus.SUCCESS,
+        amount: grossAmount,
+        currencyId: fromWallet.currencyId,
+        reference: userTransactionRef,
+        externalReference: null,
+        narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'}`,
+        metadata: {
+          fee: fee.toString(),
+          netAmount: netAmount.toString(),
+          feePercentage: feePercentage.toString(),
+          feeType: 'payout',
+          destinationAccount: payoutData.toAccountNumber,
+          destinationBank: payoutData.bankCode,
+        },
+      },
+    });
+
+    // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
+    // Get destination account name if not provided
+    let destinationAccountName = payoutData.recipientName as string;
+    if (!destinationAccountName) {
+      try {
+        const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
+          payoutData.bankCode as string,
+          payoutData.toAccountNumber as string,
+        );
+        destinationAccountName = nameEnquiry.accountName;
+      } catch (error) {
+        this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
+        destinationAccountName = 'Unknown';
+      }
+    }
+
+    // Get source account name
+    const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
+      ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
+      : null;
+    const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
+      ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
+      : null;
+    const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
+
+    // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
+    // Execute inter-bank transfer from organization wallet
+    // Use admin wallet account number directly from env
+    const orgToBankProviderResponse = await this.providerService.interBankTransfer({
+      destinationBankCode: payoutData.bankCode as string,
+      destinationAccountNumber: payoutData.toAccountNumber as string,
+      destinationAccountName: destinationAccountName,
+      sourceAccountNumber: adminWalletAccountNumber, // Use account number directly from env
+      sourceAccountName: sourceAccountName,
+      remarks: (payoutData.description as string) || 'Wallet payout',
+      amount: netAmount.toNumber(), // Transfer net amount (97%)
+      currencyId: payoutData.currencyId as string,
+      customerTransactionReference: providerTransactionRef,
+    });
+
+    // Log PAYOUT LEG 2: Organization wallet → External bank
+    this.logger.log(
+      `💸 PAYOUT LEG 2 (Org→Bank): NetAmount=${netAmount.toString()}, ` +
+      `GrossAmount=${grossAmount.toString()}, Fee=${fee.toString()}, ` +
+      `From=${adminWalletAccountNumber}, ` +
+      `To=${payoutData.toAccountNumber} (${payoutData.bankCode}), ` +
+      `RecipientName="${destinationAccountName}", ` +
+      `ProviderRef=${providerTransactionRef}, ` +
+      `UserTxId=${userDebitTransaction.id}, ` +
+      `ProviderResponse=${JSON.stringify(orgToBankProviderResponse)}`,
+    );
+
+    // Update user wallet balance (deduct full amount)
+    const newUserAvailableBalance = normalizeToKobo(lockedUserWallet.availableBalance.minus(grossAmount));
+    const newUserLedgerBalance = normalizeToKobo(lockedUserWallet.ledgerBalance.minus(grossAmount));
+
+    // Update user wallet
+    await tx.wallet.update({
+      where: { id: fromWallet.id },
+      data: {
+        availableBalance: newUserAvailableBalance,
+        ledgerBalance: newUserLedgerBalance,
+      },
+    });
+
+    // Find or create bank account record
+    let bankAccount = await tx.bankAccount.findFirst({
+      where: {
+        customerId: fromWallet.customerId,
+        accountNumber: payoutData.toAccountNumber as string,
+        bankCode: payoutData.bankCode as string,
+      },
+    });
+
+    if (!bankAccount) {
+      bankAccount = await tx.bankAccount.create({
+        data: {
+          customerId: fromWallet.customerId,
+          accountName: destinationAccountName,
+          accountNumber: payoutData.toAccountNumber as string,
+          bankCode: payoutData.bankCode as string,
+          isVerified: true,
+        },
+      });
+    }
+
+    // Create PayoutTransaction record
+    const payoutTransaction = await tx.payoutTransaction.create({
+      data: {
+        walletId: fromWallet.id,
+        bankAccountId: bankAccount.id,
+        amount: grossAmount, // Full amount requested
+        fee, // 3% fee
+        status: 'PENDING', // Will be updated by webhook
+        transactionId: userDebitTransaction.id, // Link to user debit transaction
+        providerTransactionRef, // Link to provider transaction
+        providerPayload: {
+          userToOrgTransfer: userToOrgProviderResponse.data,
+          orgToBankTransfer: orgToBankProviderResponse,
+          netAmount: netAmount.toString(),
+        },
+      },
+    });
+
+    // Create AdminFee record (separate table for fee tracking)
+    // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
+    // feePercentage should be between 0 and 1 (e.g., 0.03 for 3%), so we ensure it's properly formatted
+    const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
+    
+    // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
+    if (normalizedFeePercentage.gte(new Decimal('10'))) {
+      this.logger.error(
+        `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
+        `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.03 for 3%), not percentage (e.g., 3).`,
+      );
+      throw new BadRequestException(
+        `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
+        `Fee percentage must be less than 10. Please check ADMIN_PAYOUT_FEE environment variable.`,
+      );
+    }
+
+    await tx.adminFee.create({
+      data: {
+        walletId: fromWallet.id,
+        customerId: fromWallet.customerId,
+        amount: fee, // 3% fee
+        feeType: 'payout',
+        feePercentage: normalizedFeePercentage,
+        relatedTransactionId: userDebitTransaction.id, // Link to user's payout transaction
+        payoutTransactionId: payoutTransaction.id, // Link to payout transaction
+        status: 'COLLECTED',
+        grossAmount: grossAmount,
+        netAmount: netAmount,
+        adminWalletAccountNumber: adminWalletAccountNumber,
+        metadata: {
+          destinationAccount: payoutData.toAccountNumber,
+          destinationBank: payoutData.bankCode,
+          recipientName: destinationAccountName,
+          providerTransactionRef: providerTransactionRef,
+          userToOrgTransfer: userToOrgProviderResponse.data,
+          orgToBankTransfer: orgToBankProviderResponse,
+        },
+      },
+    });
+
+    // Record withdrawal for Tier 2 and Tier 3 users (outside transaction to avoid blocking)
+    if (fromWallet.customer.tier === KycTier.Tier_2 || fromWallet.customer.tier === KycTier.Tier_3) {
+      this.withdrawalLimitService.recordWithdrawal(fromWallet.customer.id, grossAmount).catch((error) => {
+        this.logger.error(`Failed to record withdrawal for customer ${fromWallet.customer.id}: ${error.message}`);
+      });
+    }
+
+    // Get bank name from bank code
+    let bankName: string | null = null;
+    try {
+      const banks = await this.providerService.getBanks();
+      
+      // Helper function to normalize bank codes for comparison (remove leading zeros)
+      const normalizeBankCode = (code: string | number | null | undefined): string => {
+        if (code === null || code === undefined) return '';
+        return String(code).trim().replace(/^0+/, '') || '0';
+      };
+
+      const payoutBankCode = normalizeBankCode(payoutData.bankCode);
+      
+      // Find matching bank using normalized comparison
+      const bank = banks.find(b => {
+        const bankCode = normalizeBankCode(b.bankcode);
+        return bankCode === payoutBankCode;
+      });
+      
+      bankName = bank?.bankname || null;
+    } catch (error: any) {
+      this.logger.warn(`Failed to fetch bank name for code ${payoutData.bankCode}: ${error.message}`);
+      // Continue without bank name - not critical
+    }
+
+    // Log complete payout transaction
+    this.logger.log(
+      `✅ PAYOUT CONFIRMED: GrossAmount=${grossAmount.toString()}, ` +
+      `Fee=${fee.toString()}, NetAmount=${netAmount.toString()}, ` +
+      `WalletId=${fromWallet.id}, ` +
+      `ToAccount=${payoutData.toAccountNumber}, ` +
+      `BankCode=${payoutData.bankCode}, ` +
+      `PayoutTxId=${payoutTransaction.id}, ` +
+      `UserTxId=${userDebitTransaction.id}, ` +
+      `ProviderRef=${providerTransactionRef}`,
+    );
+
+    return {
+      success: true,
+      message: orgToBankProviderResponse.message || 'Payout initiated successfully',
+      transactionRef: providerTransactionRef,
+      fromWalletId: fromWallet.id,
+      toAccountNumber: payoutData.toAccountNumber,
+      bankCode: payoutData.bankCode,
+      bankName: bankName,
+      amount: grossAmount.toString(),
+      fee: fee.toString(),
+      netAmount: netAmount.toString(),
+      payoutTransactionId: payoutTransaction.id,
+    };
   }
 
   /**
