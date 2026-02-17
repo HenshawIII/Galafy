@@ -3683,7 +3683,7 @@ export class AdminService {
             fromWalletId: virtualAccountNumber,
             toWalletId: adminWalletAccountNumber,
             amount: grossAmount.toNumber(),
-            currencyId: wallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+            currencyId: wallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
             description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
             reference: userTransactionRef,
           });
