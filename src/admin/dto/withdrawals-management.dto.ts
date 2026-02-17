@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsDateString, IsInt, Min } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsDateString, IsInt, Min, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { PayoutStatus } from '../../../generated/prisma/enums.js';
@@ -37,6 +37,12 @@ export class GetWithdrawalsDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiPropertyOptional({ example: true, description: 'Filter by withdrawals that require admin approval' })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  requiresApproval?: boolean;
 }
 
 export class RejectWithdrawalDto {

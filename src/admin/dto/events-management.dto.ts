@@ -1,5 +1,5 @@
 import { IsOptional, IsString, IsEnum, IsDateString, IsInt, Min, IsBoolean, IsArray } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { EventStatus } from '../../../generated/prisma/enums.js';
 
@@ -28,10 +28,21 @@ export class GetEventsDto {
 
   @ApiPropertyOptional({ 
     example: ['Birthday', 'Wedding'], 
-    description: 'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate',
+    description: 'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate. Accepts: categories=value1&categories=value2 or categories[]=value1&categories[]=value2',
     type: [String]
   })
   @IsOptional()
+  @Transform(({ value }) => {
+    // Handle both array format and single value
+    if (Array.isArray(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      // If single string, convert to array
+      return [value];
+    }
+    return value;
+  })
   @IsArray()
   @IsString({ each: true })
   categories?: string[];

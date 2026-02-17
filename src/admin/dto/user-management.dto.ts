@@ -2,6 +2,22 @@ import { IsOptional, IsString, IsEnum, IsBoolean, IsInt, Min , IsNotEmpty } from
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { KycTier } from '../../users/dto/create-user-dto.js';
+import { UtilityBillStatus } from '../../../generated/prisma/enums.js';
+
+export enum UserTierFilter {
+  Tier_0 = 'Tier_0',
+  Tier_1 = 'Tier_1',
+  Tier_2 = 'Tier_2',
+  Tier_3 = 'Tier_3',
+  NoTier = 'NoTier',
+}
+
+export enum UtilityBillStatusFilter {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  noBill = 'noBill',
+}
 
 export class GetUsersDto {
   @ApiProperty({ required: false, example: 1, description: 'Page number' })
@@ -23,10 +39,23 @@ export class GetUsersDto {
   @IsString()
   search?: string;
 
-  @ApiProperty({ required: false, enum: KycTier, description: 'Filter by KYC tier' })
+  @ApiProperty({ 
+    required: false, 
+    enum: UserTierFilter, 
+    description: 'Filter by KYC tier. Use "NoTier" to filter users without customer records (no KYC).' 
+  })
   @IsOptional()
-  @IsEnum(KycTier)
-  tier?: KycTier;
+  @IsEnum(UserTierFilter)
+  tier?: UserTierFilter;
+
+  @ApiProperty({ 
+    required: false, 
+    enum: UtilityBillStatusFilter, 
+    description: 'Filter by utility bill submission status. Use "noBill" to filter users with no utility bill submissions.' 
+  })
+  @IsOptional()
+  @IsEnum(UtilityBillStatusFilter)
+  utilityBillStatus?: UtilityBillStatusFilter;
 
   @ApiProperty({ required: false, example: true, description: 'Filter by AML restriction status' })
   @IsOptional()
@@ -49,5 +78,16 @@ export class SearchUsersDto {
   @IsString({ message: 'Search query must be a string' })
   @IsNotEmpty({ message: 'Search query is required' })
   q: string;
+}
+
+export class SendKycReminderDto {
+  @ApiProperty({ 
+    required: false, 
+    example: 'Custom reminder message (optional)', 
+    description: 'Optional custom message to include in the KYC reminder email' 
+  })
+  @IsOptional()
+  @IsString()
+  customMessage?: string;
 }
 

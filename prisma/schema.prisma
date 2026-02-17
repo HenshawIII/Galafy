@@ -647,10 +647,22 @@ model PayoutTransaction {
   // Admin fee tracking
   adminFee AdminFee?
 
+  // Admin approval fields
+  requiresApproval Boolean  @default(false)
+  approvalReason   String?
+  approvedBy       String?
+  approvedByAdmin  Admin?   @relation("ApprovedPayouts", fields: [approvedBy], references: [id])
+  approvedAt       DateTime?
+  rejectedBy       String?
+  rejectedByAdmin  Admin?   @relation("RejectedPayouts", fields: [rejectedBy], references: [id])
+  rejectedAt       DateTime?
+  rejectionReason  String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([providerTransactionRef])
+  @@index([requiresApproval, status])
 }
 
 // =====================
@@ -750,6 +762,8 @@ model Admin {
   utilityBillReviews UtilityBillSubmission[]
   actionLogs AdminActionLog[]
   sentInvites AdminInvite[]
+  approvedPayouts PayoutTransaction[] @relation("ApprovedPayouts")
+  rejectedPayouts PayoutTransaction[] @relation("RejectedPayouts")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -878,9 +892,9 @@ model WithdrawalLimit {
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id])
 
-  // Daily withdrawal limits (in kobo)
-  dailyLimit        Decimal @default(100000000) @db.Decimal(19, 2) // 1M default for Tier 2
-  approvedDailyLimit Decimal? @db.Decimal(19, 2) // 10M after utility bill approval
+  // Daily withdrawal limits (1 million Naira = 100,000,000,000 based on divide by 100000 conversion)
+  dailyLimit        Decimal @default(100000000000) @db.Decimal(19, 2) // 1M Naira default for Tier 2
+  approvedDailyLimit Decimal? @db.Decimal(19, 2) // 10M Naira after utility bill approval
 
   // Tracking
   lastResetDate DateTime @default(now()) // Track when daily limit was last reset
