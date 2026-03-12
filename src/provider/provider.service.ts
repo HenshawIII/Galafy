@@ -264,7 +264,11 @@ export class ProviderService {
         );
       }
 
-      const success = data.status === true || data.statusCode === 100;
+      const success =
+        data.status === true ||
+        data.statusCode === 100 ||
+        data.statusCode === 200 ||
+        (typeof data.countryModel !== 'undefined' && data.countryModel != null);
       if (!success) {
         const msg = data.message || data.errors?.[0] || 'KYC API request failed';
         const isDuplicate = typeof msg === 'string' && (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
