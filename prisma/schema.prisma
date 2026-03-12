@@ -133,6 +133,12 @@ enum ConfigType {
   JSON
 }
 
+enum Tier1FaceStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 // =====================
 // CORE USER / AUTH
 // =====================
@@ -257,9 +263,20 @@ model Customer {
   tier             KycTier @default(Tier_0)
   providerTierCode Int     @default(0)
 
+  // Tier 1 (BVN + face) flow
+  tier1CorrelationId       String?         @unique
+  tier1PendingBvn          String?         @unique
+  tier1TrackingId          String?
+  tier1FaceStatus          Tier1FaceStatus?
+  tier1CompletedAt         DateTime?
+
+  // Tier 2 flow
+  tier2TrackingId           String?
+  tier2AddressVerificationStatus String?
+
   // Personal data
-  firstName           String
-  lastName            String
+  firstName           String?
+  lastName            String?
   middleName          String?
   dob                 DateTime?
   city                String?
@@ -312,21 +329,6 @@ model NinVerification {
 
   providerCheckId Int?
 
-  state  String?
-  status String?
-
-  ninCheckStatus String?
-  firstnameMatch Boolean?
-  lastnameMatch  Boolean?
-
-  ninBirthdate     DateTime?
-  ninGender        String?
-  ninPhone         String?
-  lgaOfResidence   String?
-  stateOfResidence String?
-
-  vNin String?
-
   verifiedAt DateTime @default(now())
   createdAt  DateTime @default(now())
 }
@@ -340,30 +342,7 @@ model BvnVerification {
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id])
 
-  kycCompleted    Boolean?
   providerCheckId Int?
-
-  state  String?
-  status String?
-
-  bvnCheckStatus String?
-  firstnameMatch Boolean?
-  lastnameMatch  Boolean?
-
-  birthdate          DateTime?
-  gender             String?
-  phone              String?
-  email              String?
-  firstname          String?
-  lastname           String?
-  middlename         String?
-  lgaOfResidence     String?
-  maritalStatus      String?
-  nationality        String?
-  residentialAddress String?
-  stateOfResidence   String?
-  enrollmentBank     String?
-  watchListed        String?
 
   verifiedAt DateTime @default(now())
   createdAt  DateTime @default(now())
@@ -378,15 +357,12 @@ model AddressVerification {
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id])
 
-  verified        Boolean
-  houseAddress    String?
-  houseOwner      String?
-  confidenceLevel Int?
-  discoCode       String?
+  verified Boolean
 
-  providerStatus    String?
-  providerMessage   String?
-  providerTimestamp DateTime?
+  providerStatus  String?
+  providerMessage String?
+
+  residentialAddressJson Json?
 
   verifiedAt DateTime @default(now())
   createdAt  DateTime @default(now())

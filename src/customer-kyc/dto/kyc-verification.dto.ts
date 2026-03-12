@@ -218,3 +218,24 @@ export class AddressVerificationResponseDto {
   providerTimestamp?: string;
 }
 
+// Face biometric callback (cb_uri) from ALAT face webapp
+export class FaceCallbackDto {
+  @ApiProperty({ description: 'Whether face verification succeeded' })
+  @IsBoolean()
+  success: boolean;
+
+  @ApiProperty({ description: 'Correlation ID (c_id) - matches tier1CorrelationId' })
+  @IsString()
+  @IsNotEmpty()
+  c_id: string;
+
+  @ApiProperty({ description: 'BVN or NIN value used' })
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @ApiProperty({ enum: ['bvn', 'nin'], description: 'Type of id' })
+  @IsEnum(['bvn', 'nin'])
+  id_type: 'bvn' | 'nin';
+}
+

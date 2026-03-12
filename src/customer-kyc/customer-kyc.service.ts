@@ -23,7 +23,7 @@ import {
 } from './dto/kyc-utility.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
-import { UtilityBillStatus } from '../../generated/prisma/enums.js';
+import { Tier1FaceStatus, UtilityBillStatus } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class CustomerKycService {
@@ -68,6 +68,243 @@ export class CustomerKycService {
   }
 
   /**
+   * Handle face biometric callback (cb_uri) from ALAT face webapp.
+   * Look up customer by body.id (BVN) via tier1PendingBvn. On success call Tier 1 API with correlationId = body.c_id, then update and clear tier1PendingBvn.
+   * Returns { received: true } always to avoid leaking existence.
+   */
+  async handleFaceCallback(body: { success: boolean; c_id: string; id: string; id_type: 'bvn' | 'nin' }) {
+    if (body.id_type !== 'bvn') {
+      this.logger.debug(`Face callback: id_type=${body.id_type} not handled`);
+      return { received: true };
+    }
+
+    const customer = await this.databaseService.customer.findUnique({
+      where: { tier1PendingBvn: body.id },
+    });
+
+    if (!customer) {
+      this.logger.debug(`Face callback: no customer for id (bvn)=${body.id}`);
+      return { received: true };
+    }
+
+    if (!body.success) {
+      await this.databaseService.customer.update({
+        where: { id: customer.id },
+        data: { tier1FaceStatus: Tier1FaceStatus.FAILED, tier1PendingBvn: null },
+      });
+      this.logger.log(`Face callback: face failed for customer ${customer.id}`);
+      return { received: true };
+    }
+
+    try {
+      const res = await this.providerService.tier1BvnWithoutOtpV2({
+        phoneNumber: customer.mobileNumber ?? '',
+        email: customer.emailAddress ?? '',
+        bvn: body.id,
+        correlationId: body.c_id,
+      });
+      const trackingId = res.data?.trackingId ?? null;
+      await this.databaseService.customer.update({
+        where: { id: customer.id },
+        data: {
+          tier1CorrelationId: body.c_id,
+          tier1TrackingId: trackingId,
+          tier1FaceStatus: Tier1FaceStatus.COMPLETED,
+          tier1CompletedAt: new Date(),
+          tier: KycTier.Tier_1,
+          providerTierCode: 1,
+          providerCustomerId: trackingId ?? customer.providerCustomerId,
+          tier1PendingBvn: null,
+        },
+      });
+      await this.databaseService.bvnVerification.upsert({
+        where: { customerId: customer.id },
+        create: { customerId: customer.id },
+        update: {},
+      });
+      this.logger.log(`Face callback: Tier 1 completed for customer ${customer.id}, c_id=${body.c_id}`);
+    } catch (err) {
+      this.logger.warn(`Face callback: Tier 1 API failed for customer ${customer.id}: ${err}`);
+      await this.databaseService.customer.update({
+        where: { id: customer.id },
+        data: { tier1FaceStatus: Tier1FaceStatus.FAILED, tier1PendingBvn: null },
+      });
+    }
+
+    return { received: true };
+  }
+
+  /**
+   * Register for Tier 1 (BVN + face): save phone, email, bvn and set pending. Do NOT call Tier 1 API.
+   * App opens face verification URL with static cb_uri; provider POSTs to our callback with c_id, then we call Tier 1 API.
+   */
+  async startTier1(
+    userId: string,
+    dto: { phoneNumber: string; email: string; bvn: string },
+  ): Promise<{ success: true }> {
+    const user = await this.databaseService.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    let customer = await this.databaseService.customer.findUnique({ where: { userId } });
+    if (!customer) {
+      await this.createCustomer(userId, {
+        userId,
+        firstName: user.firstName ?? undefined,
+        lastName: user.lastName ?? undefined,
+        emailAddress: user.email,
+        mobileNumber: dto.phoneNumber,
+      });
+      customer = await this.databaseService.customer.findUnique({ where: { userId } });
+      if (!customer) throw new BadRequestException('Failed to create customer');
+    }
+
+    await this.databaseService.customer.update({
+      where: { id: customer.id },
+      data: {
+        tier1PendingBvn: dto.bvn,
+        mobileNumber: dto.phoneNumber,
+        emailAddress: dto.email,
+        tier1FaceStatus: Tier1FaceStatus.PENDING,
+      },
+    });
+
+    return { success: true };
+  }
+
+  /**
+   * Submit Tier 2 (NIN + address + live face). Uses existing bvn, phone, email from customer.
+   */
+  async startTier2(
+    userId: string,
+    dto: { nin: string; bvn?: string; residentialAddress: Record<string, string | undefined>; liveImageOfFace: string },
+  ) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      include: { user: true },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+    if (customer.tier !== KycTier.Tier_1) {
+      throw new BadRequestException('Customer must complete Tier 1 before Tier 2');
+    }
+
+    const phoneNumber = customer.mobileNumber || customer.user?.phone;
+    const emailAddress = customer.emailAddress || customer.user?.email;
+    if (!phoneNumber || !emailAddress) {
+      throw new BadRequestException('Customer phone and email are required for Tier 2');
+    }
+
+    const hasBvn = await this.databaseService.bvnVerification.findUnique({ where: { customerId: customer.id } });
+    if (!hasBvn) {
+      throw new BadRequestException('BVN verification required before Tier 2');
+    }
+    if (!dto.bvn) {
+      throw new BadRequestException('BVN is required for Tier 2 submission (not stored from Tier 1)');
+    }
+    const correlationId = customer.tier1CorrelationId;
+    if (!correlationId) {
+      throw new BadRequestException('Tier 1 correlationId is missing; complete Tier 1 face verification first.');
+    }
+
+    const residentialAddress: Record<string, string | undefined> = {
+      buildingNumber: dto.residentialAddress.buildingNumber,
+      apartment: dto.residentialAddress.apartment,
+      street: dto.residentialAddress.street,
+      city: dto.residentialAddress.city,
+      town: dto.residentialAddress.town,
+      state: dto.residentialAddress.state,
+      lga: dto.residentialAddress.lga,
+      lcda: dto.residentialAddress.lcda,
+      landmark: dto.residentialAddress.landmark,
+      additionalInformation: dto.residentialAddress.additionalInformation,
+      country: dto.residentialAddress.country,
+      fullAddress: dto.residentialAddress.fullAddress,
+      postalCode: dto.residentialAddress.postalCode,
+    };
+
+    const res = await this.providerService.tier2PartnershipWithoutOtpV2({
+      bvn: dto.bvn,
+      nin: dto.nin,
+      phoneNumber,
+      emailAddress,
+      residentialAddress,
+      liveImageOfFace: dto.liveImageOfFace,
+      correlationId,
+    });
+
+    const trackingId = res.data?.trackingId ?? null;
+    const addressStatus = res.data?.addressVerificationStatus ?? null;
+    await this.databaseService.customer.update({
+      where: { id: customer.id },
+      data: {
+        tier: KycTier.Tier_2,
+        providerTierCode: 2,
+        tier2TrackingId: trackingId,
+        tier2AddressVerificationStatus: addressStatus,
+      },
+    });
+
+    await this.databaseService.addressVerification.upsert({
+      where: { customerId: customer.id },
+      create: {
+        customerId: customer.id,
+        verified: false,
+        residentialAddressJson: residentialAddress as any,
+      },
+      update: {
+        residentialAddressJson: residentialAddress as any,
+      },
+    });
+
+    return {
+      trackingId,
+      addressVerificationStatus: addressStatus,
+      tier: KycTier.Tier_2,
+    };
+  }
+
+  /**
+   * Get dropdown reference data (countries, states, LGAs, cities, etc.) for Tier 2 address.
+   */
+  async getDropdownReference() {
+    return this.providerService.getDropDownList();
+  }
+
+  /** Get countries from KYC dropdown (cached). */
+  async getReferenceCountries() {
+    return this.providerService.getKycCountries();
+  }
+
+  /** Get states from KYC dropdown, mostly Nigeria (cached). */
+  async getReferenceStates() {
+    return this.providerService.getKycStates();
+  }
+
+  /** Get LGAs by state (stateId from stateList). */
+  async getReferenceLgaByState(stateId: number) {
+    return this.providerService.getKycLgaByState(stateId);
+  }
+
+  /** Get cities by state (stateId from stateList). */
+  async getReferenceCityByState(stateId: number) {
+    return this.providerService.getKycCityByState(stateId);
+  }
+
+  /**
+   * Get partnership account details (optional phoneNumber; defaults to current user's phone).
+   */
+  async getAccountDetails(userId: string, phoneNumber?: string): Promise<{
+    accountNumber?: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phoneNumber?: string;
+  } | null> {
+    const phone = phoneNumber ?? (await this.databaseService.user.findUnique({ where: { id: userId } }))?.phone
+      ?? (await this.databaseService.customer.findFirst({ where: { userId } }))?.mobileNumber;
+    return this.providerService.getPartnershipAccountDetails(phone ?? undefined);
+  }
+
+  /**
    * Create a new customer (Tier 0) - both in our DB and with provider
    */
   async createCustomer(userId: string, createCustomerDto: CreateCustomerDto) {
@@ -89,43 +326,16 @@ export class CustomerKycService {
       throw new ConflictException('Customer already exists for this user');
     }
 
-    // Create customer with provider first
-    const providerRequest = {
-      firstName: createCustomerDto.firstName,
-      lastName: createCustomerDto.lastName,
-      middleName: createCustomerDto.middleName,
-      emailAddress: createCustomerDto.emailAddress || user.email,
-      mobileNumber: createCustomerDto.mobileNumber || user.phone || undefined,
-      dob: createCustomerDto.dob,
-      city: createCustomerDto.city,
-      address: createCustomerDto.address,
-      customerTypeId: createCustomerDto.customerTypeId || "f671da57-e281-4b40-965f-a96f4205405e",
-      countryId: createCustomerDto.countryId || "c15ad9ae-c4d7-4342-b70f-de5508627e3b",
-    };
-
-    let providerCustomerId: string | null = null;
-    try {
-      const providerResponse = await this.providerService.createCustomer(providerRequest);
-      providerCustomerId = providerResponse.customerId;
-    } catch (error) {
-      this.logger.error(`Failed to create customer with provider: ${error.message}`);
-      // Pass through the actual error message from provider
-      if (error instanceof HttpException) {
-        throw new BadRequestException(error.message || 'Failed to create customer with provider service');
-      }
-      throw new BadRequestException(error.message || 'Failed to create customer with provider service');
-    }
-
-    // Create customer in our database
+    // Create customer in our DB only (Tier 0). No provider call; providerCustomerId set when Tier 1 completes.
     const customer = await this.databaseService.customer.create({
       data: {
         userId,
-        providerCustomerId,
+        providerCustomerId: null,
         organizationId: createCustomerDto.organizationId,
         customerTypeId: createCustomerDto.customerTypeId || "f671da57-e281-4b40-965f-a96f4205405e",
         countryId: createCustomerDto.countryId || "c15ad9ae-c4d7-4342-b70f-de5508627e3b",
-        firstName: createCustomerDto.firstName,
-        lastName: createCustomerDto.lastName,
+        firstName: createCustomerDto.firstName ?? null,
+        lastName: createCustomerDto.lastName ?? null,
         middleName: createCustomerDto.middleName,
         dob: createCustomerDto.dob ? new Date(createCustomerDto.dob) : null,
         city: createCustomerDto.city,
@@ -386,19 +596,20 @@ export class CustomerKycService {
    */
   async getCustomerKycStatusByUserId(userId: string) {
     const customerId = await this.getCustomerIdByUserId(userId);
-    return this.getCustomerKycStatus(customerId);
+    return this.getCustomerKycStatus(customerId, userId);
   }
 
   /**
-   * Get customer KYC status
+   * Get customer KYC status (local + optional ALAT account details)
    */
-  async getCustomerKycStatus(customerId: string) {
+  async getCustomerKycStatus(customerId: string, userId?: string) {
     const customer = await this.databaseService.customer.findUnique({
       where: { id: customerId },
       include: {
         ninVerification: true,
         bvnVerification: true,
         addressVerification: true,
+        user: { select: { phone: true } },
       },
     });
 
@@ -406,44 +617,47 @@ export class CustomerKycService {
       throw new NotFoundException('Customer not found');
     }
 
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    // Get status from provider
-    let providerStatus;
-    try {
-      providerStatus = await this.providerService.getCustomerKycStatus(customer.providerCustomerId);
-    } catch (error) {
-      this.logger.error(`Failed to get customer KYC status from provider: ${error.message}`);
-      // Return local status if provider call fails
-      return {
-        customerId: customer.id,
-        tier: customer.tier,
-        providerTierCode: customer.providerTierCode,
-        hasNin: !!customer.ninVerification,
-        hasBvn: !!customer.bvnVerification,
-        hasAddressVerification: !!customer.addressVerification,
-      };
-    }
-
-    return {
+    const base = {
       customerId: customer.id,
       tier: customer.tier,
-      providerTierCode: providerStatus.tier ?? customer.providerTierCode,
-      hasNin: providerStatus.ninVerified ?? !!customer.ninVerification,
-      hasBvn: providerStatus.bvnVerified ?? !!customer.bvnVerification,
-      hasAddressVerification: providerStatus.addressVerified ?? !!customer.addressVerification,
+      providerTierCode: customer.providerTierCode,
+      tier1FaceStatus: customer.tier1FaceStatus,
+      tier2TrackingId: customer.tier2TrackingId,
+      tier2AddressVerificationStatus: customer.tier2AddressVerificationStatus,
+      hasNin: !!customer.ninVerification,
+      hasBvn: !!customer.bvnVerification,
+      hasAddressVerification: !!customer.addressVerification,
     };
+
+    if (!customer.providerCustomerId) {
+      return base;
+    }
+
+    try {
+      const phone = customer.mobileNumber || customer.user?.phone;
+      const accountDetails = await this.providerService.getPartnershipAccountDetails(phone ?? undefined);
+      return {
+        ...base,
+        accountNumber: accountDetails?.accountNumber,
+        partnershipAccount: accountDetails
+          ? {
+              accountNumber: accountDetails.accountNumber,
+              firstName: accountDetails.firstName,
+              lastName: accountDetails.lastName,
+              email: accountDetails.email,
+              phoneNumber: accountDetails.phoneNumber,
+            }
+          : undefined,
+      };
+    } catch (error) {
+      this.logger.debug(`Could not fetch partnership account details: ${error.message}`);
+      return base;
+    }
   }
 
   /**
-   * Upgrade customer KYC with NIN
-   * - If customer already has BVN verification → Tier_2
-   * - Otherwise → Tier_1
-   */
-  /**
-   * Upgrade customer with NIN by userId
+   * Upgrade customer with NIN by userId (old provider).
+   * @deprecated Use startTier2 for ALAT Tier 2 (NIN + address + face)
    */
   async upgradeWithNinByUserId(userId: string, ninDto: CreateNinVerificationDto) {
     const customerId = await this.getCustomerIdByUserId(userId);
@@ -467,8 +681,8 @@ export class CustomerKycService {
     const providerResponse = await this.providerService.upgradeCustomerWithNin({
       customerId: customer.providerCustomerId,
       nin: ninDto.nin,
-      firstname: customer.firstName,
-      lastname: customer.lastName,
+      firstname: customer.firstName ?? '',
+      lastname: customer.lastName ?? '',
       dob: customer.dob ? customer.dob.toISOString().split('T')[0] : '',
       verify: 1, // Default to 1 as per API requirements
     });
@@ -480,39 +694,15 @@ export class CustomerKycService {
     const ninData = providerResponse.data.nin;
     const summary = providerResponse.data.summary?.nin_check;
 
-    // Store verification in database
+    // Store verification in database (slim schema: provider ref + timestamps only)
     const ninVerification = await this.databaseService.ninVerification.upsert({
       where: { customerId },
       create: {
         customerId,
         providerCheckId: providerResponse.data.id,
-        state: providerResponse.data.status?.state,
-        status: providerResponse.data.status?.status,
-        ninCheckStatus: summary?.status,
-        firstnameMatch: summary?.fieldMatches?.firstname,
-        lastnameMatch: summary?.fieldMatches?.lastname,
-        
-        ninBirthdate: this.safeParseDate(ninData?.birthdate),
-        ninGender: ninData?.gender,
-        ninPhone: ninData?.phone,
-        lgaOfResidence: ninData?.lga_of_residence,
-        stateOfResidence: ninData?.state_of_residence,
-        vNin: ninData?.vNin,
       },
       update: {
         providerCheckId: providerResponse.data.id,
-        state: providerResponse.data.status?.state,
-        status: providerResponse.data.status?.status,
-        ninCheckStatus: summary?.status,
-        firstnameMatch: summary?.fieldMatches?.firstname,
-        lastnameMatch: summary?.fieldMatches?.lastname,
-        
-        ninBirthdate: this.safeParseDate(ninData?.birthdate),
-        ninGender: ninData?.gender,
-        ninPhone: ninData?.phone,
-        lgaOfResidence: ninData?.lga_of_residence,
-        stateOfResidence: ninData?.state_of_residence,
-        vNin: ninData?.vNin,
       },
     });
 
@@ -540,12 +730,8 @@ export class CustomerKycService {
   }
 
   /**
-   * Upgrade customer KYC with BVN
-   * - If customer already has NIN verification → Tier_2
-   * - Otherwise → Tier_1
-   */
-  /**
-   * Upgrade customer with BVN by userId
+   * Upgrade customer with BVN by userId (old provider).
+   * @deprecated Use startTier1 + face callback for ALAT Tier 1
    */
   async upgradeWithBvnByUserId(userId: string, bvnDto: CreateBvnVerificationDto) {
     const customerId = await this.getCustomerIdByUserId(userId);
@@ -579,57 +765,15 @@ export class CustomerKycService {
     const bvnData = responseData.bvn;
     const summary = responseData.summary?.bvn_check;
 
-    // Store verification in database
+    // Store verification in database (slim schema: provider ref + timestamps only)
     const bvnVerification = await this.databaseService.bvnVerification.upsert({
       where: { customerId },
       create: {
         customerId,
-        kycCompleted: providerResponse.data.kycCompleted,
         providerCheckId: responseData.id,
-        state: responseData.status?.state,
-        status: responseData.status?.status,
-        bvnCheckStatus: summary?.status,
-        firstnameMatch: summary?.fieldMatches?.firstname,
-        lastnameMatch: summary?.fieldMatches?.lastname,
-       
-        birthdate: this.safeParseDate(bvnData?.birthdate),
-        gender: bvnData?.gender,
-        phone: bvnData?.phone,
-        email: bvnData?.email,
-        firstname: bvnData?.firstname,
-        lastname: bvnData?.lastname,
-        middlename: bvnData?.middlename,
-        lgaOfResidence: bvnData?.lga_of_residence,
-        maritalStatus: bvnData?.marital_status,
-        nationality: bvnData?.nationality,
-        residentialAddress: bvnData?.residential_address,
-        stateOfResidence: bvnData?.state_of_residence,
-        enrollmentBank: bvnData?.enrollment_bank,
-        watchListed: bvnData?.watch_listed,
       },
       update: {
-        kycCompleted: providerResponse.data.kycCompleted,
         providerCheckId: responseData.id,
-        state: responseData.status?.state,
-        status: responseData.status?.status,
-        bvnCheckStatus: summary?.status,
-        firstnameMatch: summary?.fieldMatches?.firstname,
-        lastnameMatch: summary?.fieldMatches?.lastname,
-        
-        birthdate: this.safeParseDate(bvnData?.birthdate),
-        gender: bvnData?.gender,
-        phone: bvnData?.phone,
-        email: bvnData?.email,
-        firstname: bvnData?.firstname,
-        lastname: bvnData?.lastname,
-        middlename: bvnData?.middlename,
-        lgaOfResidence: bvnData?.lga_of_residence,
-        maritalStatus: bvnData?.marital_status,
-        nationality: bvnData?.nationality,
-        residentialAddress: bvnData?.residential_address,
-        stateOfResidence: bvnData?.state_of_residence,
-        enrollmentBank: bvnData?.enrollment_bank,
-        watchListed: bvnData?.watch_listed,
       },
     });
 
@@ -660,7 +804,8 @@ export class CustomerKycService {
    * Verify customer address (Tier 3)
    */
   /**
-   * Verify customer address by userId
+   * Verify customer address by userId (old provider).
+   * @deprecated Use startTier2 for ALAT (address in Tier 2 payload)
    */
   async verifyAddressByUserId(userId: string, addressDto: CreateAddressVerificationDto) {
     const customerId = await this.getCustomerIdByUserId(userId);
@@ -698,29 +843,19 @@ export class CustomerKycService {
 
     const verificationData = providerResponse.data.data;
 
-    // Store verification in database
+    // Store verification in database (slim schema)
     const addressVerification = await this.databaseService.addressVerification.upsert({
       where: { customerId },
       create: {
         customerId,
         verified: verificationData.verified || false,
-        houseAddress: verificationData.houseAddress,
-        houseOwner: verificationData.houseOwner,
-        confidenceLevel: verificationData.confidenceLevel,
-        discoCode: verificationData.discoCode,
         providerStatus: providerResponse.data.status,
         providerMessage: providerResponse.data.message,
-        providerTimestamp: this.safeParseDate(providerResponse.data.timestamp),
       },
       update: {
         verified: verificationData.verified || false,
-        houseAddress: verificationData.houseAddress,
-        houseOwner: verificationData.houseOwner,
-        confidenceLevel: verificationData.confidenceLevel,
-        discoCode: verificationData.discoCode,
         providerStatus: providerResponse.data.status,
         providerMessage: providerResponse.data.message,
-        providerTimestamp: this.safeParseDate(providerResponse.data.timestamp),
       },
     });
 
@@ -739,8 +874,8 @@ export class CustomerKycService {
   }
 
   /**
-   * Utility method: Create customer and upgrade with BVN in one request
-   * Includes duplicate checks to avoid creating duplicate customers or BVN verifications
+   * Utility method: Create customer and upgrade with BVN in one request (old provider).
+   * @deprecated Use startTier1 + face callback for ALAT Tier 1 flow
    */
   async createCustomerWithBvn(userId: string, dto: CreateCustomerWithBvnDto) {
     // Check if customer already exists for this user

@@ -9,6 +9,7 @@ import {
   UseGuards,
   Request,
   ValidationPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiExcludeEndpoint, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { CustomerKycService } from './customer-kyc.service.js';
@@ -20,11 +21,15 @@ import {
   CreateNinVerificationDto,
   CreateBvnVerificationDto,
   CreateAddressVerificationDto,
+  FaceCallbackDto,
 } from './dto/kyc-verification.dto.js';
+import { Public } from '../auth/public.decorator.js';
 import {
   CreateCustomerWithBvnDto,
   UpgradeWithNinAndAddressDto,
   NinAndUtilityBillDto,
+  StartTier1Dto,
+  StartTier2Dto,
 } from './dto/kyc-utility.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 
@@ -138,6 +143,92 @@ export class CustomerKycController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.customerKycService.getCustomerKycStatusByUserId(userId);
+  }
+
+  @Post('kyc/face-callback')
+  @Public()
+  @ApiOperation({ summary: 'Face biometric callback (cb_uri)' })
+  @ApiBody({ type: FaceCallbackDto })
+  @ApiResponse({ status: 200, description: 'Callback received' })
+  async faceCallback(@Body(ValidationPipe) body: FaceCallbackDto) {
+    return this.customerKycService.handleFaceCallback(body);
+  }
+
+  @Post('kyc/tier1/start')
+  @ApiOperation({ summary: 'Start Tier 1 (BVN + face)' })
+  @ApiBody({ type: StartTier1Dto })
+  @ApiResponse({ status: 200, description: 'Returns { success: true }. App opens face verification URL with static cb_uri from config.' })
+  @ApiResponse({ status: 409, description: 'Already registered for this channel' })
+  async startTier1(@Request() req: any, @Body(ValidationPipe) dto: StartTier1Dto) {
+    const userId = req.user?.id;
+    if (!userId) throw new Error('User ID is required. Please ensure you are authenticated.');
+    return this.customerKycService.startTier1(userId, dto);
+  }
+
+  @Get('reference/dropdown')
+  @ApiOperation({ summary: 'Get full dropdown reference (countryModel with all lists). Prefer reference/countries, states, lga, cities for smaller payloads.' })
+  @ApiResponse({ status: 200, description: 'countryModel with countryList, stateList, lgaList, lcdaList, cityList, housingTypes' })
+  async getDropdown(@Request() req: any) {
+    return this.customerKycService.getDropdownReference();
+  }
+
+  @Get('reference/countries')
+  @ApiOperation({ summary: 'Get countries from KYC dropdown (cached)' })
+  @ApiResponse({ status: 200, description: 'List of countries (id, countryCode, countryName)' })
+  async getReferenceCountries() {
+    return this.customerKycService.getReferenceCountries();
+  }
+
+  @Get('reference/states')
+  @ApiOperation({ summary: 'Get states from KYC dropdown (mostly Nigeria)' })
+  @ApiResponse({ status: 200, description: 'List of states (id, name, finacleCode, country)' })
+  async getReferenceStates() {
+    return this.customerKycService.getReferenceStates();
+  }
+
+  @Get('reference/lga')
+  @ApiOperation({ summary: 'Get LGAs by state' })
+  @ApiQuery({ name: 'stateId', required: true, description: 'State id from reference/states' })
+  @ApiResponse({ status: 200, description: 'List of LGAs for the given state' })
+  async getReferenceLga(@Query('stateId') stateId: string) {
+    const id = parseInt(stateId, 10);
+    if (Number.isNaN(id)) throw new BadRequestException('stateId must be a number');
+    return this.customerKycService.getReferenceLgaByState(id);
+  }
+
+  @Get('reference/cities')
+  @ApiOperation({ summary: 'Get cities by state' })
+  @ApiQuery({ name: 'stateId', required: true, description: 'State id from reference/states' })
+  @ApiResponse({ status: 200, description: 'List of cities for the given state' })
+  async getReferenceCities(@Query('stateId') stateId: string) {
+    const id = parseInt(stateId, 10);
+    if (Number.isNaN(id)) throw new BadRequestException('stateId must be a number');
+    return this.customerKycService.getReferenceCityByState(id);
+  }
+
+  @Get('account-details')
+  @ApiOperation({ summary: 'Get partnership account details' })
+  @ApiQuery({ name: 'phoneNumber', required: false })
+  @ApiResponse({ status: 200, description: 'Account details (accountNumber, firstName, lastName, email, phoneNumber)' })
+  async getAccountDetails(@Request() req: any, @Query('phoneNumber') phoneNumber?: string) {
+    const userId = req.user?.id;
+    if (!userId) throw new Error('User ID is required. Please ensure you are authenticated.');
+    return this.customerKycService.getAccountDetails(userId, phoneNumber);
+  }
+
+  @Post('kyc/tier2')
+  @ApiOperation({ summary: 'Submit Tier 2 (NIN + address + face)' })
+  @ApiBody({ type: StartTier2Dto })
+  @ApiResponse({ status: 200, description: 'Tier 2 submitted' })
+  async startTier2(@Request() req: any, @Body(ValidationPipe) dto: StartTier2Dto) {
+    const userId = req.user?.id;
+    if (!userId) throw new Error('User ID is required. Please ensure you are authenticated.');
+    return this.customerKycService.startTier2(userId, {
+      nin: dto.nin,
+      bvn: dto.bvn,
+      residentialAddress: dto.residentialAddress as Record<string, string | undefined>,
+      liveImageOfFace: dto.liveImageOfFace,
+    });
   }
 
   @Post('kyc/nin')

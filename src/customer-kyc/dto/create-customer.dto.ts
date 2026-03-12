@@ -8,15 +8,15 @@ export class CreateCustomerDto {
   @IsNotEmpty({ message: 'User ID is required' })
   userId: string;
 
-  @ApiProperty({ example: 'John', description: 'First name' })
+  @ApiPropertyOptional({ example: 'John', description: 'First name' })
+  @IsOptional()
   @IsString({ message: 'First name must be a string' })
-  @IsNotEmpty({ message: 'First name is required' })
-  firstName: string;
+  firstName?: string;
 
-  @ApiProperty({ example: 'Doe', description: 'Last name' })
+  @ApiPropertyOptional({ example: 'Doe', description: 'Last name' })
+  @IsOptional()
   @IsString({ message: 'Last name must be a string' })
-  @IsNotEmpty({ message: 'Last name is required' })
-  lastName: string;
+  lastName?: string;
 
   @ApiPropertyOptional({ example: 'Middle', description: 'Middle name' })
   @IsOptional()

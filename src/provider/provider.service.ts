@@ -21,6 +21,20 @@ import {
   ProviderBvnVerificationResponseDto,
   ProviderAddressVerificationResponseDto,
 } from './dto/provider-kyc.dto.js';
+import type {
+  AlatTier1Request,
+  AlatTier1Response,
+  AlatTier2Request,
+  AlatTier2Response,
+  AlatCountryModel,
+  AlatCountryItem,
+  AlatStateItem,
+  AlatLgaItem,
+  AlatCityItem,
+  AlatGetDropDownListResponse,
+  AlatPartnershipAccountDetails,
+  AlatGetPartnershipAccountDetailsResponse,
+} from './dto/provider-alat.dto.js';
 import { config } from 'dotenv';
 config();
 
@@ -31,12 +45,19 @@ export class ProviderService {
   private readonly payoutBaseUrl: string;
   private readonly apiKey: string;
   private readonly organizationId: string;
+  private readonly kycBaseUrl: string;
+  private readonly kycSubscriptionKey: string;
+  /** Cache for Alat GetDropDownList (countryModel). TTL 1 hour. */
+  private dropdownCache: { data: AlatCountryModel; expiresAt: number } | null = null;
+  private static readonly DROPDOWN_CACHE_TTL_MS = 60 * 60 * 1000;
 
   constructor() {
     this.baseUrl = process.env.PROVIDER_BASE_URL || '';
     this.payoutBaseUrl = process.env.PROVIDER_PAYOUT_BASE_URL || '';
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     this.organizationId = process.env.PROVIDER_ORGANIZATION_ID || '';
+    this.kycBaseUrl = process.env.PROVIDER_KYC_BASE_URL || 'https://apiplayground.alat.ng/create-account-face/api';
+    this.kycSubscriptionKey = process.env.PROVIDER_KYC_SUBSCRIPTION_KEY || '';
 
     if (!this.baseUrl || !this.apiKey || !this.organizationId) {
       this.logger.warn('Provider configuration is incomplete. Some features may not work.');
@@ -44,6 +65,10 @@ export class ProviderService {
 
     if (!this.payoutBaseUrl) {
       this.logger.warn('Payout base URL is not configured. Payout-related features (banks, transfers, etc.) may not work.');
+    }
+
+    if (!this.kycSubscriptionKey) {
+      this.logger.warn('PROVIDER_KYC_SUBSCRIPTION_KEY is not set. ALAT KYC endpoints may not work.');
     }
   }
 
@@ -191,10 +216,77 @@ export class ProviderService {
     }
   }
 
+  /**
+   * ALAT KYC API: HTTP request with Ocp-Apim-Subscription-Key
+   * Normalizes status/code/errors and throws on failure (409 for duplicate).
+   */
+  private async makeKycRequest<T>(
+    endpoint: string,
+    method: 'GET' | 'POST' = 'GET',
+    body?: any,
+  ): Promise<T> {
+    const url = endpoint.startsWith('http') ? endpoint : `${this.kycBaseUrl}${endpoint}`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Ocp-Apim-Subscription-Key': this.kycSubscriptionKey,
+    };
+
+    try {
+      this.logger.debug(`Making ${method} request to KYC API: ${url}`);
+      if (body) {
+        this.logger.debug(`Request body: ${JSON.stringify(body).substring(0, 200)}...`);
+      }
+
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
+      const responseText = await response.text();
+      if (!responseText || responseText.trim().length === 0) {
+        this.logger.error(`KYC API returned empty response. Status: ${response.status}`);
+        throw new HttpException(
+          'KYC API returned empty response',
+          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        this.logger.error(`Invalid JSON from KYC API: ${responseText.substring(0, 200)}`);
+        throw new HttpException(
+          'Invalid JSON response from KYC API',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      const success = data.status === true || data.statusCode === 100;
+      if (!success) {
+        const msg = data.message || data.errors?.[0] || 'KYC API request failed';
+        const isDuplicate = typeof msg === 'string' && (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
+        throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : (response.status || HttpStatus.BAD_REQUEST));
+      }
+
+      return data as T;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`KYC API request failed: ${error.message}`);
+      throw new HttpException(
+        `Failed to communicate with KYC service: ${error.message}`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
+
   // ==================== CUSTOMER OPERATIONS ====================
 
   /**
    * Create a new customer in the provider system
+   * @deprecated Use ALAT flow: create customer locally (Tier 0), then startTier1 + face callback
    */
   async createCustomer(
     requestDto: ProviderCreateCustomerRequestDto,
@@ -334,6 +426,7 @@ export class ProviderService {
 
   /**
    * Upgrade customer KYC with NIN (Tier 1)
+   * @deprecated Use ALAT tier2PartnershipWithoutOtpV2 for Tier 2 (NIN + address + face)
    */
   async upgradeCustomerWithNin(
     requestDto: ProviderNinVerificationRequestDto,
@@ -364,6 +457,7 @@ export class ProviderService {
 
   /**
    * Upgrade customer KYC with BVN (Tier 2)
+   * @deprecated Use ALAT tier1BvnWithoutOtpV2 + face callback for Tier 1
    */
   async upgradeCustomerWithBvn(
     requestDto: ProviderBvnVerificationRequestDto,
@@ -384,6 +478,7 @@ export class ProviderService {
 
   /**
    * Verify customer address (Tier 3)
+   * @deprecated Use ALAT Tier 2 flow (residential address in tier2PartnershipWithoutOtpV2)
    */
   async verifyCustomerAddress(
     requestDto: ProviderAddressVerificationRequestDto,
@@ -402,6 +497,90 @@ export class ProviderService {
     );
 
     return response;
+  }
+
+  // ==================== ALAT KYC (create-account-face) ====================
+
+  /**
+   * Tier 1: Generate customer with BVN (no OTP). Face verification completes via callback.
+   */
+  async tier1BvnWithoutOtpV2(body: AlatTier1Request): Promise<AlatTier1Response> {
+    return this.makeKycRequest<AlatTier1Response>('/partnership/tier1-bvn-withoutOtp-v2', 'POST', body);
+  }
+
+  /**
+   * Tier 2: Partnership account with NIN + address + live face image.
+   */
+  async tier2PartnershipWithoutOtpV2(body: AlatTier2Request): Promise<AlatTier2Response> {
+    return this.makeKycRequest<AlatTier2Response>('/partnership/tier2-partnershipaccount-withoutOtp-v2', 'POST', body);
+  }
+
+  /**
+   * Get dropdown reference data: countries, states, LGAs, LCDAs, cities, housing types.
+   */
+  async getDropDownList(): Promise<AlatCountryModel> {
+    const res = await this.makeKycRequest<AlatGetDropDownListResponse>('/CustomerInfo/GetDropDownList', 'GET');
+    if (!res.countryModel) {
+      throw new HttpException('GetDropDownList returned no countryModel', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    return res.countryModel;
+  }
+
+  /** Get cached country model (fetches and caches with 1h TTL). Used by KYC reference methods. */
+  private async getCachedCountryModel(): Promise<AlatCountryModel> {
+    const now = Date.now();
+    if (this.dropdownCache && this.dropdownCache.expiresAt > now) {
+      return this.dropdownCache.data;
+    }
+    const data = await this.getDropDownList();
+    this.dropdownCache = { data, expiresAt: now + ProviderService.DROPDOWN_CACHE_TTL_MS };
+    return data;
+  }
+
+  /**
+   * Get countries from KYC dropdown (for Tier 2 address). Uses cached GetDropDownList.
+   */
+  async getKycCountries(): Promise<AlatCountryItem[]> {
+    const model = await this.getCachedCountryModel();
+    return model.countryList ?? [];
+  }
+
+  /**
+   * Get states from KYC dropdown (mostly Nigeria). Uses cached GetDropDownList.
+   */
+  async getKycStates(): Promise<AlatStateItem[]> {
+    const model = await this.getCachedCountryModel();
+    return model.stateList ?? [];
+  }
+
+  /**
+   * Get LGAs by state (stateId from stateList). Uses cached GetDropDownList.
+   */
+  async getKycLgaByState(stateId: number): Promise<AlatLgaItem[]> {
+    const model = await this.getCachedCountryModel();
+    const list = model.lgaList ?? [];
+    return list.filter((l) => l.stateId === stateId);
+  }
+
+  /**
+   * Get cities by state (stateId from stateList). Uses cached GetDropDownList.
+   */
+  async getKycCityByState(stateId: number): Promise<AlatCityItem[]> {
+    const model = await this.getCachedCountryModel();
+    const list = model.cityList ?? [];
+    return list.filter((c) => c.stateId === stateId);
+  }
+
+  /**
+   * Get partnership account details (optional phoneNumber query).
+   * Throws on API error; returns data or null if response has no data.
+   */
+  async getPartnershipAccountDetails(phoneNumber?: string): Promise<AlatPartnershipAccountDetails | null> {
+    const endpoint = phoneNumber
+      ? `/CustomerAccount/GetPartnershipAccountDetails?phoneNumber=${encodeURIComponent(phoneNumber)}`
+      : '/CustomerAccount/GetPartnershipAccountDetails';
+    const res = await this.makeKycRequest<AlatGetPartnershipAccountDetailsResponse>(endpoint, 'GET');
+    return res.data ?? null;
   }
 
   // ==================== UTILITY OPERATIONS ====================
