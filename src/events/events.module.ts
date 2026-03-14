@@ -8,12 +8,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConfigModule } from '../config/config.module.js';
 
 @Module({
-  imports: [
-    DatabaseModule,
-    CacheModule,
-    forwardRef(() => NotificationsModule),
-    ConfigModule,
-  ],
+  imports: [DatabaseModule, CacheModule, forwardRef(() => NotificationsModule), ConfigModule],
   controllers: [EventsController],
   providers: [EventsService, EventStatusTask],
   exports: [EventsService],

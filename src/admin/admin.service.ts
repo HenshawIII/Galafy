@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  ConflictException,
+  Logger,
+} from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { CacheService } from '../cache/cache.service.js';
@@ -8,8 +15,24 @@ import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-manage
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
-import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
-import { AdminRole, KycRequestStatus, UtilityBillStatus, TransactionType, TransactionDirection, TransactionStatus, AlertStatus, EventStatus, PayoutStatus } from '../../generated/prisma/enums.js';
+import {
+  InviteAdminDto,
+  AcceptInviteDto,
+  GetAdminsDto,
+  UpdateAdminDto,
+  AssignRoleDto,
+} from './dto/admin-management.dto.js';
+import {
+  AdminRole,
+  KycRequestStatus,
+  UtilityBillStatus,
+  TransactionType,
+  TransactionDirection,
+  TransactionStatus,
+  AlertStatus,
+  EventStatus,
+  PayoutStatus,
+} from '../../generated/prisma/enums.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
@@ -284,7 +307,11 @@ export class AdminService {
     let filteredUsers = users;
     if (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill') {
       filteredUsers = users.filter((user) => {
-        if (!user.customer || !user.customer.utilityBillSubmissions || user.customer.utilityBillSubmissions.length === 0) {
+        if (
+          !user.customer ||
+          !user.customer.utilityBillSubmissions ||
+          user.customer.utilityBillSubmissions.length === 0
+        ) {
           return false;
         }
         const latestSubmission = user.customer.utilityBillSubmissions[0];
@@ -326,7 +353,9 @@ export class AdminService {
         page,
         limit,
         total: filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total,
-        totalPages: Math.ceil((filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total) / limit),
+        totalPages: Math.ceil(
+          (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total) / limit,
+        ),
       },
     };
   }
@@ -456,7 +485,11 @@ export class AdminService {
           let filteredUsers = users;
           if (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill') {
             filteredUsers = users.filter((user) => {
-              if (!user.customer || !user.customer.utilityBillSubmissions || user.customer.utilityBillSubmissions.length === 0) {
+              if (
+                !user.customer ||
+                !user.customer.utilityBillSubmissions ||
+                user.customer.utilityBillSubmissions.length === 0
+              ) {
                 return false;
               }
               const latestSubmission = user.customer.utilityBillSubmissions[0];
@@ -468,16 +501,17 @@ export class AdminService {
           for (const user of filteredUsers) {
             // Get latest utility bill status
             let utilityBillStatus: string = '';
-            if (user.customer && user.customer.utilityBillSubmissions && user.customer.utilityBillSubmissions.length > 0) {
+            if (
+              user.customer &&
+              user.customer.utilityBillSubmissions &&
+              user.customer.utilityBillSubmissions.length > 0
+            ) {
               utilityBillStatus = user.customer.utilityBillSubmissions[0].status || '';
             }
 
             // Calculate total wallet balance
             const totalWalletBalance = user.customer?.wallets
-              ? user.customer.wallets.reduce(
-                  (sum, wallet) => sum.plus(wallet.availableBalance),
-                  new Decimal(0),
-                )
+              ? user.customer.wallets.reduce((sum, wallet) => sum.plus(wallet.availableBalance), new Decimal(0))
               : new Decimal(0);
 
             // Format dates
@@ -588,7 +622,7 @@ export class AdminService {
           },
         },
       });
-      
+
       // If not found with original format, try normalized format
       if (!user && normalizedPhone !== trimmedQuery) {
         user = await this.databaseService.user.findUnique({
@@ -644,10 +678,11 @@ export class AdminService {
     return {
       users: users.map((user) => {
         const walletCount = user.customer?.wallets?.length || 0;
-        const totalBalance = user.customer?.wallets?.reduce(
-          (sum: Decimal, wallet: any) => sum.plus(wallet.availableBalance || 0),
-          new Decimal(0),
-        ) || new Decimal(0);
+        const totalBalance =
+          user.customer?.wallets?.reduce(
+            (sum: Decimal, wallet: any) => sum.plus(wallet.availableBalance || 0),
+            new Decimal(0),
+          ) || new Decimal(0);
 
         return {
           id: user.id,
@@ -772,13 +807,7 @@ export class AdminService {
         username: user.username,
       });
 
-      await this.logAdminAction(
-        adminId,
-        'KYC_REMINDER_SENT',
-        'USER',
-        user.id,
-        { userId: user.id, email: user.email },
-      );
+      await this.logAdminAction(adminId, 'KYC_REMINDER_SENT', 'USER', user.id, { userId: user.id, email: user.email });
 
       return {
         success: true,
@@ -867,13 +896,7 @@ export class AdminService {
       },
     });
 
-    await this.logAdminAction(
-      adminId,
-      'USER_UNRESTRICTED',
-      'CUSTOMER',
-      customer.id,
-      { userId },
-    );
+    await this.logAdminAction(adminId, 'USER_UNRESTRICTED', 'CUSTOMER', customer.id, { userId });
 
     return customer;
   }
@@ -1054,14 +1077,7 @@ export class AdminService {
       },
     });
 
-    await this.logAdminAction(
-      adminId,
-      'KYC_REJECTED',
-      'KYC_REQUEST',
-      requestId,
-      { reason: dto.reason },
-      dto.reason,
-    );
+    await this.logAdminAction(adminId, 'KYC_REJECTED', 'KYC_REQUEST', requestId, { reason: dto.reason }, dto.reason);
 
     return updatedRequest;
   }
@@ -1177,7 +1193,7 @@ export class AdminService {
    * Get transaction analytics summary
    * Returns aggregated metrics: total wallet balance, total withdrawn, and total received
    * Results are cached for 5 minutes to reduce database load (only for all-time queries)
-   * 
+   *
    * @param filters Optional date range filters (startDate, endDate)
    */
   async getTransactionAnalyticsSummary(filters?: TransactionAnalyticsDto) {
@@ -1197,9 +1213,10 @@ export class AdminService {
     }
 
     // Build cache key (include date range if provided, or use default for all-time)
-    const cacheKey = filters?.startDate || filters?.endDate
-      ? `${this.CACHE_KEY}:${filters.startDate || 'all'}:${filters.endDate || 'all'}`
-      : this.CACHE_KEY;
+    const cacheKey =
+      filters?.startDate || filters?.endDate
+        ? `${this.CACHE_KEY}:${filters.startDate || 'all'}:${filters.endDate || 'all'}`
+        : this.CACHE_KEY;
 
     // Only use cache for all-time queries (no date filters)
     if (!filters?.startDate && !filters?.endDate) {
@@ -1260,9 +1277,9 @@ export class AdminService {
 
     // Generate chart data - default to last 7 days if no date filters provided
     let chartData: Array<{ date: string; amount: string; count: number }> = [];
-    
+
     // Determine date range for chart data
-    const chartStartDate = filters?.startDate 
+    const chartStartDate = filters?.startDate
       ? new Date(filters.startDate)
       : (() => {
           const date = new Date();
@@ -1270,7 +1287,7 @@ export class AdminService {
           date.setHours(0, 0, 0, 0);
           return date;
         })();
-    
+
     const chartEndDate = filters?.endDate
       ? (() => {
           const date = new Date(filters.endDate);
@@ -1296,11 +1313,11 @@ export class AdminService {
 
     // Group transactions by date
     const transactionsByDate = new Map<string, { amount: Decimal; count: number }>();
-    
+
     chartTransactions.forEach((tx) => {
       const dateKey = tx.createdAt.toISOString().split('T')[0]; // YYYY-MM-DD format
       const existing = transactionsByDate.get(dateKey);
-      
+
       if (existing) {
         existing.amount = existing.amount.plus(tx.amount);
         existing.count += 1;
@@ -1334,15 +1351,21 @@ export class AdminService {
 
     // Only cache all-time queries (no date filters) to avoid cache bloat
     if (!filters?.startDate && !filters?.endDate) {
-      await this.cacheService.set(cacheKey, {
-        totalWalletBalance: result.totalWalletBalance,
-        totalWithdrawn: result.totalWithdrawn,
-        totalReceived: result.totalReceived,
-        timestamp: result.timestamp,
-      }, this.CACHE_TTL);
+      await this.cacheService.set(
+        cacheKey,
+        {
+          totalWalletBalance: result.totalWalletBalance,
+          totalWithdrawn: result.totalWithdrawn,
+          totalReceived: result.totalReceived,
+          timestamp: result.timestamp,
+        },
+        this.CACHE_TTL,
+      );
       this.logger.log('Transaction analytics summary calculated and cached');
     } else {
-      this.logger.log(`Transaction analytics summary calculated for date range: ${filters.startDate || 'all'} to ${filters.endDate || 'all'}`);
+      this.logger.log(
+        `Transaction analytics summary calculated for date range: ${filters.startDate || 'all'} to ${filters.endDate || 'all'}`,
+      );
     }
 
     return result;
@@ -1455,15 +1478,17 @@ export class AdminService {
     // 7 days ago: Sum of all AdminFee with status='COLLECTED' that were created before 7 days ago
     const totalRevenue7DaysAgoAmount = totalRevenue7DaysAgo._sum.amount || new Decimal(0);
     const currentTotalRevenue = allTimeRevenueResult._sum.amount || new Decimal(0);
-    
+
     // Convert to numbers for comparison (handle Decimal type properly)
-    const currentAmount = currentTotalRevenue instanceof Decimal 
-      ? Number(currentTotalRevenue.toString()) 
-      : Number(currentTotalRevenue) || 0;
-    const previousAmount = totalRevenue7DaysAgoAmount instanceof Decimal
-      ? Number(totalRevenue7DaysAgoAmount.toString())
-      : Number(totalRevenue7DaysAgoAmount) || 0;
-    
+    const currentAmount =
+      currentTotalRevenue instanceof Decimal
+        ? Number(currentTotalRevenue.toString())
+        : Number(currentTotalRevenue) || 0;
+    const previousAmount =
+      totalRevenue7DaysAgoAmount instanceof Decimal
+        ? Number(totalRevenue7DaysAgoAmount.toString())
+        : Number(totalRevenue7DaysAgoAmount) || 0;
+
     // Calculate growth: if same, should be 0%; negative only if fees were reversed/refunded
     // Current = sum of all COLLECTED fees (all time)
     // Previous = sum of COLLECTED fees created before 7 days ago
@@ -1782,7 +1807,7 @@ export class AdminService {
     // Use streaming to avoid loading all logs into memory
     // Limit to 100,000 records max to prevent memory issues
     const MAX_EXPORT_RECORDS = 100000;
-    
+
     return new Promise(async (resolve, reject) => {
       const chunks: Buffer[] = [];
       const rows: any[] = [];
@@ -1861,9 +1886,10 @@ export class AdminService {
         stream.on('data', (chunk: Buffer) => chunks.push(chunk));
         stream.on('end', () => {
           const buffer = Buffer.concat(chunks);
-          const filename = filters.startDate && filters.endDate
-            ? `admin-action-logs-${filters.startDate.split('T')[0]}-to-${filters.endDate.split('T')[0]}.csv`
-            : 'admin-action-logs-all.csv';
+          const filename =
+            filters.startDate && filters.endDate
+              ? `admin-action-logs-${filters.startDate.split('T')[0]}-to-${filters.endDate.split('T')[0]}.csv`
+              : 'admin-action-logs-all.csv';
           resolve({ buffer, filename });
         });
         stream.on('error', (error) => {
@@ -2493,10 +2519,7 @@ export class AdminService {
           // Add batch rows
           for (const event of events) {
             // Calculate stats (same logic as getEvents)
-            const totalSprayed = event.sprays.reduce(
-              (sum, spray) => sum.plus(spray.totalAmount),
-              new Decimal(0),
-            );
+            const totalSprayed = event.sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
             const uniqueSprayers = new Set(
               event.sprays
                 .map((s) => s.sprayerWallet?.customer?.userId)
@@ -2577,77 +2600,71 @@ export class AdminService {
     };
 
     // Current metrics - ALL events
-    const [
-      totalEvents,
-      activeEvents,
-      allSprays,
-      allSprays7DaysAgo,
-      totalEvents7DaysAgo,
-      activeEvents7DaysAgo,
-    ] = await Promise.all([
-      // Total Events (current)
-      this.databaseService.event.count(),
-      // Active Events (LIVE status)
-      this.databaseService.event.count({
-        where: {
-          status: 'LIVE',
-        },
-      }),
-      // All sprays (for unique sprayers and total sprayed)
-      this.databaseService.spray.findMany({
-        select: {
-          sprayerWalletId: true,
-          totalAmount: true,
-          sprayerWallet: {
-            select: {
-              customer: {
-                select: {
-                  userId: true,
+    const [totalEvents, activeEvents, allSprays, allSprays7DaysAgo, totalEvents7DaysAgo, activeEvents7DaysAgo] =
+      await Promise.all([
+        // Total Events (current)
+        this.databaseService.event.count(),
+        // Active Events (LIVE status)
+        this.databaseService.event.count({
+          where: {
+            status: 'LIVE',
+          },
+        }),
+        // All sprays (for unique sprayers and total sprayed)
+        this.databaseService.spray.findMany({
+          select: {
+            sprayerWalletId: true,
+            totalAmount: true,
+            sprayerWallet: {
+              select: {
+                customer: {
+                  select: {
+                    userId: true,
+                  },
                 },
               },
             },
           },
-        },
-      }),
-      // All sprays created before 7 days ago
-      this.databaseService.spray.findMany({
-        where: {
-          createdAt: {
-            lt: sevenDaysAgo,
+        }),
+        // All sprays created before 7 days ago
+        this.databaseService.spray.findMany({
+          where: {
+            createdAt: {
+              lt: sevenDaysAgo,
+            },
           },
-        },
-        select: {
-          sprayerWalletId: true,
-          totalAmount: true,
-          sprayerWallet: {
-            select: {
-              customer: {
-                select: {
-                  userId: true,
+          select: {
+            sprayerWalletId: true,
+            totalAmount: true,
+            sprayerWallet: {
+              select: {
+                customer: {
+                  select: {
+                    userId: true,
+                  },
                 },
               },
             },
           },
-        },
-      }),
-      // Total Events 7 days ago
-      this.databaseService.event.count({
-        where: {
-          createdAt: {
-            lt: sevenDaysAgo,
+        }),
+        // Total Events 7 days ago
+        this.databaseService.event.count({
+          where: {
+            createdAt: {
+              lt: sevenDaysAgo,
+            },
           },
-        },
-      }),
-      // Active Events 7 days ago (LIVE status AND created before 7 days ago)
-      this.databaseService.event.count({
-        where: {
-          status: 'LIVE',
-          createdAt: {
-            lt: sevenDaysAgo,
+        }),
+        // Active Events 7 days ago (LIVE status AND created before 7 days ago)
+        this.databaseService.event.count({
+          where: {
+            status: 'LIVE',
+            createdAt: {
+              lt: sevenDaysAgo,
+            },
           },
-        },
-      }),
-    ]);
+        }),
+      ]);
 
     // Calculate current metrics
     // Unique sprayers: count distinct userIds from sprayerWallet.customer.userId
@@ -2659,10 +2676,7 @@ export class AdminService {
     const totalAttendees = uniqueSprayerIds.size;
 
     // Total sprayed: sum of all spray amounts
-    const totalSprayed = allSprays.reduce(
-      (sum, spray) => sum.plus(spray.totalAmount),
-      new Decimal(0),
-    );
+    const totalSprayed = allSprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     // Calculate 7 days ago metrics
     const uniqueSprayerIds7DaysAgo = new Set(
@@ -2672,10 +2686,7 @@ export class AdminService {
     );
     const totalAttendees7DaysAgo = uniqueSprayerIds7DaysAgo.size;
 
-    const totalSprayed7DaysAgo = allSprays7DaysAgo.reduce(
-      (sum, spray) => sum.plus(spray.totalAmount),
-      new Decimal(0),
-    );
+    const totalSprayed7DaysAgo = allSprays7DaysAgo.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     // Calculate growth percentages
     const totalEventsGrowth = calculateGrowth(totalEvents, totalEvents7DaysAgo);
@@ -3067,7 +3078,10 @@ export class AdminService {
     });
 
     // Aggregate by sprayer
-    const sprayerMap = new Map<string, { user: any; totalAmount: Decimal; sprayCount: number; firstSprayAt: Date; lastSprayAt: Date }>();
+    const sprayerMap = new Map<
+      string,
+      { user: any; totalAmount: Decimal; sprayCount: number; firstSprayAt: Date; lastSprayAt: Date }
+    >();
 
     for (const spray of sprays) {
       const userId = spray.sprayerWallet.customer.userId;
@@ -3166,14 +3180,14 @@ export class AdminService {
 
     // Generate CSV content
     const csvRows: string[] = [];
-    
+
     // Header
     csvRows.push('Event Report');
     csvRows.push(`Event: ${event.title}`);
     csvRows.push(`Status: ${event.status}`);
     csvRows.push(`Created: ${event.createdAt}`);
     csvRows.push('');
-    
+
     // Summary
     csvRows.push('Summary');
     csvRows.push(`Total Participants: ${event.participantCount}`);
@@ -3181,29 +3195,31 @@ export class AdminService {
     csvRows.push(`Total Amount Sprayed: ${event.totalSprayed}`);
     csvRows.push(`Unique Sprayers: ${event.uniqueSprayerCount}`);
     csvRows.push('');
-    
+
     // Participants
     csvRows.push('Participants');
     csvRows.push('User ID,Email,First Name,Last Name,Role');
     for (const participant of event.participants) {
       csvRows.push(
-        `${participant.user.id},${participant.user.email},${participant.user.firstName || ''},${participant.user.lastName || ''},${participant.role}`
+        `${participant.user.id},${participant.user.email},${participant.user.firstName || ''},${participant.user.lastName || ''},${participant.role}`,
       );
     }
     csvRows.push('');
-    
+
     // Sprays
     csvRows.push('Sprays');
     csvRows.push('Spray ID,Sprayer,Receiver,Amount,Note,Created At');
     for (const spray of event.sprays) {
       const sprayerName = spray.sprayerWallet.customer.user
-        ? `${spray.sprayerWallet.customer.user.firstName || ''} ${spray.sprayerWallet.customer.user.lastName || ''}`.trim() || spray.sprayerWallet.customer.user.email
+        ? `${spray.sprayerWallet.customer.user.firstName || ''} ${spray.sprayerWallet.customer.user.lastName || ''}`.trim() ||
+          spray.sprayerWallet.customer.user.email
         : 'Anonymous';
       const receiverName = spray.receiverWallet.customer.user
-        ? `${spray.receiverWallet.customer.user.firstName || ''} ${spray.receiverWallet.customer.user.lastName || ''}`.trim() || spray.receiverWallet.customer.user.email
+        ? `${spray.receiverWallet.customer.user.firstName || ''} ${spray.receiverWallet.customer.user.lastName || ''}`.trim() ||
+          spray.receiverWallet.customer.user.email
         : 'Unknown';
       csvRows.push(
-        `${spray.id},${sprayerName},${receiverName},${spray.totalAmount.toString()},${spray.note || ''},${spray.createdAt.toISOString()}`
+        `${spray.id},${sprayerName},${receiverName},${spray.totalAmount.toString()},${spray.note || ''},${spray.createdAt.toISOString()}`,
       );
     }
 
@@ -3435,14 +3451,14 @@ export class AdminService {
 
     // Generate CSV content
     const csvRows: string[] = [];
-    
+
     // Header
     csvRows.push('Transaction Receipt');
     csvRows.push(`Transaction ID: ${transaction.id}`);
     csvRows.push(`Reference: ${transaction.reference}`);
     csvRows.push(`Date: ${transaction.createdAt.toISOString()}`);
     csvRows.push('');
-    
+
     // Transaction Details
     csvRows.push('Transaction Details');
     csvRows.push(`Type: ${transaction.type}`);
@@ -3453,16 +3469,18 @@ export class AdminService {
     csvRows.push(`Narration: ${transaction.narration || ''}`);
     csvRows.push(`External Reference: ${transaction.externalReference || ''}`);
     csvRows.push('');
-    
+
     // User Details
     if (transaction.wallet?.customer?.user) {
       csvRows.push('User Details');
       csvRows.push(`User ID: ${transaction.wallet.customer.user.id}`);
       csvRows.push(`Email: ${transaction.wallet.customer.user.email}`);
-      csvRows.push(`Name: ${transaction.wallet.customer.user.firstName || ''} ${transaction.wallet.customer.user.lastName || ''}`.trim());
+      csvRows.push(
+        `Name: ${transaction.wallet.customer.user.firstName || ''} ${transaction.wallet.customer.user.lastName || ''}`.trim(),
+      );
       csvRows.push('');
     }
-    
+
     // Event Details (if spray transaction)
     if (transaction.spray?.event) {
       csvRows.push('Event Details');
@@ -3683,7 +3701,7 @@ export class AdminService {
             fromWalletId: virtualAccountNumber,
             toWalletId: adminWalletAccountNumber,
             amount: grossAmount.toNumber(),
-            currencyId: wallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+            currencyId: wallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
             description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
             reference: userTransactionRef,
           });
@@ -3733,12 +3751,14 @@ export class AdminService {
           }
 
           // Get source account name
-          const customerName = wallet.customer.firstName && wallet.customer.lastName
-            ? `${wallet.customer.firstName} ${wallet.customer.lastName}`
-            : null;
-          const userName = wallet.customer.user.firstName && wallet.customer.user.lastName
-            ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
-            : null;
+          const customerName =
+            wallet.customer.firstName && wallet.customer.lastName
+              ? `${wallet.customer.firstName} ${wallet.customer.lastName}`
+              : null;
+          const userName =
+            wallet.customer.user.firstName && wallet.customer.user.lastName
+              ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
+              : null;
           const sourceAccountName = wallet.name || customerName || userName || 'Unknown';
 
           // Step 2: Transfer netAmount from organization wallet to external bank

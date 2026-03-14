@@ -1,4 +1,13 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsEnum, IsObject, ValidateNested, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+  IsObject,
+  ValidateNested,
+  IsArray,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -134,4 +143,3 @@ export class UpdateDeviceDto {
   @IsBoolean({ message: 'isActive must be a boolean' })
   isActive?: boolean;
 }
-

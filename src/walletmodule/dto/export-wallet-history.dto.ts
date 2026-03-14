@@ -28,7 +28,3 @@ export class ExportWalletHistoryDto {
   @IsNotEmpty({ message: 'End date is required' })
   endDate: string;
 }
-
-
-
-

@@ -35,8 +35,10 @@ export class WebhooksController {
   ) {
     // Get raw body for signature verification
     // rawBody is a Buffer when rawBody: true is set in NestFactory.create
-    const rawBody = req.rawBody 
-      ? (Buffer.isBuffer(req.rawBody) ? req.rawBody.toString('utf8') : String(req.rawBody))
+    const rawBody = req.rawBody
+      ? Buffer.isBuffer(req.rawBody)
+        ? req.rawBody.toString('utf8')
+        : String(req.rawBody)
       : JSON.stringify(body);
 
     // Verify signature
@@ -54,4 +56,3 @@ export class WebhooksController {
     }
   }
 }
-

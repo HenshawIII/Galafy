@@ -51,4 +51,3 @@ export class RejectWithdrawalDto {
   @IsOptional()
   reason?: string;
 }
-

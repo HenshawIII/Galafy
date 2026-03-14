@@ -113,10 +113,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   @SubscribeMessage('event.join')
-  async handleJoinEvent(
-    @ConnectedSocket() client: AuthenticatedSocket,
-    @MessageBody() data: { eventId: string },
-  ) {
+  async handleJoinEvent(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() data: { eventId: string }) {
     if (!client.user) {
       client.emit('error', { message: 'Unauthorized' });
       return;
@@ -213,10 +210,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
       // Format sprays with sprayer and receiver info
       const sprays = (event.sprays || [])
-        .filter((spray: any) => 
-          spray.sprayerWallet?.customer?.user && 
-          spray.receiverWallet?.customer?.user
-        )
+        .filter((spray: any) => spray.sprayerWallet?.customer?.user && spray.receiverWallet?.customer?.user)
         .map((spray: any) => ({
           id: spray.id,
           totalAmount: spray.totalAmount.toString(),
@@ -344,10 +338,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   @SubscribeMessage('event.leave')
-  async handleLeaveEvent(
-    @ConnectedSocket() client: AuthenticatedSocket,
-    @MessageBody() data: { eventId: string },
-  ) {
+  async handleLeaveEvent(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() data: { eventId: string }) {
     if (!client.user) {
       return;
     }
@@ -460,17 +451,20 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
    * Emit reaction to event room
    * Broadcasts reactions to all subscribers in the event
    */
-  emitReaction(eventId: string, payload: {
-    eventId: string;
-    reaction: string;
-    user: {
-      id: string;
-      username: string | null;
-      profilePicture: string | null;
-    };
-    targetUserId?: string | null;
-    timestamp: string;
-  }) {
+  emitReaction(
+    eventId: string,
+    payload: {
+      eventId: string;
+      reaction: string;
+      user: {
+        id: string;
+        username: string | null;
+        profilePicture: string | null;
+      };
+      targetUserId?: string | null;
+      timestamp: string;
+    },
+  ) {
     this.server.to(`event:${eventId}`).emit('event.reaction', payload);
     this.logger.log(`Emitted reaction ${payload.reaction} to event:${eventId}`);
   }
@@ -507,4 +501,3 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     this.logger.log(`Emitted sprays.updated to event:${eventId}`);
   }
 }
-

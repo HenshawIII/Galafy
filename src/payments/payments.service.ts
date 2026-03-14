@@ -52,10 +52,7 @@ export class PaymentsService {
    */
   async getOrganizationTransactions(query: GetOrganizationTransactionsDto) {
     try {
-      const transactions = await this.providerService.getOrganizationWalletTransactions(
-        query.page,
-        query.pageSize,
-      );
+      const transactions = await this.providerService.getOrganizationWalletTransactions(query.page, query.pageSize);
 
       return transactions;
     } catch (error) {
@@ -177,10 +174,7 @@ export class PaymentsService {
       // Find wallet by account ID (assuming accountId maps to virtualAccountNumber or providerWalletId)
       const localWallet = await this.databaseService.wallet.findFirst({
         where: {
-          OR: [
-            { virtualAccountNumber: restrictDto.accountId },
-            { providerWalletId: restrictDto.accountId },
-          ],
+          OR: [{ virtualAccountNumber: restrictDto.accountId }, { providerWalletId: restrictDto.accountId }],
         },
         include: { customer: { include: { user: true } } },
       });
@@ -189,10 +183,7 @@ export class PaymentsService {
         throw new NotFoundException('Wallet not found');
       }
 
-      const result = await this.providerService.restrictByAccountId(
-        restrictDto.accountId,
-        restrictDto.restrictionType,
-      );
+      const result = await this.providerService.restrictByAccountId(restrictDto.accountId, restrictDto.restrictionType);
 
       // Optionally update local wallet restriction
       if (result.success && localWallet.providerWalletId) {
@@ -234,10 +225,7 @@ export class PaymentsService {
    */
   async bankAccountNameEnquiry(enquiryDto: BankAccountNameEnquiryDto) {
     try {
-      const result = await this.providerService.bankAccountNameEnquiry(
-        enquiryDto.bankCode,
-        enquiryDto.accountNumber,
-      );
+      const result = await this.providerService.bankAccountNameEnquiry(enquiryDto.bankCode, enquiryDto.accountNumber);
 
       return result;
     } catch (error) {
@@ -331,13 +319,13 @@ export class PaymentsService {
       // Log payout transaction (legacy direct inter-bank transfer)
       this.logger.log(
         `💸 PAYOUT TRANSACTION (Direct): Amount=${transferDto.amount.toString()}, ` +
-        `WalletId=${sourceWallet.id}, AccountNumber=${transferDto.sourceAccountNumber}, ` +
-        `ToAccount=${transferDto.destinationAccountNumber}, ` +
-        `BankCode=${transferDto.destinationBankCode}, ` +
-        `RecipientName="${transferDto.destinationAccountName}", ` +
-        `TxId=${transaction.id}, PayoutTxId=${payoutTransaction.id}, ` +
-        `InternalRef=${internalReference}, ProviderRef=${result.transactionRef}, ` +
-        `Status=PENDING, Remarks="${transferDto.remarks || 'N/A'}"`,
+          `WalletId=${sourceWallet.id}, AccountNumber=${transferDto.sourceAccountNumber}, ` +
+          `ToAccount=${transferDto.destinationAccountNumber}, ` +
+          `BankCode=${transferDto.destinationBankCode}, ` +
+          `RecipientName="${transferDto.destinationAccountName}", ` +
+          `TxId=${transaction.id}, PayoutTxId=${payoutTransaction.id}, ` +
+          `InternalRef=${internalReference}, ProviderRef=${result.transactionRef}, ` +
+          `Status=PENDING, Remarks="${transferDto.remarks || 'N/A'}"`,
       );
 
       return {
@@ -373,8 +361,7 @@ export class PaymentsService {
       // Update local transaction status based on result
       if (payoutTransaction) {
         let status: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'REVERSED' = 'PENDING';
-        let payoutStatus: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'REJECTED' | 'REVERSED' =
-          'PENDING';
+        let payoutStatus: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'REJECTED' | 'REVERSED' = 'PENDING';
 
         // Map provider status to our enums
         if (result.status === 'success' || result.status === 'completed') {

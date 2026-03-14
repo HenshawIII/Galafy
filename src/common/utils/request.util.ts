@@ -32,7 +32,10 @@ export function extractUserAgent(req: Request): string | undefined {
 /**
  * Extract device information from request headers and body
  */
-export function extractDeviceInfo(req: Request, body?: any): {
+export function extractDeviceInfo(
+  req: Request,
+  body?: any,
+): {
   ipAddress?: string;
   userAgent?: string;
   deviceToken?: string;
@@ -49,4 +52,3 @@ export function extractDeviceInfo(req: Request, body?: any): {
     browser: body?.browser,
   };
 }
-

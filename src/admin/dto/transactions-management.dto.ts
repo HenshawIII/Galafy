@@ -58,4 +58,3 @@ export class GetTransactionsDto {
   @IsString()
   search?: string;
 }
-

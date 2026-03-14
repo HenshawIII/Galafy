@@ -40,4 +40,3 @@ export class CreateSprayDto {
   @IsNotEmpty({ message: 'Either receiverUserId or receiverParticipantId must be provided' })
   _receiverValidation?: never;
 }
-

@@ -161,7 +161,9 @@ export class PayoutSecurityService {
     });
 
     if (!user || !user.payoutPin) {
-      throw new BadRequestException('Payout PIN has not been set. Please set your PIN first using the create endpoint.');
+      throw new BadRequestException(
+        'Payout PIN has not been set. Please set your PIN first using the create endpoint.',
+      );
     }
 
     // Verify OTP
@@ -326,4 +328,3 @@ export class PayoutSecurityService {
     return user.pendingPayoutData;
   }
 }
-

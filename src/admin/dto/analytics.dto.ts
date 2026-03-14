@@ -21,4 +21,3 @@ export class TransactionAnalyticsDto {
   @IsDateString({}, { message: 'End date must be a valid ISO 8601 date string' })
   endDate?: string;
 }
-

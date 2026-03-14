@@ -42,4 +42,3 @@ export class UpdateCustomerDto extends PartialType(CreateCustomerDto) {
   @IsDateString({}, { message: 'Date of birth must be a valid date string' })
   dob?: string;
 }
-

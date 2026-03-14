@@ -45,10 +45,7 @@ export class EventsController {
   @ApiResponse({ status: 400, description: 'Bad request - Invalid event data' })
   @ApiResponse({ status: 403, description: 'Forbidden - Requires KYC Tier_2 or Tier_3 to create events' })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async createEvent(
-    @Request() req: any,
-    @Body(ValidationPipe) createEventDto: CreateEventDto,
-  ) {
+  async createEvent(@Request() req: any, @Body(ValidationPipe) createEventDto: CreateEventDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -93,8 +90,8 @@ export class EventsController {
   @ApiQuery({ name: 'endDate', required: false, description: 'Filter events starting before this date (ISO 8601)' })
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'pageSize', required: false, type: Number, description: 'Items per page (default: 20, max: 100)' })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Events found successfully',
     schema: {
       example: {
@@ -112,20 +109,20 @@ export class EventsController {
               id: 'uuid',
               username: 'hostuser',
               firstName: 'Host',
-              lastName: 'User'
+              lastName: 'User',
             },
             participantCount: 50,
             sprayCount: 120,
             uniqueSprayerCount: 45,
-            createdAt: '2024-01-01T00:00:00Z'
-          }
+            createdAt: '2024-01-01T00:00:00Z',
+          },
         ],
         total: 1,
         page: 1,
         pageSize: 20,
-        totalPages: 1
-      }
-    }
+        totalPages: 1,
+      },
+    },
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   searchEvents(@Query(ValidationPipe) searchDto: SearchEventDto) {
@@ -136,10 +133,7 @@ export class EventsController {
   @ApiOperation({ summary: 'Get all events for the authenticated user' })
   @ApiQuery({ name: 'role', enum: EventRole, required: false, description: 'Filter by role in events' })
   @ApiResponse({ status: 200, description: 'User events retrieved successfully' })
-  async getMyEvents(
-    @Request() req: any,
-    @Query('role') role?: EventRole,
-  ) {
+  async getMyEvents(@Request() req: any, @Query('role') role?: EventRole) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -150,8 +144,8 @@ export class EventsController {
   @Get(':id/participants')
   @ApiOperation({ summary: 'Get all participants (users and their roles) for an event' })
   @ApiParam({ name: 'id', description: 'Event ID' })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Event participants retrieved successfully',
     schema: {
       type: 'object',
@@ -209,7 +203,7 @@ export class EventsController {
   }
 
   @Get('code/:code')
-  @ApiExcludeEndpoint() 
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Get an event by code' })
   @ApiParam({ name: 'code', description: 'Event code (6-character alphanumeric)' })
   @ApiResponse({ status: 200, description: 'Event retrieved successfully' })
@@ -243,10 +237,7 @@ export class EventsController {
   @ApiResponse({ status: 200, description: 'Event deleted successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden - Only host can delete' })
   @ApiResponse({ status: 404, description: 'Event not found' })
-  async removeEvent(
-    @Request() req: any,
-    @Param('id') id: string,
-  ) {
+  async removeEvent(@Request() req: any, @Param('id') id: string) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -263,11 +254,7 @@ export class EventsController {
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient KYC tier for role' })
   @ApiResponse({ status: 404, description: 'Event or wallet not found' })
   @ApiResponse({ status: 409, description: 'Conflict - Already a participant' })
-  async joinEvent(
-    @Request() req: any,
-    @Param('id') id: string,
-    @Body(ValidationPipe) joinEventDto: JoinEventDto,
-  ) {
+  async joinEvent(@Request() req: any, @Param('id') id: string, @Body(ValidationPipe) joinEventDto: JoinEventDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -281,10 +268,7 @@ export class EventsController {
   @ApiResponse({ status: 200, description: 'Successfully left the event' })
   @ApiResponse({ status: 400, description: 'Bad request - Host cannot leave their own event' })
   @ApiResponse({ status: 404, description: 'Not a participant in this event' })
-  async leaveEvent(
-    @Request() req: any,
-    @Param('id') id: string,
-  ) {
+  async leaveEvent(@Request() req: any, @Param('id') id: string) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -295,8 +279,8 @@ export class EventsController {
   @Post('verify-performer')
   @ApiOperation({ summary: 'Verify if a user is eligible to be a performer (requires KYC Tier_2 or Tier_3)' })
   @ApiBody({ type: VerifyPerformerDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Performer eligibility verified',
     schema: {
       type: 'object',
@@ -312,26 +296,23 @@ export class EventsController {
             username: { type: 'string', nullable: true },
           },
         },
-        kycTier: { 
-          type: 'string', 
+        kycTier: {
+          type: 'string',
           nullable: true,
           enum: ['Tier_0', 'Tier_1', 'Tier_2', 'Tier_3'],
-          description: 'Current KYC tier of the user' 
+          description: 'Current KYC tier of the user',
         },
       },
     },
   })
-  async verifyPerformer(
-    @Body(ValidationPipe) verifyPerformerDto: VerifyPerformerDto,
-  ) {
+  async verifyPerformer(@Body(ValidationPipe) verifyPerformerDto: VerifyPerformerDto) {
     return this.eventsService.verifyPerformerEligibility(verifyPerformerDto.identifier);
   }
 
   @Get(':id/leaderboard')
   @ApiOperation({
     summary: 'Get event leaderboard',
-    description:
-      'Returns aggregated sprays per user in an event, sorted by total amount sprayed in descending order.',
+    description: 'Returns aggregated sprays per user in an event, sorted by total amount sprayed in descending order.',
   })
   @ApiParam({
     name: 'id',

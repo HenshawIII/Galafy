@@ -3,11 +3,11 @@ import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SetPayoutPinDto {
-  @ApiProperty({ 
-    description: '4-digit PIN for payout verification (first time setup)', 
+  @ApiProperty({
+    description: '4-digit PIN for payout verification (first time setup)',
     example: '1234',
     minLength: 4,
-    maxLength: 4
+    maxLength: 4,
   })
   @IsString()
   @IsNotEmpty()
@@ -17,9 +17,9 @@ export class SetPayoutPinDto {
 }
 
 export class ResetPayoutPinDto {
-  @ApiProperty({ 
-    description: 'User email address', 
-    example: 'user@example.com' 
+  @ApiProperty({
+    description: 'User email address',
+    example: 'user@example.com',
   })
   @IsEmail({}, { message: 'Invalid email format' })
   @IsNotEmpty({ message: 'Email address is required' })
@@ -27,11 +27,11 @@ export class ResetPayoutPinDto {
 }
 
 export class UpdatePayoutPinDto {
-  @ApiProperty({ 
-    description: 'OTP sent to user email for PIN reset', 
+  @ApiProperty({
+    description: 'OTP sent to user email for PIN reset',
     example: '123456',
     minLength: 6,
-    maxLength: 6
+    maxLength: 6,
   })
   @IsString()
   @IsNotEmpty()
@@ -39,11 +39,11 @@ export class UpdatePayoutPinDto {
   @Matches(/^\d+$/, { message: 'OTP must contain only digits' })
   otp: string;
 
-  @ApiProperty({ 
-    description: 'New 4-digit PIN', 
+  @ApiProperty({
+    description: 'New 4-digit PIN',
     example: '5678',
     minLength: 4,
-    maxLength: 4
+    maxLength: 4,
   })
   @IsString()
   @IsNotEmpty()
@@ -68,16 +68,19 @@ export class InitiatePayoutDto {
   @IsNotEmpty()
   toAccountNumber: string;
 
-  @ApiProperty({ 
-    description: 'Transfer amount (max 2 decimal places for kobo precision)', 
-    example: '1000.50', 
-    minimum: 0.01 
+  @ApiProperty({
+    description: 'Transfer amount (max 2 decimal places for kobo precision)',
+    example: '1000.50',
+    minimum: 0.01,
   })
   @IsString({ message: 'Amount must be a string' })
   @IsNotEmpty({ message: 'Amount is required' })
-  @IsDecimal({ decimal_digits: '0,2' }, { 
-    message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)' 
-  })
+  @IsDecimal(
+    { decimal_digits: '0,2' },
+    {
+      message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)',
+    },
+  )
   @Transform(({ value }) => {
     // Normalize to string with 2 decimal places
     if (typeof value === 'number') {
@@ -94,7 +97,10 @@ export class InitiatePayoutDto {
   @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional({ description: 'Recipient name (optional, will be fetched if not provided)', example: 'John Doe' })
+  @ApiPropertyOptional({
+    description: 'Recipient name (optional, will be fetched if not provided)',
+    example: 'John Doe',
+  })
   @IsString()
   @IsOptional()
   recipientName?: string;
@@ -113,11 +119,11 @@ export class ConfirmPayoutDto {
   @Matches(/^\d+$/, { message: 'OTP must contain only digits' })
   otp: string;
 
-  @ApiProperty({ 
-    description: '4-digit PIN for payout verification', 
+  @ApiProperty({
+    description: '4-digit PIN for payout verification',
     example: '1234',
     minLength: 4,
-    maxLength: 4
+    maxLength: 4,
   })
   @IsString()
   @IsNotEmpty()
@@ -125,4 +131,3 @@ export class ConfirmPayoutDto {
   @Matches(/^\d+$/, { message: 'PIN must contain only digits' })
   pin: string;
 }
-

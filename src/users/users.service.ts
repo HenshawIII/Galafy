@@ -1,6 +1,22 @@
-import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
+  ConflictException,
+} from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
-import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  SignupDto,
+  LoginDto,
+  ResetPasswordDto,
+  ForgotPasswordDto,
+  VerifyAccountDto,
+  ResendVerificationDto,
+  UpdateUserProfileDto,
+} from './dto/create-user-dto.js';
 import { UserSettingsDto, UpdateUserSettingsDto } from './dto/user-settings.dto.js';
 import { SearchUserDto } from './dto/search-user.dto.js';
 import { ProviderService } from '../provider/provider.service.js';
@@ -13,7 +29,6 @@ import type { Prisma } from '../../generated/prisma/client.js';
 
 @Injectable()
 export class UsersService {
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
@@ -31,19 +46,19 @@ export class UsersService {
   private async findUserByEmailCaseInsensitive(email: string) {
     const trimmedEmail = email.trim();
     const normalizedEmail = trimmedEmail.toLowerCase();
-    
+
     // Try normalized email first (for users with lowercase emails)
     let user = await this.databaseService.user.findUnique({
       where: { email: normalizedEmail },
     });
-    
+
     // If not found, try original email (for backward compatibility with existing mixed-case emails)
     if (!user && trimmedEmail !== normalizedEmail) {
       user = await this.databaseService.user.findUnique({
         where: { email: trimmedEmail },
       });
     }
-    
+
     // If still not found, use findFirst with case-insensitive filter as fallback
     // This handles cases where email might be stored in any case variation
     if (!user) {
@@ -56,7 +71,7 @@ export class UsersService {
         },
       });
     }
-    
+
     return user;
   }
 
@@ -77,11 +92,15 @@ export class UsersService {
     });
 
     if (existingPhone) {
-      throw new ConflictException('An account with those details already exists. Please log in or reset your password if you’ve forgotten it.');
+      throw new ConflictException(
+        'An account with those details already exists. Please log in or reset your password if you’ve forgotten it.',
+      );
     }
 
     if (existingUser) {
-      throw new ConflictException('An account with those details already exists. Please log in or reset your password if you’ve forgotten it.');
+      throw new ConflictException(
+        'An account with those details already exists. Please log in or reset your password if you’ve forgotten it.',
+      );
     }
 
     // Hash password
@@ -244,12 +263,16 @@ export class UsersService {
 
     // Check if account is verified
     if (!user.isVerified) {
-      throw new UnauthorizedException('Please verify your account before logging in. Check your email for verification code.');
+      throw new UnauthorizedException(
+        'Please verify your account before logging in. Check your email for verification code.',
+      );
     }
 
     // Check if user signed up with Google OAuth (no password set)
     if (!user.password) {
-      throw new UnauthorizedException('This account was created with Google sign-in. Please use Google authentication to login.');
+      throw new UnauthorizedException(
+        'This account was created with Google sign-in. Please use Google authentication to login.',
+      );
     }
 
     // Verify password
@@ -263,7 +286,7 @@ export class UsersService {
       const now = new Date();
       if (user.refreshTokenExpiresAt > now) {
         throw new ConflictException(
-          'You are already logged in on another device. Please log out from that device first before logging in here.'
+          'You are already logged in on another device. Please log out from that device first before logging in here.',
         );
       }
     }
@@ -310,13 +333,13 @@ export class UsersService {
 
     // Remove sensitive data from response
     const { password, refreshToken: _, refreshTokenExpiresAt: __, ...userWithoutPassword } = user;
-    
+
     // Get KYC status if customer exists
     let kycStatus: any = null;
     let utilityBillStatus: string | null = null;
     try {
       kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(user.id);
-      
+
       // Get latest utility bill submission status if customer exists
       const customer = await this.databaseService.customer.findUnique({
         where: { userId: user.id },
@@ -330,7 +353,7 @@ export class UsersService {
           },
         },
       });
-      
+
       if (customer && customer.utilityBillSubmissions && customer.utilityBillSubmissions.length > 0) {
         utilityBillStatus = customer.utilityBillSubmissions[0].status;
       }
@@ -339,7 +362,7 @@ export class UsersService {
       kycStatus = null;
       utilityBillStatus = null;
     }
-    
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
@@ -356,7 +379,9 @@ export class UsersService {
 
     if (!user) {
       // Don't reveal if user exists or not for security
-      return { message: 'If an account is associated with this email, you will receive a password reset link shortly.' };
+      return {
+        message: 'If an account is associated with this email, you will receive a password reset link shortly.',
+      };
     }
 
     // Generate 6-digit OTP for password reset
@@ -433,9 +458,9 @@ export class UsersService {
         throw new ConflictException('User with this email already exists');
       }
     }
-    
+
     const normalizedEmail = createUserDto.email ? createUserDto.email.toLowerCase().trim() : null;
-    
+
     // Hash password if provided
     const data: any = {
       firstName: createUserDto.firstName,
@@ -508,8 +533,8 @@ export class UsersService {
       return null;
     }
 
-        return user;
-    }
+    return user;
+  }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
     // Check if user exists first
@@ -599,7 +624,14 @@ export class UsersService {
     await this.cacheService.invalidateUserCache(userId);
 
     // Remove sensitive data from response
-    const { password, refreshToken, refreshTokenExpiresAt, verificationCode, passwordResetOtp, ...userWithoutSensitiveData } = updatedUser;
+    const {
+      password,
+      refreshToken,
+      refreshTokenExpiresAt,
+      verificationCode,
+      passwordResetOtp,
+      ...userWithoutSensitiveData
+    } = updatedUser;
     return userWithoutSensitiveData;
   }
 
@@ -712,7 +744,7 @@ export class UsersService {
     let bankAccounts = customer.bankAccounts || [];
     try {
       const banksList = await this.getBanksList();
-      
+
       if (banksList && banksList.length > 0) {
         // Helper function to normalize bank codes for comparison (remove leading zeros)
         const normalizeBankCode = (code: string | number | null | undefined): string => {
@@ -721,15 +753,15 @@ export class UsersService {
         };
 
         // Enrich bank accounts with bankName using simple filter
-        bankAccounts = bankAccounts.map(account => {
+        bankAccounts = bankAccounts.map((account) => {
           const accountCode = normalizeBankCode(account.bankCode);
-          
+
           // Filter banks list to find matching bank
-          const matchedBank = banksList.find(bank => {
+          const matchedBank = banksList.find((bank) => {
             const bankCode = normalizeBankCode(bank.bankcode);
             return bankCode === accountCode;
           });
-          
+
           return {
             ...account,
             bankName: matchedBank ? matchedBank.bankname : null,
@@ -737,7 +769,7 @@ export class UsersService {
         });
       } else {
         // If banks list is empty, set bankName to null for all accounts
-        bankAccounts = bankAccounts.map(account => ({
+        bankAccounts = bankAccounts.map((account) => ({
           ...account,
           bankName: null,
         }));
@@ -746,7 +778,7 @@ export class UsersService {
       // If enrichment fails, return bank accounts without bankName (or with null)
       // Log error but don't fail the request
       console.error(`Failed to enrich bank accounts with bank names: ${error.message}`);
-      bankAccounts = bankAccounts.map(account => ({
+      bankAccounts = bankAccounts.map((account) => ({
         ...account,
         bankName: null,
       }));
@@ -951,4 +983,3 @@ export class UsersService {
     };
   }
 }
-

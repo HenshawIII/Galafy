@@ -1,16 +1,15 @@
+import { Controller, Get, Post, Put, Patch, Body, Param, Query, ValidationPipe, UseGuards } from '@nestjs/common';
 import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Patch,
-  Body,
-  Param,
-  Query,
-  ValidationPipe,
-  UseGuards,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiBody,
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiExcludeEndpoint,
+} from '@nestjs/swagger';
 import { PaymentsService } from './payments.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import {
@@ -87,10 +86,7 @@ export class PaymentsController {
    */
   @Patch('wallets/restrict/:accountId/:restrictionType')
   @ApiExcludeEndpoint()
-  async restrictByAccountId(
-    @Param('accountId') accountId: string,
-    @Param('restrictionType') restrictionType: string,
-  ) {
+  async restrictByAccountId(@Param('accountId') accountId: string, @Param('restrictionType') restrictionType: string) {
     return this.paymentsService.restrictByAccountId({ accountId, restrictionType });
   }
 

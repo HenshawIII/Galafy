@@ -114,4 +114,3 @@ export class GetWalletHistoryDto {
   @IsEnum(TransactionTypeFilter, { message: 'Type must be one of: all, inflow, spray, payout, refund, adjustment' })
   type?: TransactionTypeFilter;
 }
-

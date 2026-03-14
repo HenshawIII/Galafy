@@ -75,9 +75,8 @@ export class WithdrawalLimitService {
     const limit = await this.getOrCreateWithdrawalLimit(customerId);
 
     // Determine the current limit (approved limit if increased, else default)
-    const currentLimit = limit.isLimitIncreased && limit.approvedDailyLimit
-      ? limit.approvedDailyLimit
-      : limit.dailyLimit;
+    const currentLimit =
+      limit.isLimitIncreased && limit.approvedDailyLimit ? limit.approvedDailyLimit : limit.dailyLimit;
 
     const used = limit.dailyWithdrawn;
     const remaining = currentLimit.minus(used);
@@ -120,9 +119,8 @@ export class WithdrawalLimitService {
 
     const limit = await this.getOrCreateWithdrawalLimit(customerId);
 
-    const currentLimit = limit.isLimitIncreased && limit.approvedDailyLimit
-      ? limit.approvedDailyLimit
-      : limit.dailyLimit;
+    const currentLimit =
+      limit.isLimitIncreased && limit.approvedDailyLimit ? limit.approvedDailyLimit : limit.dailyLimit;
 
     return {
       dailyLimit: limit.dailyLimit,
@@ -135,4 +133,3 @@ export class WithdrawalLimitService {
     };
   }
 }
-

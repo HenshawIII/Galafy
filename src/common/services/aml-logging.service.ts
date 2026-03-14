@@ -291,12 +291,7 @@ export class AmlLoggingService {
   /**
    * Log risk score update failure
    */
-  logRiskScoreUpdateFailed(
-    walletId: string,
-    error: Error,
-    customerId?: string,
-    metadata?: Record<string, any>,
-  ): void {
+  logRiskScoreUpdateFailed(walletId: string, error: Error, customerId?: string, metadata?: Record<string, any>): void {
     const entry: AmlLogEntry = {
       eventType: 'RISK_SCORE_UPDATE_FAILED',
       severity: 'MEDIUM',
@@ -400,4 +395,3 @@ export class AmlLoggingService {
     }
   }
 }
-

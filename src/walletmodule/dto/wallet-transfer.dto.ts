@@ -13,16 +13,19 @@ export class WalletToWalletTransferDto {
   @IsNotEmpty({ message: 'To wallet account number is required' })
   toWalletId: string;
 
-  @ApiProperty({ 
-    example: '1000.50', 
-    description: 'Transfer amount (max 2 decimal places for kobo precision)', 
-    minimum: 0.01 
+  @ApiProperty({
+    example: '1000.50',
+    description: 'Transfer amount (max 2 decimal places for kobo precision)',
+    minimum: 0.01,
   })
   @IsString({ message: 'Amount must be a string' })
   @IsNotEmpty({ message: 'Amount is required' })
-  @IsDecimal({ decimal_digits: '0,2' }, { 
-    message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)' 
-  })
+  @IsDecimal(
+    { decimal_digits: '0,2' },
+    {
+      message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)',
+    },
+  )
   @Transform(({ value }) => {
     // Normalize to string with 2 decimal places
     if (typeof value === 'number') {
@@ -67,16 +70,19 @@ export class FastWalletTransferDto {
   @IsNotEmpty({ message: 'Bank code is required' })
   bankCode: string;
 
-  @ApiProperty({ 
-    example: '1000.50', 
-    description: 'Transfer amount (max 2 decimal places for kobo precision)', 
-    minimum: 0.01 
+  @ApiProperty({
+    example: '1000.50',
+    description: 'Transfer amount (max 2 decimal places for kobo precision)',
+    minimum: 0.01,
   })
   @IsString({ message: 'Amount must be a string' })
   @IsNotEmpty({ message: 'Amount is required' })
-  @IsDecimal({ decimal_digits: '0,2' }, { 
-    message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)' 
-  })
+  @IsDecimal(
+    { decimal_digits: '0,2' },
+    {
+      message: 'Amount must be a valid decimal with up to 2 decimal places (kobo precision)',
+    },
+  )
   @Transform(({ value }) => {
     // Normalize to string with 2 decimal places
     if (typeof value === 'number') {
@@ -104,9 +110,11 @@ export class FastWalletTransferDto {
   @MaxLength(36, { message: 'Transaction reference must not be more than 36 characters' })
   reference?: string;
 
-  @ApiPropertyOptional({ example: 'John Doe', description: 'Recipient name (will be fetched via name enquiry if not provided)' })
+  @ApiPropertyOptional({
+    example: 'John Doe',
+    description: 'Recipient name (will be fetched via name enquiry if not provided)',
+  })
   @IsOptional()
   @IsString({ message: 'Recipient name must be a string' })
   recipientName?: string;
 }
-

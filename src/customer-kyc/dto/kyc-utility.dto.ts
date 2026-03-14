@@ -183,10 +183,10 @@ export class UpgradeWithNinAndAddressDto {
   @IsNotEmpty({ message: 'Meter number is required' })
   meterNumber: string;
 
-  @ApiProperty({ 
+  @ApiProperty({
     enum: DiscoCode,
     description: 'Electricity Distribution Company (DISCO) code for Address verification',
-    example: DiscoCode.IKEJA 
+    example: DiscoCode.IKEJA,
   })
   @IsEnum(DiscoCode, { message: 'DiscoCode must be a valid DISCO code' })
   @IsNotEmpty({ message: 'DiscoCode is required' })
@@ -230,4 +230,3 @@ export class NinAndUtilityBillDto {
   @IsUrl({}, { message: 'Utility bill URL must be a valid URL' })
   utilityBillUrl: string;
 }
-

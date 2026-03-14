@@ -12,15 +12,20 @@ import {
   Request,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint, ApiBody, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiExcludeEndpoint,
+  ApiBody,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
-import {
-  RegisterDeviceDto,
-  SendMessageDto,
-  SendBulkMessageDto,
-  UpdateDeviceDto,
-} from './dto/notification.dto.js';
+import { RegisterDeviceDto, SendMessageDto, SendBulkMessageDto, UpdateDeviceDto } from './dto/notification.dto.js';
 
 @ApiTags('notifications')
 @Controller('notifications')
@@ -37,7 +42,8 @@ export class NotificationsController {
   @Post('devices/register')
   @ApiOperation({
     summary: 'Register a device for push notifications',
-    description: 'Registers a device token (FCM token) for receiving push notifications. User ID is automatically extracted from the authentication token. If the device token already exists for the same user, it will be updated. If the device token belongs to another user, ownership will be transferred to the current user.',
+    description:
+      'Registers a device token (FCM token) for receiving push notifications. User ID is automatically extracted from the authentication token. If the device token already exists for the same user, it will be updated. If the device token belongs to another user, ownership will be transferred to the current user.',
   })
   @ApiBody({
     schema: {
@@ -82,10 +88,7 @@ export class NotificationsController {
   })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid device token or device type' })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async registerDevice(
-    @Request() req: any,
-    @Body(ValidationPipe) registerDeviceDto: RegisterDeviceDto,
-  ) {
+  async registerDevice(@Request() req: any, @Body(ValidationPipe) registerDeviceDto: RegisterDeviceDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
@@ -141,7 +144,8 @@ export class NotificationsController {
   @Get('devices/user/:userId/all')
   @ApiOperation({
     summary: 'Get all devices for a user (including inactive)',
-    description: 'Retrieves all devices (both active and inactive) registered for a specific user, ordered by last seen date.',
+    description:
+      'Retrieves all devices (both active and inactive) registered for a specific user, ordered by last seen date.',
   })
   @ApiParam({
     name: 'userId',
@@ -218,10 +222,7 @@ export class NotificationsController {
   })
   @ApiResponse({ status: 404, description: 'Device not found' })
   @ApiResponse({ status: 400, description: 'Device does not belong to this user' })
-  async getDevice(
-    @Param('deviceId') deviceId: string,
-    @Query('userId') userId: string,
-  ) {
+  async getDevice(@Param('deviceId') deviceId: string, @Query('userId') userId: string) {
     return this.notificationsService.getDevice(deviceId, userId);
   }
 
@@ -251,9 +252,7 @@ export class NotificationsController {
    */
   @Post('send/bulk')
   @ApiExcludeEndpoint()
-  async sendBulkMessage(
-    @Body(ValidationPipe) sendBulkMessageDto: SendBulkMessageDto,
-  ) {
+  async sendBulkMessage(@Body(ValidationPipe) sendBulkMessageDto: SendBulkMessageDto) {
     return this.notificationsService.sendBulkMessage(sendBulkMessageDto);
   }
 
@@ -328,11 +327,7 @@ export class NotificationsController {
     @Body(ValidationPipe) body: UpdateDeviceDto & { userId: string },
   ) {
     const { userId, ...updateDeviceDto } = body;
-    return this.notificationsService.updateDevice(
-      deviceId,
-      userId,
-      updateDeviceDto,
-    );
+    return this.notificationsService.updateDevice(deviceId, userId, updateDeviceDto);
   }
 
   /**
@@ -342,7 +337,8 @@ export class NotificationsController {
   @Patch('devices/:deviceId/deactivate')
   @ApiOperation({
     summary: 'Deactivate a device (soft delete)',
-    description: 'Deactivates a device by setting isActive to false. The device record is preserved but will not receive notifications.',
+    description:
+      'Deactivates a device by setting isActive to false. The device record is preserved but will not receive notifications.',
   })
   @ApiParam({
     name: 'deviceId',
@@ -381,10 +377,7 @@ export class NotificationsController {
   })
   @ApiResponse({ status: 404, description: 'Device not found' })
   @ApiResponse({ status: 400, description: 'Device does not belong to this user' })
-  async deactivateDevice(
-    @Param('deviceId') deviceId: string,
-    @Body('userId') userId: string,
-  ) {
+  async deactivateDevice(@Param('deviceId') deviceId: string, @Body('userId') userId: string) {
     return this.notificationsService.deactivateDevice(deviceId, userId);
   }
 
@@ -427,10 +420,7 @@ export class NotificationsController {
   })
   @ApiResponse({ status: 404, description: 'Device not found' })
   @ApiResponse({ status: 400, description: 'Device does not belong to this user' })
-  async removeDevice(
-    @Param('deviceId') deviceId: string,
-    @Query('userId') userId: string,
-  ) {
+  async removeDevice(@Param('deviceId') deviceId: string, @Query('userId') userId: string) {
     return this.notificationsService.removeDevice(deviceId, userId);
   }
 
@@ -440,7 +430,8 @@ export class NotificationsController {
   @Get()
   @ApiOperation({
     summary: 'Get user notifications',
-    description: 'Retrieves notifications for the authenticated user. Returns unread count and list of notifications sorted by creation date (newest first).',
+    description:
+      'Retrieves notifications for the authenticated user. Returns unread count and list of notifications sorted by creation date (newest first).',
   })
   @ApiQuery({
     name: 'limit',
@@ -499,12 +490,7 @@ export class NotificationsController {
       throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
     }
 
-    return this.notificationsService.getUserNotifications(
-      userId,
-      limit || 20,
-      offset || 0,
-      unreadOnly === true,
-    );
+    return this.notificationsService.getUserNotifications(userId, limit || 20, offset || 0, unreadOnly === true);
   }
 
   /**
@@ -533,10 +519,7 @@ export class NotificationsController {
   })
   @ApiResponse({ status: 404, description: 'Notification not found' })
   @ApiResponse({ status: 403, description: 'Notification does not belong to this user' })
-  async markNotificationAsRead(
-    @Request() req: any,
-    @Param('id') notificationId: string,
-  ) {
+  async markNotificationAsRead(@Request() req: any, @Param('id') notificationId: string) {
     const userId = req.user?.id;
     if (!userId) {
       throw new BadRequestException('User ID is required. Please ensure you are authenticated.');

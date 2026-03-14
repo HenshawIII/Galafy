@@ -9,10 +9,10 @@ export class InviteAdminDto {
   @IsNotEmpty({ message: 'Email is required' })
   email: string;
 
-  @ApiProperty({ 
-    enum: AdminRole, 
+  @ApiProperty({
+    enum: AdminRole,
     example: AdminRole.COMPLIANCE,
-    description: 'Admin role to assign' 
+    description: 'Admin role to assign',
   })
   @IsEnum(AdminRole, { message: 'Invalid admin role' })
   @IsNotEmpty({ message: 'Role is required' })
@@ -83,4 +83,3 @@ export class AssignRoleDto {
   @IsNotEmpty({ message: 'Admin ID is required' })
   adminId: string;
 }
-

@@ -17,7 +17,16 @@ import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
 @Module({
   imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule, ConfigModule],
   controllers: [WalletmoduleController],
-  providers: [WalletmoduleService, PayoutSecurityService, WalletExportService, OrganizationWalletService, WalletRiskService, AmlLoggingService, DeviceAbuseDetectionService, WithdrawalLimitService],
+  providers: [
+    WalletmoduleService,
+    PayoutSecurityService,
+    WalletExportService,
+    OrganizationWalletService,
+    WalletRiskService,
+    AmlLoggingService,
+    DeviceAbuseDetectionService,
+    WithdrawalLimitService,
+  ],
   exports: [WalletmoduleService, WithdrawalLimitService, OrganizationWalletService],
 })
 export class WalletmoduleModule {}

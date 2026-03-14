@@ -26,4 +26,3 @@ config();
   exports: [UsersService, EmailService],
 })
 export class UsersModule {}
-

@@ -22,9 +22,7 @@ export class ConfigService {
 
     if (!config || !config.isActive) {
       if (defaultValue !== undefined) {
-        this.logger.warn(
-          `Config key "${key}" not found or inactive, using default value: ${defaultValue}`,
-        );
+        this.logger.warn(`Config key "${key}" not found or inactive, using default value: ${defaultValue}`);
         return defaultValue;
       }
       throw new NotFoundException(`Configuration key "${key}" not found or inactive`);
@@ -66,10 +64,7 @@ export class ConfigService {
 
     return this.databaseService.systemConfig.findMany({
       where,
-      orderBy: [
-        { category: 'asc' },
-        { key: 'asc' },
-      ],
+      orderBy: [{ category: 'asc' }, { key: 'asc' }],
     });
   }
 
@@ -81,12 +76,7 @@ export class ConfigService {
    * @param description - Optional description update
    * @returns Updated configuration
    */
-  async updateConfig(
-    key: string,
-    value: string,
-    updatedBy: string,
-    description?: string,
-  ): Promise<any> {
+  async updateConfig(key: string, value: string, updatedBy: string, description?: string): Promise<any> {
     const existing = await this.databaseService.systemConfig.findUnique({
       where: { key },
     });
@@ -114,13 +104,16 @@ export class ConfigService {
    * @param updatedBy - Admin user ID who is creating
    * @returns Created configuration
    */
-  async createConfig(data: {
-    key: string;
-    category: string;
-    value: string;
-    type: ConfigType;
-    description?: string;
-  }, updatedBy: string): Promise<any> {
+  async createConfig(
+    data: {
+      key: string;
+      category: string;
+      value: string;
+      type: ConfigType;
+      description?: string;
+    },
+    updatedBy: string,
+  ): Promise<any> {
     // Check if key already exists
     const existing = await this.databaseService.systemConfig.findUnique({
       where: { key: data.key },
@@ -248,4 +241,3 @@ export class ConfigService {
     }
   }
 }
-

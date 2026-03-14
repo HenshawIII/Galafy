@@ -3,20 +3,20 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class SearchUserDto {
-  @ApiProperty({ 
-    example: 'john', 
+  @ApiProperty({
+    example: 'john',
     description: 'Search query for username (case-insensitive partial match)',
-    required: false 
+    required: false,
   })
   @IsOptional()
   @IsString({ message: 'Query must be a string' })
   query?: string;
 
-  @ApiPropertyOptional({ 
-    example: 1, 
+  @ApiPropertyOptional({
+    example: 1,
     description: 'Page number (default: 1)',
     minimum: 1,
-    default: 1 
+    default: 1,
   })
   @IsOptional()
   @Type(() => Number)
@@ -24,12 +24,12 @@ export class SearchUserDto {
   @Min(1, { message: 'Page must be at least 1' })
   page?: number = 1;
 
-  @ApiPropertyOptional({ 
-    example: 20, 
+  @ApiPropertyOptional({
+    example: 20,
     description: 'Number of items per page (default: 20, max: 100)',
     minimum: 1,
     maximum: 100,
-    default: 20 
+    default: 20,
   })
   @IsOptional()
   @Type(() => Number)

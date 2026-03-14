@@ -81,9 +81,9 @@ export class WalletRiskService {
 
       this.logger.log(
         `Risk scoring configured: Velocity Max=${this.riskVelocityMax}, ` +
-        `Amount Max=${this.riskAmountMax.toString()}, ` +
-        `Soft Freeze=${this.riskSoftFreezeThreshold}, ` +
-        `Hard Freeze=${this.riskHardFreezeThreshold}`,
+          `Amount Max=${this.riskAmountMax.toString()}, ` +
+          `Soft Freeze=${this.riskSoftFreezeThreshold}, ` +
+          `Hard Freeze=${this.riskHardFreezeThreshold}`,
       );
     } catch (error) {
       this.logger.warn(`Failed to load risk config, using fallback values: ${error.message}`);
@@ -108,7 +108,7 @@ export class WalletRiskService {
    */
   async calculateRiskScore(walletId: string): Promise<RiskScoreComponents> {
     const config = await this.loadRiskConfig();
-    
+
     const timeWindowStart = new Date();
     timeWindowStart.setHours(timeWindowStart.getHours() - this.RISK_TIME_WINDOW_HOURS);
 
@@ -150,15 +150,9 @@ export class WalletRiskService {
 
     // Calculate Amount Size (0-100)
     // Amount Size = (averageAmount / maxExpectedAmount) * 100 (capped at 100)
-    const totalAmount = transactions.reduce(
-      (sum, tx) => sum.plus(tx.amount),
-      new Decimal(0),
-    );
+    const totalAmount = transactions.reduce((sum, tx) => sum.plus(tx.amount), new Decimal(0));
     const averageAmount = totalAmount.dividedBy(transactions.length);
-    const amountSize = Math.min(
-      averageAmount.dividedBy(config.RISK_AMOUNT_MAX).times(100).toNumber(),
-      100,
-    );
+    const amountSize = Math.min(averageAmount.dividedBy(config.RISK_AMOUNT_MAX).times(100).toNumber(), 100);
 
     // Calculate Frequency (0-100)
     // Frequency = based on average time between transactions
@@ -214,7 +208,7 @@ export class WalletRiskService {
    */
   async checkFreezeStatus(riskScore: number): Promise<RiskStatus> {
     const config = await this.loadRiskConfig();
-    
+
     if (riskScore >= config.RISK_HARD_FREEZE_THRESHOLD) {
       return 'HARD_FREEZE';
     } else if (riskScore >= config.RISK_SOFT_FREEZE_THRESHOLD) {
@@ -229,7 +223,7 @@ export class WalletRiskService {
   async updateWalletRiskScore(walletId: string): Promise<void> {
     try {
       const config = await this.loadRiskConfig();
-      
+
       // Calculate risk score
       const components = await this.calculateRiskScore(walletId);
       const riskStatus = await this.checkFreezeStatus(components.finalScore);
@@ -356,52 +350,45 @@ export class WalletRiskService {
         if (statusChanged) {
           this.logger.error(
             `🚨 HARD FREEZE ALERT: Wallet ${walletId} has been frozen due to high risk score. ` +
-            `Score: ${components.finalScore.toFixed(2)} (Velocity: ${components.velocity.toFixed(2)}, ` +
-            `Amount: ${components.amountSize.toFixed(2)}, Frequency: ${components.frequency.toFixed(2)})`,
+              `Score: ${components.finalScore.toFixed(2)} (Velocity: ${components.velocity.toFixed(2)}, ` +
+              `Amount: ${components.amountSize.toFixed(2)}, Frequency: ${components.frequency.toFixed(2)})`,
           );
         } else {
           this.logger.warn(
-            `⚠️ HARD FREEZE: Wallet ${walletId} remains frozen. ` +
-            `Score: ${components.finalScore.toFixed(2)}`,
+            `⚠️ HARD FREEZE: Wallet ${walletId} remains frozen. ` + `Score: ${components.finalScore.toFixed(2)}`,
           );
         }
       } else if (statusChanged && riskStatus === 'SOFT_FREEZE') {
         this.logger.warn(
           `⚠️ SOFT FREEZE: Wallet ${walletId} has been soft frozen. ` +
-          `Score: ${components.finalScore.toFixed(2)}. Payouts will be blocked.`,
+            `Score: ${components.finalScore.toFixed(2)}. Payouts will be blocked.`,
         );
       } else if (statusChanged && riskStatus === 'NORMAL' && previousStatus !== 'NORMAL') {
         this.logger.log(
           `✅ Wallet ${walletId} risk status normalized. ` +
-          `Previous: ${previousStatus}, New Score: ${components.finalScore.toFixed(2)}`,
+            `Previous: ${previousStatus}, New Score: ${components.finalScore.toFixed(2)}`,
         );
       }
     } catch (error) {
       // Get customer ID for AML logging
-      const wallet = await this.databaseService.wallet.findUnique({
-        where: { id: walletId },
-        select: { customerId: true },
-      }).catch(() => null);
+      const wallet = await this.databaseService.wallet
+        .findUnique({
+          where: { id: walletId },
+          select: { customerId: true },
+        })
+        .catch(() => null);
 
       // Log risk score update failure (non-blocking)
       try {
-        this.amlLoggingService.logRiskScoreUpdateFailed(
-          walletId,
-          error as Error,
-          wallet?.customerId,
-          {
-            errorMessage: (error as Error).message,
-          },
-        );
+        this.amlLoggingService.logRiskScoreUpdateFailed(walletId, error as Error, wallet?.customerId, {
+          errorMessage: (error as Error).message,
+        });
       } catch (logError) {
         // Log the logging error but don't throw
         this.logger.error(`AML logging failed for risk score update failure: ${logError.message}`);
       }
 
-      this.logger.error(
-        `Failed to update risk score for wallet ${walletId}: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Failed to update risk score for wallet ${walletId}: ${error.message}`, error.stack);
       // Don't throw - risk scoring failure shouldn't block transactions
     }
   }
@@ -411,10 +398,7 @@ export class WalletRiskService {
    * @param walletId - Wallet ID to check
    * @param blockAllTransactions - If true, block all transactions for hard freeze. If false, only block payouts for soft freeze.
    */
-  async checkWalletFreezeStatus(
-    walletId: string,
-    blockAllTransactions: boolean = false,
-  ): Promise<void> {
+  async checkWalletFreezeStatus(walletId: string, blockAllTransactions: boolean = false): Promise<void> {
     const wallet = await this.databaseService.wallet.findUnique({
       where: { id: walletId },
       select: { riskStatus: true, riskScore: true },
@@ -455,7 +439,7 @@ export class WalletRiskService {
 
       throw new BadRequestException(
         `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-        `All transactions are blocked. Please contact support.`,
+          `All transactions are blocked. Please contact support.`,
       );
     }
 
@@ -490,9 +474,8 @@ export class WalletRiskService {
 
       throw new BadRequestException(
         `Wallet is soft frozen due to elevated risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-        `This transaction type is blocked. Please contact support.`,
+          `This transaction type is blocked. Please contact support.`,
       );
     }
   }
 }
-

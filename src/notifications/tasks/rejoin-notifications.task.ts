@@ -83,15 +83,10 @@ export class RejoinNotificationsTask {
         });
 
         // Custom notification messages
-        const customMessages = [
-          'View Top Sprayer',
-          'Event is doing well',
-          'Don\'t miss out on the action!',
-        ];
+        const customMessages = ['View Top Sprayer', 'Event is doing well', "Don't miss out on the action!"];
 
         // Randomly select a message
-        const randomMessage =
-          customMessages[Math.floor(Math.random() * customMessages.length)];
+        const randomMessage = customMessages[Math.floor(Math.random() * customMessages.length)];
 
         // For now, we'll track this differently - we need to add a table to track
         // when users leave events. For MVP, we'll check if there are any participants
@@ -169,16 +164,10 @@ export class RejoinNotificationsTask {
       }
 
       if (totalNotificationsSent > 0) {
-        this.logger.log(
-          `Sent ${totalNotificationsSent} rejoin notification(s) for ${liveEvents.length} event(s)`,
-        );
+        this.logger.log(`Sent ${totalNotificationsSent} rejoin notification(s) for ${liveEvents.length} event(s)`);
       }
     } catch (error: any) {
-      this.logger.error(
-        `Error sending rejoin notifications: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Error sending rejoin notifications: ${error.message}`, error.stack);
     }
   }
 }
-

@@ -1,13 +1,12 @@
-import {
-  Injectable,
-  UnauthorizedException,
-  BadRequestException,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../../database/database.service.js';
-import { AdminLoginDto, AdminRefreshTokenDto, AdminForgotPasswordDto, AdminResetPasswordDto } from './dto/admin-login.dto.js';
+import {
+  AdminLoginDto,
+  AdminRefreshTokenDto,
+  AdminForgotPasswordDto,
+  AdminResetPasswordDto,
+} from './dto/admin-login.dto.js';
 import { EmailService } from '../../users/email.service.js';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -70,13 +69,9 @@ export class AdminAuthService {
 
     if (shouldLock) {
       const lockedUntil = new Date();
-      lockedUntil.setMinutes(
-        lockedUntil.getMinutes() + this.LOCKOUT_DURATION_MINUTES,
-      );
+      lockedUntil.setMinutes(lockedUntil.getMinutes() + this.LOCKOUT_DURATION_MINUTES);
       updateData.lockedUntil = lockedUntil;
-      this.logger.warn(
-        `Admin account ${admin.email} locked due to ${newFailedAttempts} failed login attempts`,
-      );
+      this.logger.warn(`Admin account ${admin.email} locked due to ${newFailedAttempts} failed login attempts`);
     }
 
     await this.databaseService.admin.update({
@@ -110,13 +105,10 @@ export class AdminAuthService {
       type: 'admin_access',
     };
 
-    const accessToken = this.jwtService.sign(
-      payload,
-      {
-        expiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '8h',
-        secret: process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
-      } as any,
-    );
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '8h',
+      secret: process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
+    } as any);
 
     const refreshPayload = {
       sub: admin.id,
@@ -124,16 +116,10 @@ export class AdminAuthService {
       type: 'admin_refresh',
     };
 
-    const refreshToken = this.jwtService.sign(
-      refreshPayload,
-      {
-        expiresIn: process.env.ADMIN_REFRESH_JWT_EXPIRES_IN || '7d',
-        secret:
-          process.env.ADMIN_REFRESH_JWT_SECRET ||
-          process.env.ADMIN_JWT_SECRET ||
-          process.env.JWT_SECRET,
-      } as any,
-    );
+    const refreshToken = this.jwtService.sign(refreshPayload, {
+      expiresIn: process.env.ADMIN_REFRESH_JWT_EXPIRES_IN || '7d',
+      secret: process.env.ADMIN_REFRESH_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
+    } as any);
 
     return {
       accessToken,
@@ -167,19 +153,12 @@ export class AdminAuthService {
 
     // Check if account is locked
     if (this.isAccountLocked(admin)) {
-      const minutesRemaining = Math.ceil(
-        (admin.lockedUntil!.getTime() - new Date().getTime()) / 60000,
-      );
-      throw new UnauthorizedException(
-        `Account is locked. Please try again in ${minutesRemaining} minute(s).`,
-      );
+      const minutesRemaining = Math.ceil((admin.lockedUntil!.getTime() - new Date().getTime()) / 60000);
+      throw new UnauthorizedException(`Account is locked. Please try again in ${minutesRemaining} minute(s).`);
     }
 
     // Verify password
-    const isPasswordValid = await this.validatePassword(
-      loginDto.password,
-      admin.password,
-    );
+    const isPasswordValid = await this.validatePassword(loginDto.password, admin.password);
 
     if (!isPasswordValid) {
       await this.handleFailedLogin(admin.id);
@@ -207,10 +186,7 @@ export class AdminAuthService {
   async refreshToken(refreshTokenDto: AdminRefreshTokenDto) {
     try {
       const payload = this.jwtService.verify(refreshTokenDto.refreshToken, {
-        secret:
-          process.env.ADMIN_REFRESH_JWT_SECRET ||
-          process.env.ADMIN_JWT_SECRET ||
-          process.env.JWT_SECRET,
+        secret: process.env.ADMIN_REFRESH_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
       });
 
       if (payload.type !== 'admin_refresh') {
@@ -361,4 +337,3 @@ export class AdminAuthService {
     return { message: 'Password reset successfully. You can now log in with your new password.' };
   }
 }
-

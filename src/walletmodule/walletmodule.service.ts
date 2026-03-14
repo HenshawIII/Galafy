@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-  Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
@@ -60,11 +54,7 @@ export class WalletmoduleService {
   /**
    * Create wallet by userId
    */
-  async createWalletByUserId(
-    userId: string,
-    createWalletDto: CreateWalletDto,
-    deviceInfo?: DeviceInfo,
-  ) {
+  async createWalletByUserId(userId: string, createWalletDto: CreateWalletDto, deviceInfo?: DeviceInfo) {
     // Find customer by userId
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
@@ -89,11 +79,7 @@ export class WalletmoduleService {
     // Detect device/IP abuse before creating wallet
     let abuseResult;
     if (deviceInfo) {
-      abuseResult = await this.deviceAbuseDetectionService.detectAbuse(
-        userId,
-        customer.id,
-        deviceInfo,
-      );
+      abuseResult = await this.deviceAbuseDetectionService.detectAbuse(userId, customer.id, deviceInfo);
 
       // Log warning if abuse detected (but don't block - let compliance review)
       if (abuseResult.isAbuse) {
@@ -109,7 +95,7 @@ export class WalletmoduleService {
     const tempWallet = await this.databaseService.wallet.create({
       data: {
         customerId: customer.id,
-        currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+        currencyId: createWalletDto.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
         walletGroupId: createWalletDto.walletGroupId || undefined,
         walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
         walletClassificationId: createWalletDto.walletClassificationId || undefined,
@@ -118,9 +104,11 @@ export class WalletmoduleService {
         overdraft: createWalletDto.overdraft || 0,
         isInternal: createWalletDto.isInternal || false,
         isDefault: createWalletDto.isDefault || false,
-        name: createWalletDto.name || (customer.firstName && customer.lastName 
-          ? `${customer.firstName} ${customer.lastName}` 
-          : customer.firstName || customer.lastName || 'Wallet'),
+        name:
+          createWalletDto.name ||
+          (customer.firstName && customer.lastName
+            ? `${customer.firstName} ${customer.lastName}`
+            : customer.firstName || customer.lastName || 'Wallet'),
         mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
       },
     });
@@ -130,7 +118,7 @@ export class WalletmoduleService {
     const providerRequest = {
       id: walletId,
       customerId: customer.providerCustomerId,
-      currencyId: createWalletDto.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: createWalletDto.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
       walletGroupId: createWalletDto.walletGroupId || undefined,
       walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
       walletClassificationId: createWalletDto.walletClassificationId || undefined,
@@ -139,9 +127,11 @@ export class WalletmoduleService {
       overdraft: createWalletDto.overdraft || 0,
       isInternal: createWalletDto.isInternal || false,
       isDefault: createWalletDto.isDefault || true,
-      name: createWalletDto.name || (customer.firstName && customer.lastName 
-        ? `${customer.firstName} ${customer.lastName}` 
-        : customer.firstName || customer.lastName || 'Wallet'),
+      name:
+        createWalletDto.name ||
+        (customer.firstName && customer.lastName
+          ? `${customer.firstName} ${customer.lastName}`
+          : customer.firstName || customer.lastName || 'Wallet'),
       mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
     };
 
@@ -160,8 +150,8 @@ export class WalletmoduleService {
       where: { id: walletId },
       data: {
         providerWalletId: providerResponse.walletId,
-        availableBalance: providerResponse.virtualAccount ? 0 : (createWalletDto.availableBalance || 0),
-        ledgerBalance: providerResponse.virtualAccount ? 0 : (createWalletDto.ledgerBalance || 0),
+        availableBalance: providerResponse.virtualAccount ? 0 : createWalletDto.availableBalance || 0,
+        ledgerBalance: providerResponse.virtualAccount ? 0 : createWalletDto.ledgerBalance || 0,
         mobNum: providerResponse.mobNum || createWalletDto.mobNum,
         virtualAccountNumber: providerResponse.virtualAccount?.accountNumber,
         virtualBankCode: providerResponse.virtualAccount?.bankCode,
@@ -257,7 +247,7 @@ export class WalletmoduleService {
     // If not found, query provider
     try {
       const providerWallet = await this.providerService.getWalletByAccountNumber(accountNumber);
-      
+
       // Try to find wallet by provider wallet ID
       const localWallet = await this.databaseService.wallet.findUnique({
         where: { providerWalletId: providerWallet.walletId },
@@ -387,7 +377,7 @@ export class WalletmoduleService {
       fromWalletId: fromWallet.virtualAccountNumber,
       toWalletId: toWallet.virtualAccountNumber,
       amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
       description: transferDto.description,
       reference: internalReference,
     });
@@ -411,7 +401,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.DEBIT,
         status: TransactionStatus.SUCCESS,
         amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+        currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
         reference: internalReference,
         externalReference: null, // Wallet-to-wallet (sprays) only use internal reference
         groupReference: groupReference,
@@ -427,7 +417,7 @@ export class WalletmoduleService {
         direction: TransactionDirection.CREDIT,
         status: TransactionStatus.SUCCESS,
         amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+        currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
         reference: `SPRAY-CREDIT-${randomUUID()}`, // Unique reference for credit side
         externalReference: null,
         groupReference: groupReference, // Same group reference to link transactions
@@ -455,11 +445,11 @@ export class WalletmoduleService {
     // Log spray transaction
     this.logger.log(
       `💰 SPRAY TRANSACTION: Amount=${amount.toString()}, ` +
-      `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
-      `To=${toWallet.virtualAccountNumber} (${toWallet.id}), ` +
-      `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
-      `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
-      `Reference=${internalReference}, Description="${transferDto.description || 'Wallet to wallet transfer'}"`,
+        `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
+        `To=${toWallet.virtualAccountNumber} (${toWallet.id}), ` +
+        `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
+        `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
+        `Reference=${internalReference}, Description="${transferDto.description || 'Wallet to wallet transfer'}"`,
     );
 
     // Update wallet balances
@@ -552,18 +542,19 @@ export class WalletmoduleService {
     }
 
     // Get source account name
-    const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
-      ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
-      : null;
-    const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
-      ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
-      : null;
+    const customerName =
+      fromWallet.customer.firstName && fromWallet.customer.lastName
+        ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
+        : null;
+    const userName =
+      fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
+        ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
+        : null;
     const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
 
     // Generate transaction reference if not provided (max 36 characters)
     // Use UUID directly (36 chars) to meet provider requirement
-    const transactionReference =
-      transferDto.reference || randomUUID();
+    const transactionReference = transferDto.reference || randomUUID();
 
     // Execute inter-bank transfer with provider
     const providerResponse = await this.providerService.interBankTransfer({
@@ -574,7 +565,7 @@ export class WalletmoduleService {
       sourceAccountName: sourceAccountName,
       remarks: transferDto.description || 'Fast wallet transfer',
       amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
       customerTransactionReference: transactionReference,
     });
 
@@ -653,12 +644,14 @@ export class WalletmoduleService {
     }
 
     // Get source account name
-    const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
-      ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
-      : null;
-    const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
-      ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
-      : null;
+    const customerName =
+      fromWallet.customer.firstName && fromWallet.customer.lastName
+        ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
+        : null;
+    const userName =
+      fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
+        ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
+        : null;
     const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
 
     // Prepare payout data to store temporarily
@@ -669,7 +662,7 @@ export class WalletmoduleService {
       amount: amount.toString(),
       description: initiateDto.description,
       recipientName: destinationAccountName,
-      currencyId: initiateDto.currencyId || fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: initiateDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
       sourceAccountName,
       walletId: fromWallet.id,
     };
@@ -753,9 +746,7 @@ export class WalletmoduleService {
 
         // Check AML restriction
         if (fromWallet.customer.isAmlRestricted) {
-          throw new ForbiddenException(
-            'User account is restricted due to AML compliance. Contact support.',
-          );
+          throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
         }
 
         // Only Tier_2 and Tier_3 users are allowed to withdraw
@@ -768,15 +759,12 @@ export class WalletmoduleService {
         // Check withdrawal limit for Tier 2 and Tier 3 users
         let requiresApproval = false;
         if (fromWallet.customer.tier === KycTier.Tier_2 || fromWallet.customer.tier === KycTier.Tier_3) {
-          const limitCheck = await this.withdrawalLimitService.checkDailyLimit(
-            fromWallet.customer.id,
-            grossAmount,
-          );
+          const limitCheck = await this.withdrawalLimitService.checkDailyLimit(fromWallet.customer.id, grossAmount);
 
           if (!limitCheck.allowed) {
             // Instead of throwing error, create a pending approval request
             requiresApproval = true;
-            
+
             // Get destination account name if not provided
             let destinationAccountName = payoutData.recipientName as string;
             if (!destinationAccountName) {
@@ -909,7 +897,7 @@ export class WalletmoduleService {
 
           throw new BadRequestException(
             `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-            `All transactions are blocked. Please contact support.`,
+              `All transactions are blocked. Please contact support.`,
           );
         }
 
@@ -939,7 +927,7 @@ export class WalletmoduleService {
 
           throw new BadRequestException(
             `Wallet is soft frozen due to elevated risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-            `Payouts are blocked. Please contact support.`,
+              `Payouts are blocked. Please contact support.`,
           );
         }
 
@@ -1005,20 +993,22 @@ export class WalletmoduleService {
         const firstName = walletWithUser.customer.user.firstName || walletWithUser.customer.firstName || undefined;
         const bankAccount = walletWithUser.customer.bankAccounts?.[0];
         const bankName = bankAccount?.accountName ? undefined : undefined; // Could look up from bankCode if needed
-        
-        this.emailService.sendWithdrawalStatusAlert(
-          walletWithUser.customer.user.email,
-          successfulResult.amount,
-          'PENDING',
-          successfulResult.toAccountNumber,
-          successfulResult.transactionRef,
-          'Your withdrawal request has been submitted and is being processed.',
-          firstName,
-          bankName,
-          new Date(),
-        ).catch((error) => {
-          this.logger.error(`Failed to send withdrawal request email: ${error.message}`);
-        });
+
+        this.emailService
+          .sendWithdrawalStatusAlert(
+            walletWithUser.customer.user.email,
+            successfulResult.amount,
+            'PENDING',
+            successfulResult.toAccountNumber,
+            successfulResult.transactionRef,
+            'Your withdrawal request has been submitted and is being processed.',
+            firstName,
+            bankName,
+            new Date(),
+          )
+          .catch((error) => {
+            this.logger.error(`Failed to send withdrawal request email: ${error.message}`);
+          });
       }
     } else if (result.success && 'requiresApproval' in result) {
       // For approval-required withdrawals, we could send a different email notification
@@ -1030,7 +1020,9 @@ export class WalletmoduleService {
         payoutTransactionId: string;
         transactionId: string;
       };
-      this.logger.log(`Withdrawal requires approval. Skipping risk score update and email notification. PayoutTransactionId: ${approvalResult.payoutTransactionId}`);
+      this.logger.log(
+        `Withdrawal requires approval. Skipping risk score update and email notification. PayoutTransactionId: ${approvalResult.payoutTransactionId}`,
+      );
     }
 
     return result;
@@ -1063,24 +1055,22 @@ export class WalletmoduleService {
       fromWalletId: fromWallet.virtualAccountNumber,
       toWalletId: adminWalletAccountNumber, // Use account number directly from env
       amount: grossAmount.toNumber(),
-      currencyId: fromWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+      currencyId: fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
       description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
       reference: userTransactionRef,
     });
 
     if (!userToOrgProviderResponse.success) {
-      throw new BadRequestException(
-        `Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`,
-      );
+      throw new BadRequestException(`Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`);
     }
 
     // Log PAYOUT LEG 1: User wallet → Organization wallet
     this.logger.log(
       `💸 PAYOUT LEG 1 (User→Org): Amount=${grossAmount.toString()}, ` +
-      `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
-      `To=${adminWalletAccountNumber}, ` +
-      `Reference=${userTransactionRef}, ` +
-      `ProviderResponse=${JSON.stringify(userToOrgProviderResponse.data)}`,
+        `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
+        `To=${adminWalletAccountNumber}, ` +
+        `Reference=${userTransactionRef}, ` +
+        `ProviderResponse=${JSON.stringify(userToOrgProviderResponse.data)}`,
     );
 
     // Lock user wallet for balance update
@@ -1144,12 +1134,14 @@ export class WalletmoduleService {
     }
 
     // Get source account name
-    const customerName = fromWallet.customer.firstName && fromWallet.customer.lastName
-      ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
-      : null;
-    const userName = fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
-      ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
-      : null;
+    const customerName =
+      fromWallet.customer.firstName && fromWallet.customer.lastName
+        ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
+        : null;
+    const userName =
+      fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
+        ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
+        : null;
     const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
 
     // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
@@ -1170,13 +1162,13 @@ export class WalletmoduleService {
     // Log PAYOUT LEG 2: Organization wallet → External bank
     this.logger.log(
       `💸 PAYOUT LEG 2 (Org→Bank): NetAmount=${netAmount.toString()}, ` +
-      `GrossAmount=${grossAmount.toString()}, Fee=${fee.toString()}, ` +
-      `From=${adminWalletAccountNumber}, ` +
-      `To=${payoutData.toAccountNumber} (${payoutData.bankCode}), ` +
-      `RecipientName="${destinationAccountName}", ` +
-      `ProviderRef=${providerTransactionRef}, ` +
-      `UserTxId=${userDebitTransaction.id}, ` +
-      `ProviderResponse=${JSON.stringify(orgToBankProviderResponse)}`,
+        `GrossAmount=${grossAmount.toString()}, Fee=${fee.toString()}, ` +
+        `From=${adminWalletAccountNumber}, ` +
+        `To=${payoutData.toAccountNumber} (${payoutData.bankCode}), ` +
+        `RecipientName="${destinationAccountName}", ` +
+        `ProviderRef=${providerTransactionRef}, ` +
+        `UserTxId=${userDebitTransaction.id}, ` +
+        `ProviderResponse=${JSON.stringify(orgToBankProviderResponse)}`,
     );
 
     // Update user wallet balance (deduct full amount)
@@ -1235,16 +1227,16 @@ export class WalletmoduleService {
     // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
     // feePercentage should be between 0 and 1 (e.g., 0.03 for 3%), so we ensure it's properly formatted
     const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
-    
+
     // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
     if (normalizedFeePercentage.gte(new Decimal('10'))) {
       this.logger.error(
         `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
-        `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.03 for 3%), not percentage (e.g., 3).`,
+          `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.03 for 3%), not percentage (e.g., 3).`,
       );
       throw new BadRequestException(
         `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
-        `Fee percentage must be less than 10. Please check ADMIN_PAYOUT_FEE environment variable.`,
+          `Fee percentage must be less than 10. Please check ADMIN_PAYOUT_FEE environment variable.`,
       );
     }
 
@@ -1283,7 +1275,7 @@ export class WalletmoduleService {
     let bankName: string | null = null;
     try {
       const banks = await this.providerService.getBanks();
-      
+
       // Helper function to normalize bank codes for comparison (remove leading zeros)
       const normalizeBankCode = (code: string | number | null | undefined): string => {
         if (code === null || code === undefined) return '';
@@ -1291,13 +1283,13 @@ export class WalletmoduleService {
       };
 
       const payoutBankCode = normalizeBankCode(payoutData.bankCode);
-      
+
       // Find matching bank using normalized comparison
-      const bank = banks.find(b => {
+      const bank = banks.find((b) => {
         const bankCode = normalizeBankCode(b.bankcode);
         return bankCode === payoutBankCode;
       });
-      
+
       bankName = bank?.bankname || null;
     } catch (error: any) {
       this.logger.warn(`Failed to fetch bank name for code ${payoutData.bankCode}: ${error.message}`);
@@ -1307,13 +1299,13 @@ export class WalletmoduleService {
     // Log complete payout transaction
     this.logger.log(
       `✅ PAYOUT CONFIRMED: GrossAmount=${grossAmount.toString()}, ` +
-      `Fee=${fee.toString()}, NetAmount=${netAmount.toString()}, ` +
-      `WalletId=${fromWallet.id}, ` +
-      `ToAccount=${payoutData.toAccountNumber}, ` +
-      `BankCode=${payoutData.bankCode}, ` +
-      `PayoutTxId=${payoutTransaction.id}, ` +
-      `UserTxId=${userDebitTransaction.id}, ` +
-      `ProviderRef=${providerTransactionRef}`,
+        `Fee=${fee.toString()}, NetAmount=${netAmount.toString()}, ` +
+        `WalletId=${fromWallet.id}, ` +
+        `ToAccount=${payoutData.toAccountNumber}, ` +
+        `BankCode=${payoutData.bankCode}, ` +
+        `PayoutTxId=${payoutTransaction.id}, ` +
+        `UserTxId=${userDebitTransaction.id}, ` +
+        `ProviderRef=${providerTransactionRef}`,
     );
 
     return {
@@ -1372,9 +1364,10 @@ export class WalletmoduleService {
 
     // Get history from provider using account number
     // Request more records if filtering is needed to ensure we have enough results after filtering
-    const providerPageSize = (query || status || type || minAmount !== undefined || maxAmount !== undefined) 
-      ? (pageSize || 20) * 3 // Request 3x more to account for filtering
-      : pageSize || 20;
+    const providerPageSize =
+      query || status || type || minAmount !== undefined || maxAmount !== undefined
+        ? (pageSize || 20) * 3 // Request 3x more to account for filtering
+        : pageSize || 20;
 
     const history = await this.providerService.getWalletHistoryByAccountNumber(
       wallet.virtualAccountNumber,
@@ -1387,7 +1380,15 @@ export class WalletmoduleService {
     // Get database transactions to match status and type if filters are provided
     let dbTransactions: Map<string, { status: string; type: string }> = new Map();
     // For SPRAY type, we also need groupReference to match credit transactions
-    let sprayTransactions: Array<{ reference: string | null; externalReference: string | null; groupReference: string | null; status: string; type: string; amount: any; createdAt: Date }> = [];
+    let sprayTransactions: Array<{
+      reference: string | null;
+      externalReference: string | null;
+      groupReference: string | null;
+      status: string;
+      type: string;
+      amount: any;
+      createdAt: Date;
+    }> = [];
     if ((status && status !== 'all') || (type && type !== 'all')) {
       const transactions = await this.databaseService.transaction.findMany({
         where: {
@@ -1407,12 +1408,12 @@ export class WalletmoduleService {
           createdAt: true,
         },
       });
-      
+
       // Store spray transactions separately for special handling
       if (type && type.toLowerCase() === 'spray') {
-        sprayTransactions = transactions.filter(tx => tx.type === 'SPRAY');
+        sprayTransactions = transactions.filter((tx) => tx.type === 'SPRAY');
       }
-      
+
       // Create a map of reference -> {status, type} for quick lookup
       // Check both reference and externalReference to match provider's transactionReference
       transactions.forEach((tx) => {
@@ -1432,9 +1433,9 @@ export class WalletmoduleService {
     // Search filter (case-insensitive search in description)
     if (query && query.trim()) {
       const searchQuery = query.trim().toLowerCase();
-      filteredTransactions = filteredTransactions.filter((tx) =>
-        tx.description?.toLowerCase().includes(searchQuery) ||
-        tx.reference?.toLowerCase().includes(searchQuery),
+      filteredTransactions = filteredTransactions.filter(
+        (tx) =>
+          tx.description?.toLowerCase().includes(searchQuery) || tx.reference?.toLowerCase().includes(searchQuery),
       );
     }
 
@@ -1443,7 +1444,7 @@ export class WalletmoduleService {
       filteredTransactions = filteredTransactions.filter((tx) => {
         const txData = dbTransactions.get(tx.reference || '');
         if (!txData) return false; // Skip if we can't find transaction in database
-        
+
         const statusMap: Record<string, string> = {
           successful: 'SUCCESS',
           pending: 'PENDING',
@@ -1463,7 +1464,7 @@ export class WalletmoduleService {
         adjustment: 'ADJUSTMENT',
       };
       const targetType = typeMap[type.toLowerCase()];
-      
+
       if (type.toLowerCase() === 'spray') {
         // Special handling for SPRAY type to include both debit and credit transactions
         // Credit spray transactions may have different references from the provider,
@@ -1471,16 +1472,16 @@ export class WalletmoduleService {
         filteredTransactions = filteredTransactions.filter((tx) => {
           // First try direct reference match
           let txData = dbTransactions.get(tx.reference || '');
-          
+
           // If no direct match, try to find a matching spray transaction
           // by checking if any spray transaction has a matching reference or externalReference
           if (!txData) {
             const matchingSpray = sprayTransactions.find(
-              (st) => 
+              (st) =>
                 (st.reference && st.reference === tx.reference) ||
-                (st.externalReference && st.externalReference === tx.reference)
+                (st.externalReference && st.externalReference === tx.reference),
             );
-            
+
             if (matchingSpray) {
               txData = { status: matchingSpray.status, type: matchingSpray.type };
             } else {
@@ -1489,13 +1490,13 @@ export class WalletmoduleService {
               // This is especially important for credit spray transactions which may have different references
               const providerAmount = new Decimal(tx.amount || 0);
               const providerTimestamp = tx.timestamp ? new Date(tx.timestamp) : null;
-              
+
               const fuzzyMatch = sprayTransactions.find((st) => {
                 // Amount must match exactly
                 if (!st.amount) return false;
                 const amountMatch = new Decimal(st.amount).equals(providerAmount);
                 if (!amountMatch) return false;
-                
+
                 // Timestamp must be very close (within 2 minutes) to ensure we're matching the right transaction
                 if (providerTimestamp) {
                   const timeDiff = Math.abs(providerTimestamp.getTime() - st.createdAt.getTime());
@@ -1505,13 +1506,13 @@ export class WalletmoduleService {
                 // If no timestamp, only match by amount (less reliable, but better than nothing)
                 return true;
               });
-              
+
               if (fuzzyMatch) {
                 txData = { status: fuzzyMatch.status, type: fuzzyMatch.type };
               }
             }
           }
-          
+
           if (!txData) return false;
           return txData.type === 'SPRAY';
         });
@@ -1662,17 +1663,19 @@ export class WalletmoduleService {
 
     // Send email notification (don't await to avoid blocking)
     if (customer.user?.email) {
-      this.emailService.sendBankAccountChangeAlert(
-        customer.user.email,
-        oldAccountNumber || 'N/A',
-        updateDto.accountNumber,
-        updateDto.bankCode,
-        'pending',
-        customer.user.firstName || customer.firstName || undefined,
-        new Date(),
-      ).catch((error) => {
-        this.logger.error(`Failed to send bank account change email: ${error.message}`);
-      });
+      this.emailService
+        .sendBankAccountChangeAlert(
+          customer.user.email,
+          oldAccountNumber || 'N/A',
+          updateDto.accountNumber,
+          updateDto.bankCode,
+          'pending',
+          customer.user.firstName || customer.firstName || undefined,
+          new Date(),
+        )
+        .catch((error) => {
+          this.logger.error(`Failed to send bank account change email: ${error.message}`);
+        });
     }
 
     return {

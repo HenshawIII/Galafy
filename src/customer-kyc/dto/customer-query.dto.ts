@@ -24,4 +24,3 @@ export class GetAllCustomersQueryDto {
   @IsString({ message: 'Organization ID must be a string' })
   organizationId?: string;
 }
-

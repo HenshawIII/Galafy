@@ -9,14 +9,7 @@ import {
   BadRequestException,
   ValidationPipe,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiUnauthorizedResponse,
-  ApiHeader,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiUnauthorizedResponse, ApiHeader } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { SpraysService } from './sprays.service.js';
 import { CreateSprayDto } from './dto/create-spray.dto.js';
@@ -102,4 +95,3 @@ export class SpraysController {
     return this.spraysService.createSpray(eventId, userId, createSprayDto, idempotencyKey);
   }
 }
-

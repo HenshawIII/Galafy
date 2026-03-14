@@ -16,11 +16,7 @@ import {
   CreateBvnVerificationDto,
   CreateAddressVerificationDto,
 } from './dto/kyc-verification.dto.js';
-import {
-  CreateCustomerWithBvnDto,
-  UpgradeWithNinAndAddressDto,
-  NinAndUtilityBillDto,
-} from './dto/kyc-utility.dto.js';
+import { CreateCustomerWithBvnDto, UpgradeWithNinAndAddressDto, NinAndUtilityBillDto } from './dto/kyc-utility.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 import { Tier1FaceStatus, UtilityBillStatus } from '../../generated/prisma/enums.js';
@@ -53,7 +49,7 @@ export class CustomerKycService {
 
     try {
       const date = new Date(dateString);
-      
+
       // Check if the date is valid
       if (isNaN(date.getTime()) || date.toString() === 'Invalid Date') {
         this.logger.warn(`Failed to parse date string from provider: "${dateString}"`);
@@ -292,15 +288,20 @@ export class CustomerKycService {
   /**
    * Get partnership account details (optional phoneNumber; defaults to current user's phone).
    */
-  async getAccountDetails(userId: string, phoneNumber?: string): Promise<{
+  async getAccountDetails(
+    userId: string,
+    phoneNumber?: string,
+  ): Promise<{
     accountNumber?: string;
     firstName?: string;
     lastName?: string;
     email?: string;
     phoneNumber?: string;
   } | null> {
-    const phone = phoneNumber ?? (await this.databaseService.user.findUnique({ where: { id: userId } }))?.phone
-      ?? (await this.databaseService.customer.findFirst({ where: { userId } }))?.mobileNumber;
+    const phone =
+      phoneNumber ??
+      (await this.databaseService.user.findUnique({ where: { id: userId } }))?.phone ??
+      (await this.databaseService.customer.findFirst({ where: { userId } }))?.mobileNumber;
     return this.providerService.getPartnershipAccountDetails(phone ?? undefined);
   }
 
@@ -332,8 +333,8 @@ export class CustomerKycService {
         userId,
         providerCustomerId: null,
         organizationId: createCustomerDto.organizationId,
-        customerTypeId: createCustomerDto.customerTypeId || "f671da57-e281-4b40-965f-a96f4205405e",
-        countryId: createCustomerDto.countryId || "c15ad9ae-c4d7-4342-b70f-de5508627e3b",
+        customerTypeId: createCustomerDto.customerTypeId || 'f671da57-e281-4b40-965f-a96f4205405e',
+        countryId: createCustomerDto.countryId || 'c15ad9ae-c4d7-4342-b70f-de5508627e3b',
         firstName: createCustomerDto.firstName ?? null,
         lastName: createCustomerDto.lastName ?? null,
         middleName: createCustomerDto.middleName,
@@ -505,15 +506,15 @@ export class CustomerKycService {
         firstName: updateDto.firstName || customer.firstName,
         lastName: updateDto.lastName || customer.lastName,
       };
-      
+
       if (updateDto.middleName !== undefined) {
         providerUpdateData.middleName = updateDto.middleName;
       }
-      
+
       if (updateDto.dob !== undefined) {
         providerUpdateData.dob = updateDto.dob;
       }
-      
+
       await this.providerService.updateCustomerName(customer.providerCustomerId, providerUpdateData);
     } catch (error) {
       this.logger.error(`Failed to update customer name with provider: ${error.message}`);
@@ -901,7 +902,7 @@ export class CustomerKycService {
       };
 
       await this.createCustomer(userId, createCustomerDto);
-      
+
       // Fetch the newly created customer with BVN verification relation
       customer = await this.databaseService.customer.findUnique({
         where: { userId },
@@ -979,7 +980,9 @@ export class CustomerKycService {
     } else {
       // Check customer tier - must be at least Tier 1 (should have BVN already)
       if (customer.tier === KycTier.Tier_0) {
-        throw new BadRequestException('Customer must complete BVN verification first before proceeding with NIN verification.');
+        throw new BadRequestException(
+          'Customer must complete BVN verification first before proceeding with NIN verification.',
+        );
       }
 
       try {
@@ -1010,7 +1013,9 @@ export class CustomerKycService {
     } else {
       // Check customer tier - must be Tier 2 for address verification
       if (updatedCustomer.tier !== KycTier.Tier_2) {
-        throw new BadRequestException(`Customer must be Tier 2 before address verification. Current tier: ${updatedCustomer.tier}`);
+        throw new BadRequestException(
+          `Customer must be Tier 2 before address verification. Current tier: ${updatedCustomer.tier}`,
+        );
       }
 
       try {
@@ -1184,7 +1189,7 @@ export class CustomerKycService {
     // Step 2: Submit Utility Bill (only if customer is Tier 2)
     if (updatedCustomer.tier !== KycTier.Tier_2) {
       throw new BadRequestException(
-        `Customer must be Tier 2 to submit utility bill. Current tier: ${updatedCustomer.tier}. Please complete BVN verification first.`
+        `Customer must be Tier 2 to submit utility bill. Current tier: ${updatedCustomer.tier}. Please complete BVN verification first.`,
       );
     }
 

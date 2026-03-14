@@ -22,4 +22,3 @@ export class LiveModule {
     this.logger.log('LiveModule loaded and LiveGateway should be initialized');
   }
 }
-

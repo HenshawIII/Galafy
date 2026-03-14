@@ -28,4 +28,3 @@ import { ConfigModule } from '../config/config.module.js';
   exports: [SpraysService],
 })
 export class SpraysModule {}
-

@@ -1,13 +1,15 @@
-import {
-  Injectable,
-  BadRequestException,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { createHmac } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { InflowWebhookDto, PayoutWebhookDto } from './dto/webhook.dto.js';
-import { TransactionType, TransactionDirection, TransactionStatus, FundingStatus, PayoutStatus, FundingChannel } from '../../generated/prisma/enums.js';
+import {
+  TransactionType,
+  TransactionDirection,
+  TransactionStatus,
+  FundingStatus,
+  PayoutStatus,
+  FundingChannel,
+} from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -87,7 +89,7 @@ export class WebhooksService {
         // Re-fetch wallet within transaction for locking
         const wallet = await tx.wallet.findFirst({
           where: { virtualAccountNumber: data.accountNumber },
-          include: { 
+          include: {
             customer: {
               include: {
                 user: true,
@@ -137,11 +139,11 @@ export class WebhooksService {
         // Need virtualAccountNumber for wallet-to-wallet transfer
         const lockedUserWallet = await tx.wallet.findUnique({
           where: { id: wallet.id },
-          select: { 
-            id: true, 
-            availableBalance: true, 
-            ledgerBalance: true, 
-            currencyId: true, 
+          select: {
+            id: true,
+            availableBalance: true,
+            ledgerBalance: true,
+            currencyId: true,
             customerId: true,
             virtualAccountNumber: true,
           },
@@ -171,7 +173,7 @@ export class WebhooksService {
           fromWalletId: lockedUserWallet.virtualAccountNumber,
           toWalletId: adminWalletAccountNumber,
           amount: adminFee.toNumber(),
-          currencyId: wallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+          currencyId: wallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
           description: `Admin fee from funding: ${data.reference}`,
           reference: feeTransferRef,
         });
@@ -179,7 +181,7 @@ export class WebhooksService {
         if (!feeTransferResponse.success) {
           this.logger.error(
             `Failed to transfer admin fee to organization wallet: ${feeTransferResponse.message}. ` +
-            `User wallet has been credited with grossAmount but fee transfer failed.`,
+              `User wallet has been credited with grossAmount but fee transfer failed.`,
           );
           throw new BadRequestException(
             `Failed to transfer admin fee to organization wallet: ${feeTransferResponse.message}`,
@@ -236,29 +238,29 @@ export class WebhooksService {
         // Log funding transaction
         this.logger.log(
           `💰 FUNDING TRANSACTION: GrossAmount=${grossAmount.toString()}, ` +
-          `NetAmount=${netAmount.toString()}, AdminFee=${adminFee.toString()}, ` +
-          `ProviderFee=${providerFee.toString()}, ` +
-          `WalletId=${wallet.id}, AccountNumber=${data.accountNumber}, ` +
-          `TxId=${userTransaction.id}, FundingTxId=${fundingTransaction.id}, ` +
-          `ProviderRef=${data.reference}, InternalRef=${userTransactionRef}, ` +
-          `SenderName="${data.senderName}", SenderBank="${data.senderBank}", ` +
-          `Description="${data.description || 'Inflow payment'}"`,
+            `NetAmount=${netAmount.toString()}, AdminFee=${adminFee.toString()}, ` +
+            `ProviderFee=${providerFee.toString()}, ` +
+            `WalletId=${wallet.id}, AccountNumber=${data.accountNumber}, ` +
+            `TxId=${userTransaction.id}, FundingTxId=${fundingTransaction.id}, ` +
+            `ProviderRef=${data.reference}, InternalRef=${userTransactionRef}, ` +
+            `SenderName="${data.senderName}", SenderBank="${data.senderBank}", ` +
+            `Description="${data.description || 'Inflow payment'}"`,
         );
 
         // Create AdminFee record (separate table for fee tracking)
         // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
         // feePercentage should be between 0 and 1 (e.g., 0.10 for 10%), so we ensure it's properly formatted
         const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
-        
+
         // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
         if (normalizedFeePercentage.gte(new Decimal('10'))) {
           this.logger.error(
             `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
-            `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.10 for 10%), not percentage (e.g., 10).`,
+              `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.10 for 10%), not percentage (e.g., 10).`,
           );
           throw new BadRequestException(
             `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
-            `Fee percentage must be less than 10. Please check ADMIN_FUNDING_FEE environment variable.`,
+              `Fee percentage must be less than 10. Please check ADMIN_FUNDING_FEE environment variable.`,
           );
         }
 
@@ -387,44 +389,41 @@ export class WebhooksService {
         const paymentMethod = fundingTransaction?.channel || 'BANK_TRANSFER';
         const fundingDate = fundingTransaction?.createdAt || new Date();
 
-        this.emailService.sendWalletFundingAlert(
-          walletWithUser.customer.user.email,
-          amountFormatted,
-          walletWithUser.virtualAccountNumber,
-          data.reference,
-          firstName,
-          paymentMethod,
-          fundingDate,
-        ).catch((error) => {
-          this.logger.error(`Failed to send wallet funding email: ${error.message}`);
-        });
+        this.emailService
+          .sendWalletFundingAlert(
+            walletWithUser.customer.user.email,
+            amountFormatted,
+            walletWithUser.virtualAccountNumber,
+            data.reference,
+            firstName,
+            paymentMethod,
+            fundingDate,
+          )
+          .catch((error) => {
+            this.logger.error(`Failed to send wallet funding email: ${error.message}`);
+          });
 
         // Send push notification for inflow received
         const walletOwnerUserId = walletWithUser.customer.userId;
         if (walletOwnerUserId) {
           try {
-            await this.notificationsService.sendNotificationIfEnabled(
-              walletOwnerUserId,
-              {
-                notification: {
-                  title: 'Wallet Funded',
-                  body: `You received ₦${amountFormatted} in your wallet`,
-                },
-                data: {
-                  type: 'INFLOW_RECEIVED',
-                  amount: amountFormatted,
-                  reference: data.reference,
-                  walletId: walletId,
-                  virtualAccountNumber: walletWithUser.virtualAccountNumber || '',
-                  paymentMethod: paymentMethod,
-                },
+            await this.notificationsService.sendNotificationIfEnabled(walletOwnerUserId, {
+              notification: {
+                title: 'Wallet Funded',
+                body: `You received ₦${amountFormatted} in your wallet`,
               },
-            );
+              data: {
+                type: 'INFLOW_RECEIVED',
+                amount: amountFormatted,
+                reference: data.reference,
+                walletId: walletId,
+                virtualAccountNumber: walletWithUser.virtualAccountNumber || '',
+                paymentMethod: paymentMethod,
+              },
+            });
           } catch (notificationError: any) {
             // Log error but don't fail the webhook - notification is optional
-            this.logger.warn(
-              `Failed to send inflow push notification: ${notificationError.message}`,
-            );
+            this.logger.warn(`Failed to send inflow push notification: ${notificationError.message}`);
           }
         }
       }
@@ -555,7 +554,7 @@ export class WebhooksService {
                 deliveryStatusCode: data.deliveryStatusCode,
                 dateOfTransaction: data.dateOfTransaction,
               },
-          },
+            },
           });
         }
 
@@ -578,18 +577,18 @@ export class WebhooksService {
           if (existingRefund) {
             this.logger.log(
               `Refund already processed for payout ${data.paymentReference}. ` +
-              `Skipping refund transfer. Existing refund transaction: ${existingRefund.id}`
+                `Skipping refund transfer. Existing refund transaction: ${existingRefund.id}`,
             );
           } else {
             // Get organization wallet account number
             const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
-            
+
             // Get user wallet details including virtualAccountNumber
             const userWallet = await tx.wallet.findUnique({
               where: { id: payoutTransaction.wallet.id },
-              select: { 
-                id: true, 
-                virtualAccountNumber: true, 
+              select: {
+                id: true,
+                virtualAccountNumber: true,
                 currencyId: true,
                 availableBalance: true,
                 ledgerBalance: true,
@@ -602,19 +601,23 @@ export class WebhooksService {
             }
 
             if (!userWallet.virtualAccountNumber) {
-              this.logger.error(`User wallet ${payoutTransaction.wallet.id} does not have a virtual account number for refund`);
-              throw new BadRequestException(`User wallet does not have a virtual account number. Cannot process refund.`);
+              this.logger.error(
+                `User wallet ${payoutTransaction.wallet.id} does not have a virtual account number for refund`,
+              );
+              throw new BadRequestException(
+                `User wallet does not have a virtual account number. Cannot process refund.`,
+              );
             }
 
             // Transfer grossAmount from organization wallet back to user wallet via provider
             const refundReference = `REFUND-${data.paymentReference}-${randomUUID()}`;
-            
+
             try {
               const refundResponse = await this.providerService.walletToWalletTransfer({
                 fromWalletId: adminWalletAccountNumber,
                 toWalletId: userWallet.virtualAccountNumber,
                 amount: grossAmount.toNumber(),
-                currencyId: userWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+                currencyId: userWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
                 description: `Payout refund: ${data.paymentReference}`,
                 reference: refundReference,
               });
@@ -622,11 +625,11 @@ export class WebhooksService {
               if (!refundResponse.success) {
                 this.logger.error(
                   `Failed to refund payout via provider: ${refundResponse.message}. ` +
-                  `Organization wallet has ${grossAmount.toString()} that needs to be refunded to user wallet ${payoutTransaction.wallet.id}. ` +
-                  `Payment Reference: ${data.paymentReference}`
+                    `Organization wallet has ${grossAmount.toString()} that needs to be refunded to user wallet ${payoutTransaction.wallet.id}. ` +
+                    `Payment Reference: ${data.paymentReference}`,
                 );
                 throw new BadRequestException(
-                  `Failed to process refund: ${refundResponse.message}. Please contact support.`
+                  `Failed to process refund: ${refundResponse.message}. Please contact support.`,
                 );
               }
 
@@ -662,7 +665,7 @@ export class WebhooksService {
                     direction: TransactionDirection.CREDIT, // Credit because it's a refund
                     status: TransactionStatus.SUCCESS,
                     amount: grossAmount,
-                    currencyId: userWallet.currencyId || "fd5e474d-bb42-4db1-ab74-e8d2a01047e9",
+                    currencyId: userWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
                     reference: refundReference,
                     externalReference: data.paymentReference,
                     narration: `Payout refund: ${data.deliveryStatusMessage || 'Payout failed'}`,
@@ -679,15 +682,15 @@ export class WebhooksService {
 
                 this.logger.log(
                   `Payout failed: Refunded ${grossAmount.toString()} from organization wallet to user wallet ${payoutTransaction.wallet.id} via provider. ` +
-                  `Refund Reference: ${refundReference}, Original Payment Reference: ${data.paymentReference}`
+                    `Refund Reference: ${refundReference}, Original Payment Reference: ${data.paymentReference}`,
                 );
               }
             } catch (error) {
               // If refund transfer fails, log error and re-throw to ensure webhook processing fails and can be retried
               this.logger.error(
                 `CRITICAL: Failed to refund payout via provider. ` +
-                `Organization wallet has ${grossAmount.toString()} that needs to be manually refunded to user wallet ${payoutTransaction.wallet.id}. ` +
-                `Payment Reference: ${data.paymentReference}. Error: ${error.message}`
+                  `Organization wallet has ${grossAmount.toString()} that needs to be manually refunded to user wallet ${payoutTransaction.wallet.id}. ` +
+                  `Payment Reference: ${data.paymentReference}. Error: ${error.message}`,
               );
               // Re-throw to ensure webhook processing fails and can be retried
               throw error;
@@ -748,26 +751,28 @@ export class WebhooksService {
         const accountNumber = payoutWithUser.bankAccount?.accountNumber || 'N/A';
         const status = data.status;
         const message = data.deliveryStatusMessage || undefined;
-        const firstName = payoutWithUser.wallet.customer.user.firstName || payoutWithUser.wallet.customer.firstName || undefined;
+        const firstName =
+          payoutWithUser.wallet.customer.user.firstName || payoutWithUser.wallet.customer.firstName || undefined;
         const requestDate = payoutWithUser.createdAt;
 
-        this.emailService.sendWithdrawalStatusAlert(
-          payoutWithUser.wallet.customer.user.email,
-          amountFormatted,
-          status,
-          accountNumber,
-          data.paymentReference,
-          message,
-          firstName,
-          undefined, // bankName - can be looked up from bankCode if needed
-          requestDate,
-        ).catch((error) => {
-          this.logger.error(`Failed to send withdrawal status email: ${error.message}`);
-        });
+        this.emailService
+          .sendWithdrawalStatusAlert(
+            payoutWithUser.wallet.customer.user.email,
+            amountFormatted,
+            status,
+            accountNumber,
+            data.paymentReference,
+            message,
+            firstName,
+            undefined, // bankName - can be looked up from bankCode if needed
+            requestDate,
+          )
+          .catch((error) => {
+            this.logger.error(`Failed to send withdrawal status email: ${error.message}`);
+          });
       }
     }
 
     return result;
   }
 }
-

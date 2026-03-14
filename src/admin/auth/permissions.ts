@@ -5,13 +5,13 @@ export const PERMISSIONS = {
   VIEW_USERS: 'view_users',
   EDIT_USERS: 'edit_users',
   DELETE_USERS: 'delete_users',
-  
+
   // Financial
   VIEW_TRANSACTIONS: 'view_transactions',
   PROCESS_REFUNDS: 'process_refunds',
   VIEW_FINANCIAL_REPORTS: 'view_financial_reports',
   MANAGE_FINANCIAL_SETTINGS: 'manage_financial_settings',
-  
+
   // KYC
   VIEW_KYC_REQUESTS: 'view_kyc_requests',
   APPROVE_KYC: 'approve_kyc',
@@ -21,46 +21,46 @@ export const PERMISSIONS = {
   RESTRICT_USERS: 'restrict_users',
   UNRESTRICT_USERS: 'unrestrict_users',
   SEND_KYC_REMINDERS: 'send_kyc_reminders',
-  
+
   // System Config
   MANAGE_CONFIG: 'manage_config',
   VIEW_CONFIG: 'view_config',
-  
+
   // Support
   VIEW_SUPPORT_TICKETS: 'view_support_tickets',
   RESPOND_TO_TICKETS: 'respond_to_tickets',
-  
+
   // Admin Management
   MANAGE_ADMINS: 'manage_admins',
   VIEW_ADMINS: 'view_admins',
-  
+
   // Events
   VIEW_EVENTS: 'view_events',
   MANAGE_EVENTS: 'manage_events',
-  
+
   // Wallets
   VIEW_WALLETS: 'view_wallets',
   MANAGE_WALLETS: 'manage_wallets',
-  
+
   // AML Alerts
   VIEW_AML_ALERTS: 'view_aml_alerts',
   MANAGE_AML_ALERTS: 'manage_aml_alerts',
-  
+
   // Audit Logs
   VIEW_AUDIT_LOGS: 'view_audit_logs',
-  
+
   // Withdrawals
   VIEW_WITHDRAWALS: 'view_withdrawals',
   MANAGE_WITHDRAWALS: 'manage_withdrawals',
-  
+
   // Notifications
   VIEW_NOTIFICATIONS: 'view_notifications',
-  
+
   // Dashboard
   VIEW_DASHBOARD: 'view_dashboard',
 } as const;
 
-export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
+export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
 export const ROLE_PERMISSIONS: Record<AdminRole, Permission[]> = {
   [AdminRole.SUPER_ADMIN]: [
@@ -180,4 +180,3 @@ export const ROLE_PERMISSIONS: Record<AdminRole, Permission[]> = {
     PERMISSIONS.VIEW_DASHBOARD,
   ],
 };
-

@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../decorators/roles.decorator.js';
 import { AdminRole } from '../../../../generated/prisma/enums.js';
@@ -13,10 +8,10 @@ export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.getAllAndOverride<AdminRole[]>(
-      ROLES_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    const requiredRoles = this.reflector.getAllAndOverride<AdminRole[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
     if (!requiredRoles) {
       // No roles required, allow access
@@ -33,12 +28,9 @@ export class RolesGuard implements CanActivate {
     const hasRole = requiredRoles.some((role) => admin.role === role);
 
     if (!hasRole) {
-      throw new ForbiddenException(
-        `Access denied. Required roles: ${requiredRoles.join(', ')}`,
-      );
+      throw new ForbiddenException(`Access denied. Required roles: ${requiredRoles.join(', ')}`);
     }
 
     return true;
   }
 }
-

@@ -119,9 +119,7 @@ export class SpraysService {
     }
 
     if (event.minSprayAmount && amount.lt(event.minSprayAmount)) {
-      throw new BadRequestException(
-        `Spray amount must be at least ${event.minSprayAmount.toString()}`,
-      );
+      throw new BadRequestException(`Spray amount must be at least ${event.minSprayAmount.toString()}`);
     }
 
     // Get sprayer participant
@@ -138,9 +136,7 @@ export class SpraysService {
     });
 
     if (!sprayerParticipant) {
-      throw new ForbiddenException(
-        `User ${userId} is not a participant in event ${eventId}`,
-      );
+      throw new ForbiddenException(`User ${userId} is not a participant in event ${eventId}`);
     }
 
     // Get receiver participant (include role for notification check)
@@ -187,9 +183,7 @@ export class SpraysService {
         );
       }
     } else {
-      throw new BadRequestException(
-        'Either receiverUserId or receiverParticipantId must be provided',
-      );
+      throw new BadRequestException('Either receiverUserId or receiverParticipantId must be provided');
     }
 
     // Determine wallets
@@ -207,9 +201,7 @@ export class SpraysService {
       });
 
       if (!customer || !customer.wallets || customer.wallets.length === 0) {
-        throw new NotFoundException(
-          `No wallet found for sprayer. Please create a wallet first.`,
-        );
+        throw new NotFoundException(`No wallet found for sprayer. Please create a wallet first.`);
       }
 
       sprayerWallet = customer.wallets[0];
@@ -229,9 +221,7 @@ export class SpraysService {
       });
 
       if (!receiverCustomer || !receiverCustomer.wallets || receiverCustomer.wallets.length === 0) {
-        throw new NotFoundException(
-          `No wallet found for receiver. Please create a wallet first.`,
-        );
+        throw new NotFoundException(`No wallet found for receiver. Please create a wallet first.`);
       }
 
       receiverWallet = receiverCustomer.wallets[0];
@@ -239,9 +229,7 @@ export class SpraysService {
 
     // Ensure wallets have same currency
     if (sprayerWallet.currencyId !== receiverWallet.currencyId) {
-      throw new BadRequestException(
-        'Sprayer and receiver wallets must have the same currency',
-      );
+      throw new BadRequestException('Sprayer and receiver wallets must have the same currency');
     }
 
     // Ensure wallets have virtual account numbers (required for provider transfer)
@@ -290,7 +278,7 @@ export class SpraysService {
         if (wallet?.riskStatus === 'HARD_FREEZE') {
           throw new BadRequestException(
             `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-            `All transactions are blocked. Please contact support.`,
+              `All transactions are blocked. Please contact support.`,
           );
         }
 
@@ -314,17 +302,13 @@ export class SpraysService {
       toWalletId: receiverWallet.virtualAccountNumber,
       amount: Number(amount),
       currencyId: sprayerWallet.currencyId,
-      description: createSprayDto.note || `Spray in event ${event.title }, EventId: ${eventId}`,
+      description: createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`,
       reference: idempotencyKey,
     });
 
     if (!providerResponse.success) {
-      this.logger.error(
-        `Provider transfer failed: ${providerResponse.message}`,
-      );
-      throw new BadRequestException(
-        providerResponse.message || 'Transfer failed. Please try again.',
-      );
+      this.logger.error(`Provider transfer failed: ${providerResponse.message}`);
+      throw new BadRequestException(providerResponse.message || 'Transfer failed. Please try again.');
     }
 
     this.logger.log(`Provider transfer successful: ${providerResponse.message}`);
@@ -339,7 +323,7 @@ export class SpraysService {
         await tx.$queryRaw`
           SELECT id FROM "Wallet" WHERE id = ${sprayerWallet.id} FOR UPDATE
         `;
-        
+
         await tx.$queryRaw`
           SELECT id FROM "Wallet" WHERE id = ${receiverWallet.id} FOR UPDATE
         `;
@@ -347,21 +331,21 @@ export class SpraysService {
         // Re-fetch both wallets with lock to get latest balances
         const currentSprayerWallet = await tx.wallet.findUnique({
           where: { id: sprayerWallet.id },
-          select: { 
-            id: true, 
-            availableBalance: true, 
-            ledgerBalance: true, 
-            currencyId: true 
+          select: {
+            id: true,
+            availableBalance: true,
+            ledgerBalance: true,
+            currencyId: true,
           },
         });
 
         const currentReceiverWallet = await tx.wallet.findUnique({
           where: { id: receiverWallet.id },
-          select: { 
-            id: true, 
-            availableBalance: true, 
-            ledgerBalance: true, 
-            currencyId: true 
+          select: {
+            id: true,
+            availableBalance: true,
+            ledgerBalance: true,
+            currencyId: true,
           },
         });
 
@@ -459,12 +443,12 @@ export class SpraysService {
         // Log spray transaction (event-based)
         this.logger.log(
           `💰 SPRAY TRANSACTION (Event): Amount=${amount.toString()}, ` +
-          `EventId=${eventId}, EventTitle="${event.title}", ` +
-          `From=${sprayerWallet.virtualAccountNumber || sprayerWallet.id}, ` +
-          `To=${receiverWallet.virtualAccountNumber || receiverWallet.id}, ` +
-          `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
-          `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
-          `Reference=${idempotencyKey}, Note="${createSprayDto.note || 'N/A'}"`,
+            `EventId=${eventId}, EventTitle="${event.title}", ` +
+            `From=${sprayerWallet.virtualAccountNumber || sprayerWallet.id}, ` +
+            `To=${receiverWallet.virtualAccountNumber || receiverWallet.id}, ` +
+            `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
+            `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
+            `Reference=${idempotencyKey}, Note="${createSprayDto.note || 'N/A'}"`,
         );
 
         return {
@@ -506,10 +490,7 @@ export class SpraysService {
 
     // Send push notification to celebrant/performer immediately after spray creation (non-blocking)
     // This ensures real-time delivery without waiting for other operations
-    if (
-      receiverParticipant.role === EventRole.CELEBRANT ||
-      receiverParticipant.role === EventRole.PERFORMER
-    ) {
+    if (receiverParticipant.role === EventRole.CELEBRANT || receiverParticipant.role === EventRole.PERFORMER) {
       // Fetch sprayer name asynchronously and send notification (fire and forget)
       this.databaseService.user
         .findUnique({
@@ -520,36 +501,28 @@ export class SpraysService {
           },
         })
         .then((sprayerUser) => {
-          const sprayerName =
-            sprayerUser?.username ||
-            sprayerUser?.profilePicture ||
-            'Someone';
-          
+          const sprayerName = sprayerUser?.username || sprayerUser?.profilePicture || 'Someone';
+
           // Send notification asynchronously (non-blocking)
-          return this.notificationsService.sendNotificationIfEnabled(
-            receiverParticipant.userId,
-            {
-              notification: {
-                title: 'You were sprayed!',
-                body: `${sprayerName} sprayed you ${spray.totalAmount.toString()}`,
-              },
-              data: {
-                type: 'SPRAY_RECEIVED',
-                eventId: eventId,
-                eventTitle: event.title,
-                sprayId: spray.id,
-                amount: spray.totalAmount.toString(),
-                sprayerId: userId,
-                sprayerName: sprayerName,
-              },
+          return this.notificationsService.sendNotificationIfEnabled(receiverParticipant.userId, {
+            notification: {
+              title: 'You were sprayed!',
+              body: `${sprayerName} sprayed you ${spray.totalAmount.toString()}`,
             },
-          );
+            data: {
+              type: 'SPRAY_RECEIVED',
+              eventId: eventId,
+              eventTitle: event.title,
+              sprayId: spray.id,
+              amount: spray.totalAmount.toString(),
+              sprayerId: userId,
+              sprayerName: sprayerName,
+            },
+          });
         })
         .catch((notificationError: any) => {
           // Log error but don't fail the request - notification is optional
-          this.logger.warn(
-            `Failed to send spray notification: ${notificationError.message}`,
-          );
+          this.logger.warn(`Failed to send spray notification: ${notificationError.message}`);
         });
     }
 
@@ -643,10 +616,7 @@ export class SpraysService {
 
         if (eventWithSprays?.sprays) {
           formattedSprays = eventWithSprays.sprays
-            .filter((spray: any) => 
-              spray.sprayerWallet?.customer?.user && 
-              spray.receiverWallet?.customer?.user
-            )
+            .filter((spray: any) => spray.sprayerWallet?.customer?.user && spray.receiverWallet?.customer?.user)
             .map((spray: any) => ({
               id: spray.id,
               totalAmount: spray.totalAmount.toString(),
@@ -761,10 +731,7 @@ export class SpraysService {
       select: { totalAmount: true },
     });
 
-    const totalAmount = sprays.reduce(
-      (sum, spray) => sum.plus(spray.totalAmount),
-      new Decimal(0),
-    );
+    const totalAmount = sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     return {
       totalAmount,
@@ -772,4 +739,3 @@ export class SpraysService {
     };
   }
 }
-

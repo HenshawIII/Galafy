@@ -38,18 +38,14 @@ export class WalletExportService {
     }
 
     if (wallet.customer.userId !== userId) {
-      throw new UnauthorizedException('You do not have permission to export this wallet\'s transaction history');
+      throw new UnauthorizedException("You do not have permission to export this wallet's transaction history");
     }
   }
 
   /**
    * Fetch all transactions for a date range (handles pagination)
    */
-  async fetchAllTransactions(
-    accountNumber: string,
-    fromDate: string,
-    toDate: string,
-  ): Promise<TransactionData[]> {
+  async fetchAllTransactions(accountNumber: string, fromDate: string, toDate: string): Promise<TransactionData[]> {
     const allTransactions: TransactionData[] = [];
     let currentPage = 1;
     const pageSize = 100; // Fetch 100 at a time
@@ -84,10 +80,13 @@ export class WalletExportService {
   /**
    * Generate CSV file from transaction data
    */
-  async generateCSV(transactions: TransactionData[], walletInfo: { accountNumber: string; customerName?: string }): Promise<Buffer> {
+  async generateCSV(
+    transactions: TransactionData[],
+    walletInfo: { accountNumber: string; customerName?: string },
+  ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const rows: any[] = [];
-      
+
       // Add header row
       rows.push([
         'Date',
@@ -105,7 +104,7 @@ export class WalletExportService {
         const date = new Date(tx.timestamp);
         const dateStr = date.toISOString().split('T')[0];
         const timeStr = date.toTimeString().split(' ')[0];
-        
+
         rows.push([
           dateStr,
           timeStr,
@@ -150,7 +149,7 @@ export class WalletExportService {
       // Header
       doc.fontSize(20).text('Transaction History', { align: 'center' });
       doc.moveDown();
-      
+
       // Wallet Information
       doc.fontSize(12);
       doc.text(`Account Number: ${walletInfo.accountNumber}`);
@@ -195,11 +194,22 @@ export class WalletExportService {
       doc.text('Type', tableLeft + colWidths[0] + colWidths[1], tableTop);
       doc.text('Amount', tableLeft + colWidths[0] + colWidths[1] + colWidths[2], tableTop);
       doc.text('Balance', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], tableTop);
-      doc.text('Description', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], tableTop);
-      doc.text('Reference', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5], tableTop);
+      doc.text(
+        'Description',
+        tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4],
+        tableTop,
+      );
+      doc.text(
+        'Reference',
+        tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5],
+        tableTop,
+      );
 
       // Draw header line
-      doc.moveTo(tableLeft, tableTop + 15).lineTo(tableLeft + 700, tableTop + 15).stroke();
+      doc
+        .moveTo(tableLeft, tableTop + 15)
+        .lineTo(tableLeft + 700, tableTop + 15)
+        .stroke();
       doc.moveDown();
 
       // Transaction rows
@@ -221,25 +231,39 @@ export class WalletExportService {
         doc.text(timeStr, tableLeft + colWidths[0], yPos);
         doc.text(tx.type === 'CREDIT' ? 'Credit' : 'Debit', tableLeft + colWidths[0] + colWidths[1], yPos);
         doc.text(`₦${tx.amount.toFixed(2)}`, tableLeft + colWidths[0] + colWidths[1] + colWidths[2], yPos);
-        doc.text(`₦${tx.balance.toFixed(2)}`, tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], yPos);
-        doc.text((tx.description || '').substring(0, 30), tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], yPos, { width: colWidths[4], ellipsis: true });
-        doc.text((tx.reference || '').substring(0, 20), tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5], yPos, { width: colWidths[5], ellipsis: true });
+        doc.text(
+          `₦${tx.balance.toFixed(2)}`,
+          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3],
+          yPos,
+        );
+        doc.text(
+          (tx.description || '').substring(0, 30),
+          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4],
+          yPos,
+          { width: colWidths[4], ellipsis: true },
+        );
+        doc.text(
+          (tx.reference || '').substring(0, 20),
+          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5],
+          yPos,
+          { width: colWidths[5], ellipsis: true },
+        );
 
         yPos += rowHeight;
 
         // Draw row separator
         if (index < transactions.length - 1) {
-          doc.moveTo(tableLeft, yPos - 5).lineTo(tableLeft + 700, yPos - 5).stroke();
+          doc
+            .moveTo(tableLeft, yPos - 5)
+            .lineTo(tableLeft + 700, yPos - 5)
+            .stroke();
         }
       });
 
       // Footer
-      doc.fontSize(8).text(
-        `Generated on ${new Date().toLocaleString()}`,
-        50,
-        doc.page.height - 50,
-        { align: 'center' },
-      );
+      doc
+        .fontSize(8)
+        .text(`Generated on ${new Date().toLocaleString()}`, 50, doc.page.height - 50, { align: 'center' });
 
       doc.end();
     });
@@ -271,7 +295,7 @@ export class WalletExportService {
     // Validate date range
     const fromDate = new Date(startDate);
     const toDate = new Date(endDate);
-    
+
     if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
       throw new BadRequestException('Invalid date format. Use YYYY-MM-DD');
     }
@@ -290,9 +314,10 @@ export class WalletExportService {
     // Prepare wallet info
     const walletInfo = {
       accountNumber,
-      customerName: wallet.customer.user?.firstName && wallet.customer.user?.lastName
-        ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
-        : undefined,
+      customerName:
+        wallet.customer.user?.firstName && wallet.customer.user?.lastName
+          ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
+          : undefined,
       availableBalance: wallet.availableBalance ? toDisplayAmount(wallet.availableBalance) : undefined,
       ledgerBalance: wallet.ledgerBalance ? toDisplayAmount(wallet.ledgerBalance) : undefined,
     };
@@ -315,7 +340,3 @@ export class WalletExportService {
     return { buffer, filename, mimeType };
   }
 }
-
-
-
-

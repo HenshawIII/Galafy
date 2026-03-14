@@ -11,7 +11,17 @@ import {
   ValidationPipe,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiExcludeEndpoint, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiBody,
+  ApiBearerAuth,
+  ApiExcludeEndpoint,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import { CustomerKycService } from './customer-kyc.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
@@ -43,8 +53,8 @@ export class CustomerKycController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new customer (Tier 0)' })
-  @ApiResponse({ 
-    status: 201, 
+  @ApiResponse({
+    status: 201,
     description: 'Customer created successfully',
     schema: {
       example: {
@@ -55,13 +65,27 @@ export class CustomerKycController {
         lastName: 'Doe',
         tier: 'Tier_0',
         providerTierCode: 0,
-        createdAt: '2025-01-25T10:00:00.000Z'
-      }
-    }
+        createdAt: '2025-01-25T10:00:00.000Z',
+      },
+    },
   })
   @ApiResponse({ status: 400, description: 'Bad request or customer already exists' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  @ApiBody({ schema: { properties: { userId: { type: 'string' }, firstName: { type: 'string' }, lastName: { type: 'string' }, middleName: { type: 'string' }, dob: { type: 'string' }, city: { type: 'string' }, address: { type: 'string' }, mobileNumber: { type: 'string' }, emailAddress: { type: 'string' } } } })
+  @ApiBody({
+    schema: {
+      properties: {
+        userId: { type: 'string' },
+        firstName: { type: 'string' },
+        lastName: { type: 'string' },
+        middleName: { type: 'string' },
+        dob: { type: 'string' },
+        city: { type: 'string' },
+        address: { type: 'string' },
+        mobileNumber: { type: 'string' },
+        emailAddress: { type: 'string' },
+      },
+    },
+  })
   async createCustomer(@Request() req: any, @Body(ValidationPipe) createCustomerDto: CreateCustomerDto) {
     // Extract userId from JWT token
     const userId = req.user?.id;
@@ -93,8 +117,8 @@ export class CustomerKycController {
   @Patch('name')
   @ApiOperation({ summary: 'Update customer name and date of birth' })
   @ApiBody({ type: UpdateCustomerNameDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Customer name and/or date of birth updated successfully',
     schema: {
       example: {
@@ -105,17 +129,17 @@ export class CustomerKycController {
         lastName: 'Doe',
         middleName: 'Michael',
         dob: '1990-01-15T00:00:00.000Z',
-        updatedAt: '2025-01-25T10:00:00.000Z'
-      }
-    }
+        updatedAt: '2025-01-25T10:00:00.000Z',
+      },
+    },
   })
-  @ApiResponse({ status: 400, description: 'Bad request - Customer does not have a provider customer ID or provider update failed' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Customer does not have a provider customer ID or provider update failed',
+  })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async updateCustomerName(
-    @Request() req: any,
-    @Body(ValidationPipe) updateDto: UpdateCustomerNameDto,
-  ) {
+  async updateCustomerName(@Request() req: any, @Body(ValidationPipe) updateDto: UpdateCustomerNameDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -125,10 +149,7 @@ export class CustomerKycController {
 
   @Patch(':id/contacts')
   @ApiExcludeEndpoint()
-  async updateCustomerContacts(
-    @Param('id') id: string,
-    @Body(ValidationPipe) updateDto: UpdateCustomerContactsDto,
-  ) {
+  async updateCustomerContacts(@Param('id') id: string, @Body(ValidationPipe) updateDto: UpdateCustomerContactsDto) {
     return this.customerKycService.updateCustomerContacts(id, updateDto);
   }
 
@@ -157,7 +178,10 @@ export class CustomerKycController {
   @Post('kyc/tier1/start')
   @ApiOperation({ summary: 'Start Tier 1 (BVN + face)' })
   @ApiBody({ type: StartTier1Dto })
-  @ApiResponse({ status: 200, description: 'Returns { success: true }. App opens face verification URL with static cb_uri from config.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns { success: true }. App opens face verification URL with static cb_uri from config.',
+  })
   @ApiResponse({ status: 409, description: 'Already registered for this channel' })
   async startTier1(@Request() req: any, @Body(ValidationPipe) dto: StartTier1Dto) {
     const userId = req.user?.id;
@@ -166,8 +190,14 @@ export class CustomerKycController {
   }
 
   @Get('reference/dropdown')
-  @ApiOperation({ summary: 'Get full dropdown reference (countryModel with all lists). Prefer reference/countries, states, lga, cities for smaller payloads.' })
-  @ApiResponse({ status: 200, description: 'countryModel with countryList, stateList, lgaList, lcdaList, cityList, housingTypes' })
+  @ApiOperation({
+    summary:
+      'Get full dropdown reference (countryModel with all lists). Prefer reference/countries, states, lga, cities for smaller payloads.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'countryModel with countryList, stateList, lgaList, lcdaList, cityList, housingTypes',
+  })
   async getDropdown(@Request() req: any) {
     return this.customerKycService.getDropdownReference();
   }
@@ -238,10 +268,7 @@ export class CustomerKycController {
   @ApiResponse({ status: 400, description: 'NIN verification failed' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async upgradeWithNin(
-    @Request() req: any,
-    @Body(ValidationPipe) ninDto: CreateNinVerificationDto,
-  ) {
+  async upgradeWithNin(@Request() req: any, @Body(ValidationPipe) ninDto: CreateNinVerificationDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -256,10 +283,7 @@ export class CustomerKycController {
   @ApiResponse({ status: 400, description: 'BVN verification failed' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async upgradeWithBvn(
-    @Request() req: any,
-    @Body(ValidationPipe) bvnDto: CreateBvnVerificationDto,
-  ) {
+  async upgradeWithBvn(@Request() req: any, @Body(ValidationPipe) bvnDto: CreateBvnVerificationDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -274,10 +298,7 @@ export class CustomerKycController {
   @ApiResponse({ status: 400, description: 'Address verification failed' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async verifyAddress(
-    @Request() req: any,
-    @Body(ValidationPipe) addressDto: CreateAddressVerificationDto,
-  ) {
+  async verifyAddress(@Request() req: any, @Body(ValidationPipe) addressDto: CreateAddressVerificationDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -294,10 +315,7 @@ export class CustomerKycController {
   @ApiResponse({ status: 400, description: 'Bad request or verification failed' })
   @ApiResponse({ status: 409, description: 'Customer or BVN verification already exists' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async createCustomerWithBvn(
-    @Request() req: any,
-    @Body(ValidationPipe) dto: CreateCustomerWithBvnDto,
-  ) {
+  async createCustomerWithBvn(@Request() req: any, @Body(ValidationPipe) dto: CreateCustomerWithBvnDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -306,27 +324,27 @@ export class CustomerKycController {
   }
 
   @Post('utility/upgrade-nin-address')
-  @ApiOperation({ summary: 'Upgrade customer with NIN, Address verification, and bank account name enquiry. Skips already verified steps.' })
+  @ApiOperation({
+    summary:
+      'Upgrade customer with NIN, Address verification, and bank account name enquiry. Skips already verified steps.',
+  })
   @ApiBody({ type: UpgradeWithNinAndAddressDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'NIN, Address verification, and bank name enquiry completed successfully',
     schema: {
       example: {
         ninVerification: { id: 1, status: 'verified' },
         addressVerification: { id: 1, verified: true },
         bankNameEnquiry: { destinationBankCode: '058', accountNumber: '1234567890', accountName: 'John Doe' },
-        message: 'NIN verification completed. Address verification completed. Bank account name enquiry completed.'
-      }
-    }
+        message: 'NIN verification completed. Address verification completed. Bank account name enquiry completed.',
+      },
+    },
   })
   @ApiResponse({ status: 400, description: 'Bad request or verification failed' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async upgradeWithNinAndAddress(
-    @Request() req: any,
-    @Body(ValidationPipe) dto: UpgradeWithNinAndAddressDto,
-  ) {
+  async upgradeWithNinAndAddress(@Request() req: any, @Body(ValidationPipe) dto: UpgradeWithNinAndAddressDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -352,10 +370,7 @@ export class CustomerKycController {
   })
   @ApiResponse({ status: 400, description: 'User is not Tier 2 or submission already exists' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
-  async submitUtilityBill(
-    @Request() req: any,
-    @Body(ValidationPipe) dto: SubmitUtilityBillDto,
-  ) {
+  async submitUtilityBill(@Request() req: any, @Body(ValidationPipe) dto: SubmitUtilityBillDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -364,9 +379,10 @@ export class CustomerKycController {
   }
 
   @Post('utility/nin-and-bill')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Verify NIN and submit utility bill in one request',
-    description: 'This endpoint verifies NIN first (skips if already verified), then submits utility bill if customer is Tier 2. Customer must have BVN verification to become Tier 2.'
+    description:
+      'This endpoint verifies NIN first (skips if already verified), then submits utility bill if customer is Tier 2. Customer must have BVN verification to become Tier 2.',
   })
   @ApiBody({ type: NinAndUtilityBillDto })
   @ApiResponse({
@@ -392,16 +408,13 @@ export class CustomerKycController {
       },
     },
   })
-  @ApiResponse({ 
-    status: 400, 
-    description: 'NIN verification failed, customer is not Tier 2, or submission already exists' 
+  @ApiResponse({
+    status: 400,
+    description: 'NIN verification failed, customer is not Tier 2, or submission already exists',
   })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiResponse({ status: 409, description: 'Utility bill submission already pending' })
-  async verifyNinAndSubmitUtilityBill(
-    @Request() req: any,
-    @Body(ValidationPipe) dto: NinAndUtilityBillDto,
-  ) {
+  async verifyNinAndSubmitUtilityBill(@Request() req: any, @Body(ValidationPipe) dto: NinAndUtilityBillDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');

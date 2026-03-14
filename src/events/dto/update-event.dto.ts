@@ -12,13 +12,12 @@ export enum EventStatus {
 }
 
 export class UpdateEventDto extends PartialType(CreateEventDto) {
-  @ApiPropertyOptional({ 
-    description: 'Event status', 
+  @ApiPropertyOptional({
+    description: 'Event status',
     enum: EventStatus,
-    example: EventStatus.LIVE 
+    example: EventStatus.LIVE,
   })
   @IsEnum(EventStatus)
   @IsOptional()
   status?: EventStatus;
 }
-

@@ -14,7 +14,17 @@ import {
   Header,
   Req,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiBody,
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiExcludeEndpoint,
+} from '@nestjs/swagger';
 import type { Response } from 'express';
 import { WalletmoduleService } from './walletmodule.service.js';
 import { WalletExportService } from './services/wallet-export.service.js';
@@ -23,7 +33,13 @@ import { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
 import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
-import { SetPayoutPinDto, UpdatePayoutPinDto, InitiatePayoutDto, ConfirmPayoutDto, ResetPayoutPinDto } from './dto/payout-security.dto.js';
+import {
+  SetPayoutPinDto,
+  UpdatePayoutPinDto,
+  InitiatePayoutDto,
+  ConfirmPayoutDto,
+  ResetPayoutPinDto,
+} from './dto/payout-security.dto.js';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto.js';
 import { extractDeviceInfo } from '../common/utils/request.util.js';
 import type { Request as ExpressRequest } from 'express';
@@ -87,7 +103,7 @@ export class WalletmoduleController {
   }
 
   @Get('account/:accountNumber/history')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Get wallet transaction history by account number',
     description: 'Retrieves transaction history with support for search, status filtering, and amount range filtering',
   })
@@ -96,18 +112,44 @@ export class WalletmoduleController {
   @ApiQuery({ name: 'endDate', required: true, description: 'End date (YYYY-MM-DD)', example: '2025-01-31' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number', example: '1' })
   @ApiQuery({ name: 'limit', required: false, description: 'Number of items per page', example: '10' })
-  @ApiQuery({ name: 'query', required: false, description: 'Search query to filter by transaction description', example: 'payment' })
-  @ApiQuery({ name: 'status', required: false, description: 'Filter by transaction status', enum: ['all', 'successful', 'pending', 'failed'], example: 'all' })
-  @ApiQuery({ name: 'type', required: false, description: 'Filter by transaction type', enum: ['all', 'inflow', 'spray', 'payout', 'refund', 'adjustment'], example: 'all' })
-  @ApiQuery({ name: 'minAmount', required: false, description: 'Minimum transaction amount', type: Number, example: 10 })
-  @ApiQuery({ name: 'maxAmount', required: false, description: 'Maximum transaction amount', type: Number, example: 500 })
+  @ApiQuery({
+    name: 'query',
+    required: false,
+    description: 'Search query to filter by transaction description',
+    example: 'payment',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Filter by transaction status',
+    enum: ['all', 'successful', 'pending', 'failed'],
+    example: 'all',
+  })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    description: 'Filter by transaction type',
+    enum: ['all', 'inflow', 'spray', 'payout', 'refund', 'adjustment'],
+    example: 'all',
+  })
+  @ApiQuery({
+    name: 'minAmount',
+    required: false,
+    description: 'Minimum transaction amount',
+    type: Number,
+    example: 10,
+  })
+  @ApiQuery({
+    name: 'maxAmount',
+    required: false,
+    description: 'Maximum transaction amount',
+    type: Number,
+    example: 500,
+  })
   @ApiResponse({ status: 200, description: 'Wallet history retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Wallet not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async getWalletHistory(
-    @Param('accountNumber') accountNumber: string,
-    @Query() query: GetWalletHistoryDto,
-  ) {
+  async getWalletHistory(@Param('accountNumber') accountNumber: string, @Query() query: GetWalletHistoryDto) {
     const page = query.page ? parseInt(query.page) : undefined;
     const limit = query.limit ? parseInt(query.limit) : undefined;
     return this.walletmoduleService.getWalletHistory(
@@ -162,7 +204,16 @@ export class WalletmoduleController {
 
   @Put('transfer/wallet-to-wallet')
   @ApiOperation({ summary: 'Transfer funds between wallets' })
-  @ApiBody({ schema: {  properties: { fromWalletId: { type: 'string' }, toWalletId: { type: 'string' }, amount: { type: 'number' } ,description: { type: 'string' } } } })
+  @ApiBody({
+    schema: {
+      properties: {
+        fromWalletId: { type: 'string' },
+        toWalletId: { type: 'string' },
+        amount: { type: 'number' },
+        description: { type: 'string' },
+      },
+    },
+  })
   @ApiResponse({ status: 200, description: 'Transfer successful' })
   @ApiResponse({ status: 400, description: 'Insufficient balance or transfer failed' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
@@ -173,7 +224,18 @@ export class WalletmoduleController {
   @Put('payout')
   @ApiOperation({ summary: 'Wallet payout to external bank account' })
   @ApiExcludeEndpoint()
-  @ApiBody({ schema: {  properties: { fromWalletId: { type: 'string' }, toAccountNumber: { type: 'string' },bankCode: { type: 'string' }, amount: { type: 'number' } ,description: { type: 'string' },recipientName: { type: 'string' } } } })
+  @ApiBody({
+    schema: {
+      properties: {
+        fromWalletId: { type: 'string' },
+        toAccountNumber: { type: 'string' },
+        bankCode: { type: 'string' },
+        amount: { type: 'number' },
+        description: { type: 'string' },
+        recipientName: { type: 'string' },
+      },
+    },
+  })
   @ApiResponse({ status: 200, description: 'Payout initiated successfully' })
   @ApiResponse({ status: 400, description: 'Insufficient balance or payout failed' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
@@ -187,10 +249,7 @@ export class WalletmoduleController {
   @ApiResponse({ status: 200, description: 'Payout PIN set successfully' })
   @ApiResponse({ status: 400, description: 'Invalid PIN format or PIN already exists' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async setPayoutPin(
-    @Request() req: any,
-    @Body(ValidationPipe) setPinDto: SetPayoutPinDto,
-  ) {
+  async setPayoutPin(@Request() req: any, @Body(ValidationPipe) setPinDto: SetPayoutPinDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -204,9 +263,7 @@ export class WalletmoduleController {
   @ApiBody({ type: ResetPayoutPinDto })
   @ApiResponse({ status: 200, description: 'If the email exists and PIN is set, a PIN reset OTP has been sent' })
   @ApiResponse({ status: 400, description: 'Invalid email format' })
-  async resetPayoutPin(
-    @Body(ValidationPipe) resetPinDto: ResetPayoutPinDto,
-  ) {
+  async resetPayoutPin(@Body(ValidationPipe) resetPinDto: ResetPayoutPinDto) {
     return this.walletmoduleService.resetPayoutPin(resetPinDto.emailAddress);
   }
 
@@ -217,10 +274,7 @@ export class WalletmoduleController {
   @ApiResponse({ status: 400, description: 'Invalid PIN format, PIN not set, or invalid/expired OTP' })
   @ApiResponse({ status: 401, description: 'Invalid OTP' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async updatePayoutPin(
-    @Request() req: any,
-    @Body(ValidationPipe) updatePinDto: UpdatePayoutPinDto,
-  ) {
+  async updatePayoutPin(@Request() req: any, @Body(ValidationPipe) updatePinDto: UpdatePayoutPinDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -232,8 +286,8 @@ export class WalletmoduleController {
   @Post('payout/initiate')
   @ApiOperation({ summary: 'Initiate payout - Step 1: Validates request and sends OTP to email' })
   @ApiBody({ type: InitiatePayoutDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'OTP sent successfully. Use the OTP and PIN to confirm the payout.',
     schema: {
       type: 'object',
@@ -246,10 +300,7 @@ export class WalletmoduleController {
   })
   @ApiResponse({ status: 400, description: 'Invalid request, insufficient balance, or wallet not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async initiatePayout(
-    @Request() req: any,
-    @Body(ValidationPipe) initiateDto: InitiatePayoutDto,
-  ) {
+  async initiatePayout(@Request() req: any, @Body(ValidationPipe) initiateDto: InitiatePayoutDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -260,8 +311,8 @@ export class WalletmoduleController {
   @Post('payout/confirm')
   @ApiOperation({ summary: 'Confirm payout - Step 2: Verifies OTP and PIN, then executes the payout' })
   @ApiBody({ type: ConfirmPayoutDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Payout confirmed and executed successfully',
     schema: {
       type: 'object',
@@ -278,10 +329,7 @@ export class WalletmoduleController {
   @ApiResponse({ status: 400, description: 'Invalid OTP, expired OTP, or no pending payout found' })
   @ApiResponse({ status: 401, description: 'Invalid PIN or OTP' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async confirmPayout(
-    @Request() req: any,
-    @Body(ValidationPipe) confirmDto: ConfirmPayoutDto,
-  ) {
+  async confirmPayout(@Request() req: any, @Body(ValidationPipe) confirmDto: ConfirmPayoutDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
@@ -296,10 +344,7 @@ export class WalletmoduleController {
   @ApiResponse({ status: 400, description: 'Invalid bank account details' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async updateBankAccount(
-    @Request() req: any,
-    @Body(ValidationPipe) updateDto: UpdateBankAccountDto,
-  ) {
+  async updateBankAccount(@Request() req: any, @Body(ValidationPipe) updateDto: UpdateBankAccountDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');

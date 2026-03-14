@@ -19,7 +19,7 @@ export class OrganizationWalletService {
   constructor(private readonly databaseService: DatabaseService) {
     // ORGANIZATION_WALLET is the virtual account number itself - no lookup needed
     this.adminWalletAccountNumber = process.env.ORGANIZATION_WALLET || '';
-    
+
     if (!this.adminWalletAccountNumber) {
       this.logger.warn('ORGANIZATION_WALLET environment variable is not set. Admin wallet operations will fail.');
     } else {
@@ -30,12 +30,14 @@ export class OrganizationWalletService {
   /**
    * Get the admin wallet virtual account number
    * This is the account number itself from the environment variable
-   * 
+   *
    * @returns The admin wallet virtual account number (string)
    */
   getAdminWalletAccountNumber(): string {
     if (!this.adminWalletAccountNumber) {
-      throw new NotFoundException('Admin wallet account number is not configured. Please set ORGANIZATION_WALLET in environment variables.');
+      throw new NotFoundException(
+        'Admin wallet account number is not configured. Please set ORGANIZATION_WALLET in environment variables.',
+      );
     }
     return this.adminWalletAccountNumber;
   }
@@ -44,7 +46,7 @@ export class OrganizationWalletService {
    * Get the admin wallet record from database (if it exists)
    * This is used for creating Transaction records and updating balances in our ledger
    * The wallet may not exist in our database - it's managed by the provider
-   * 
+   *
    * @returns The admin wallet record if found, null otherwise
    */
   async getAdminWalletRecord() {
@@ -54,11 +56,11 @@ export class OrganizationWalletService {
 
     // Return cached wallet if still valid
     const now = Date.now();
-    if (this.cachedWallet && (now - this.cacheTimestamp) < this.CACHE_TTL) {
+    if (this.cachedWallet && now - this.cacheTimestamp < this.CACHE_TTL) {
       return this.cachedWallet;
     }
 
-    // Try to find wallet in our database 
+    // Try to find wallet in our database
     const wallet = await this.databaseService.wallet.findFirst({
       where: { virtualAccountNumber: this.adminWalletAccountNumber },
       include: {
@@ -99,4 +101,3 @@ export class OrganizationWalletService {
     this.logger.log('Admin wallet cache cleared');
   }
 }
-

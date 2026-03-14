@@ -131,4 +131,3 @@ export class ProviderCustomerKycStatusResponseDto {
   bvnVerified?: boolean;
   addressVerified?: boolean;
 }
-

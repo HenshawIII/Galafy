@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import  sgMail from '@sendgrid/mail';
+import sgMail from '@sendgrid/mail';
 import { config } from 'dotenv';
 config();
 
@@ -54,7 +54,7 @@ export class EmailService {
     } else if (userData?.lastName && userData.lastName.trim()) {
       userName = userData.lastName.trim();
     }
-    
+
     const msg = {
       to: email,
       from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
@@ -385,27 +385,28 @@ export class EmailService {
     fundingDate?: Date,
   ): Promise<void> {
     // Format amount with currency
-    const formattedAmount = amount.includes('₦') || amount.includes('N') 
-      ? amount 
-      : `₦${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    
+    const formattedAmount =
+      amount.includes('₦') || amount.includes('N')
+        ? amount
+        : `₦${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
     // Format date
-    const formattedDate = fundingDate 
+    const formattedDate = fundingDate
       ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(fundingDate)
       : new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date());
-    
+
     // Get user's first name or default
     const userName = firstName || 'there';
-    
+
     // Format payment method (default to Bank Transfer if not provided)
     const paymentMethodDisplay = paymentMethod || 'Bank Transfer';
-    
+
     // Map payment method to display name
     const paymentMethodMap: { [key: string]: string } = {
-      'BANK_TRANSFER': 'Bank Transfer',
-      'CARD': 'Card Payment',
-      'USSD': 'USSD',
-      'MANUAL_ADJUSTMENT': 'Manual Adjustment',
+      BANK_TRANSFER: 'Bank Transfer',
+      CARD: 'Card Payment',
+      USSD: 'USSD',
+      MANUAL_ADJUSTMENT: 'Manual Adjustment',
     };
     const paymentMethodText = paymentMethodMap[paymentMethodDisplay.toUpperCase()] || paymentMethodDisplay;
 
@@ -529,31 +530,36 @@ export class EmailService {
     const isFailed = statusLower === 'failed' || statusLower === 'rejected';
 
     // Format amount with currency
-    const formattedAmount = amount.includes('N') ? amount : `N${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    
+    const formattedAmount = amount.includes('N')
+      ? amount
+      : `N${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
     // Format date
-    const formattedDate = requestDate 
+    const formattedDate = requestDate
       ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(requestDate)
       : new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date());
-    
+
     // Get user's first name or default
     const userName = firstName || 'there';
-    
+
     // Mask account number (show last 4 digits)
-    const maskedAccount = accountNumber.length > 4 
-      ? `${accountNumber.slice(0, -4).replace(/\d/g, '.')}${accountNumber.slice(-4)}`
-      : accountNumber;
-    
+    const maskedAccount =
+      accountNumber.length > 4
+        ? `${accountNumber.slice(0, -4).replace(/\d/g, '.')}${accountNumber.slice(-4)}`
+        : accountNumber;
+
     // Format bank account display
-    const bankAccountDisplay = bankName 
+    const bankAccountDisplay = bankName
       ? `${bankName} .... ${accountNumber.slice(-4)}`
       : `.... ${accountNumber.slice(-4)}`;
 
     const msg = {
       to: email,
       from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
-      subject: isPending ? 'Withdrawal Request Received - Galafy' : `Withdrawal ${status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()} - Galafy`,
-      text: isPending 
+      subject: isPending
+        ? 'Withdrawal Request Received - Galafy'
+        : `Withdrawal ${status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()} - Galafy`,
+      text: isPending
         ? `Hello ${userName}, We've received your withdrawal request and it's currently being processed. Amount: ${formattedAmount}, Bank account: ${bankAccountDisplay}, Date: ${formattedDate}. If you did not initiate this request, please contact our Support team immediately.`
         : `Your withdrawal request of ${formattedAmount} has been ${status.toLowerCase()}. Account: ${bankAccountDisplay}, Reference: ${reference}${message ? `. Message: ${message}` : ''}`,
       html: `
@@ -580,17 +586,20 @@ export class EmailService {
               
               <!-- Main Message -->
               <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
-                ${isPending 
-                  ? "We've received your withdrawal request and it's currently being processed."
-                  : isSuccess
-                    ? `Your withdrawal request has been successfully processed.`
-                    : isFailed
-                      ? `Your withdrawal request could not be processed.`
-                      : `Your withdrawal request status: ${status}.`
+                ${
+                  isPending
+                    ? "We've received your withdrawal request and it's currently being processed."
+                    : isSuccess
+                      ? `Your withdrawal request has been successfully processed.`
+                      : isFailed
+                        ? `Your withdrawal request could not be processed.`
+                        : `Your withdrawal request status: ${status}.`
                 }
               </p>
               
-              ${isPending ? `
+              ${
+                isPending
+                  ? `
               <!-- Withdrawal Details Box (Light Blue) -->
               <div style="background-color: #e7f3ff; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                 <div style="display: flex; align-items: center; margin-bottom: 15px;">
@@ -631,7 +640,8 @@ export class EmailService {
                   </p>
                 </div>
               </div>
-              ` : `
+              `
+                  : `
               <!-- Status Details Box -->
               <div style="background-color: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 8px;">
                 <p style="margin: 5px 0; color: #333333; font-size: 14px;"><strong>Amount:</strong> <span style="color: #007bff; font-weight: bold;">${formattedAmount}</span></p>
@@ -641,7 +651,8 @@ export class EmailService {
                 <p style="margin: 5px 0; color: #333333; font-size: 14px;"><strong>Reference:</strong> ${reference}</p>
                 ${message ? `<p style="margin: 5px 0; color: #333333; font-size: 14px;"><strong>Message:</strong> ${message}</p>` : ''}
               </div>
-              `}
+              `
+              }
               
               <!-- Warning Box (Red Bordered) -->
               <div style="background-color: #fff5f5; border: 1px solid #ffcccc; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
@@ -685,20 +696,35 @@ export class EmailService {
     firstName?: string,
     requestDate?: Date,
   ): Promise<void> {
-    const statusColor = status.toLowerCase() === 'approved' || status.toLowerCase() === 'success' ? '#28a745' : status.toLowerCase() === 'pending' ? '#ffc107' : '#dc3545';
+    const statusColor =
+      status.toLowerCase() === 'approved' || status.toLowerCase() === 'success'
+        ? '#28a745'
+        : status.toLowerCase() === 'pending'
+          ? '#ffc107'
+          : '#dc3545';
     const statusText = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
-    
+
     // Format date for display
-    const formattedDate = requestDate 
+    const formattedDate = requestDate
       ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).format(requestDate)
       : new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date());
-    
+
     // Get user's first name or default to a generic greeting
     const userName = firstName || 'there';
-    
+
     // Status badge styling
-    const statusBadgeColor = status.toLowerCase() === 'pending' ? '#fff3cd' : status.toLowerCase() === 'approved' || status.toLowerCase() === 'success' ? '#d4edda' : '#f8d7da';
-    const statusDotColor = status.toLowerCase() === 'pending' ? '#ff9800' : status.toLowerCase() === 'approved' || status.toLowerCase() === 'success' ? '#28a745' : '#dc3545';
+    const statusBadgeColor =
+      status.toLowerCase() === 'pending'
+        ? '#fff3cd'
+        : status.toLowerCase() === 'approved' || status.toLowerCase() === 'success'
+          ? '#d4edda'
+          : '#f8d7da';
+    const statusDotColor =
+      status.toLowerCase() === 'pending'
+        ? '#ff9800'
+        : status.toLowerCase() === 'approved' || status.toLowerCase() === 'success'
+          ? '#28a745'
+          : '#dc3545';
 
     const msg = {
       to: email,
@@ -813,7 +839,7 @@ export class EmailService {
       minute: '2-digit',
     });
 
-    const roleDisplayName = inviteData.role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const roleDisplayName = inviteData.role.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 
     const msg = {
       to: email,
@@ -854,11 +880,15 @@ If you did not expect this invitation, please ignore this email.`,
                 You have been invited to join the <strong>Galafy Admin Portal</strong> as a <strong>${roleDisplayName}</strong>.
               </p>
               
-              ${inviteData.inviterEmail ? `
+              ${
+                inviteData.inviterEmail
+                  ? `
               <p style="color: #666666; font-size: 14px; margin: 0 0 20px 0;">
                 Invited by: <strong>${inviteData.inviterEmail}</strong>
               </p>
-              ` : ''}
+              `
+                  : ''
+              }
               
               <!-- Invite Box -->
               <div style="background-color: #e7f3ff; border-left: 4px solid #007bff; padding: 20px; margin: 20px 0; border-radius: 4px;">
@@ -935,7 +965,7 @@ If you did not expect this invitation, please ignore this email.`,
     }
 
     const kycUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL}/kyc` : '#';
-    
+
     const msg = {
       to: email,
       from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
@@ -1054,7 +1084,7 @@ If you did not expect this invitation, please ignore this email.`,
 
     const supportEmail = process.env.SUPPORT_EMAIL || 'support@galafy.com';
     const supportUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL}/support` : '#';
-    
+
     const msg = {
       to: email,
       from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
@@ -1099,13 +1129,17 @@ If you did not expect this invitation, please ignore this email.`,
                 <p style="color: #721c24; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
                   Your account has been flagged for review under our Anti-Money Laundering (AML) compliance policies.
                 </p>
-                ${restrictionReason ? `
+                ${
+                  restrictionReason
+                    ? `
                 <div style="background-color: #ffffff; padding: 15px; border-radius: 4px; margin-top: 15px;">
                   <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0;">
                     <strong>Reason:</strong> ${restrictionReason}
                   </p>
                 </div>
-                ` : ''}
+                `
+                    : ''
+                }
               </div>
               
               <!-- What This Means -->
@@ -1128,11 +1162,15 @@ If you did not expect this invitation, please ignore this email.`,
                   <p style="color: #333333; font-size: 14px; margin: 5px 0;">
                     <strong>Email:</strong> <a href="mailto:${supportEmail}" style="color: #007bff; text-decoration: none;">${supportEmail}</a>
                   </p>
-                  ${supportUrl !== '#' ? `
+                  ${
+                    supportUrl !== '#'
+                      ? `
                   <p style="color: #333333; font-size: 14px; margin: 5px 0;">
                     <strong>Support Portal:</strong> <a href="${supportUrl}" style="color: #007bff; text-decoration: none;">${supportUrl}</a>
                   </p>
-                  ` : ''}
+                  `
+                      : ''
+                  }
                 </div>
               </div>
               
@@ -1171,4 +1209,3 @@ If you did not expect this invitation, please ignore this email.`,
     }
   }
 }
-

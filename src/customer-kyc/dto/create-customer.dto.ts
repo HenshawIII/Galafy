@@ -70,4 +70,3 @@ export class CreateCustomerDto {
   })
   tier?: KycTier;
 }
-

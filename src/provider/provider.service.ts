@@ -64,7 +64,9 @@ export class ProviderService {
     }
 
     if (!this.payoutBaseUrl) {
-      this.logger.warn('Payout base URL is not configured. Payout-related features (banks, transfers, etc.) may not work.');
+      this.logger.warn(
+        'Payout base URL is not configured. Payout-related features (banks, transfers, etc.) may not work.',
+      );
     }
 
     if (!this.kycSubscriptionKey) {
@@ -100,7 +102,7 @@ export class ProviderService {
 
       // Get response text first to check if it's empty
       const responseText = await response.text();
-      
+
       // Check if response is empty
       if (!responseText || responseText.trim().length === 0) {
         this.logger.error(`Provider API returned empty response. Status: ${response.status}`);
@@ -116,10 +118,7 @@ export class ProviderService {
         data = JSON.parse(responseText);
       } catch (parseError) {
         this.logger.error(`Failed to parse JSON response.Response text: ${responseText.substring(0, 200)}`);
-        throw new HttpException(
-          'Invalid JSON response from provider API',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+        throw new HttpException('Invalid JSON response from provider API', HttpStatus.INTERNAL_SERVER_ERROR);
       }
 
       if (!response.ok) {
@@ -172,7 +171,7 @@ export class ProviderService {
 
       // Get response text first to check if it's empty
       const responseText = await response.text();
-      
+
       // Check if response is empty
       if (!responseText || responseText.trim().length === 0) {
         this.logger.error(`Payout API returned empty response. Status: ${response.status}`);
@@ -188,10 +187,7 @@ export class ProviderService {
         data = JSON.parse(responseText);
       } catch (parseError) {
         this.logger.error(`Failed to parse JSON response. Response text: ${responseText.substring(0, 200)}`);
-        throw new HttpException(
-          'Invalid JSON response from payout API',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+        throw new HttpException('Invalid JSON response from payout API', HttpStatus.INTERNAL_SERVER_ERROR);
       }
 
       if (!response.ok) {
@@ -220,11 +216,7 @@ export class ProviderService {
    * ALAT KYC API: HTTP request with Ocp-Apim-Subscription-Key
    * Normalizes status/code/errors and throws on failure (409 for duplicate).
    */
-  private async makeKycRequest<T>(
-    endpoint: string,
-    method: 'GET' | 'POST' = 'GET',
-    body?: any,
-  ): Promise<T> {
+  private async makeKycRequest<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', body?: any): Promise<T> {
     const url = endpoint.startsWith('http') ? endpoint : `${this.kycBaseUrl}${endpoint}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -247,10 +239,7 @@ export class ProviderService {
       const responseText = await response.text();
       if (!responseText || responseText.trim().length === 0) {
         this.logger.error(`KYC API returned empty response. Status: ${response.status}`);
-        throw new HttpException(
-          'KYC API returned empty response',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+        throw new HttpException('KYC API returned empty response', response.status || HttpStatus.INTERNAL_SERVER_ERROR);
       }
 
       let data: any;
@@ -258,10 +247,7 @@ export class ProviderService {
         data = JSON.parse(responseText);
       } catch {
         this.logger.error(`Invalid JSON from KYC API: ${responseText.substring(0, 200)}`);
-        throw new HttpException(
-          'Invalid JSON response from KYC API',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+        throw new HttpException('Invalid JSON response from KYC API', HttpStatus.INTERNAL_SERVER_ERROR);
       }
 
       const success =
@@ -271,8 +257,10 @@ export class ProviderService {
         (typeof data.countryModel !== 'undefined' && data.countryModel != null);
       if (!success) {
         const msg = data.message || data.errors?.[0] || 'KYC API request failed';
-        const isDuplicate = typeof msg === 'string' && (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
-        throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : (response.status || HttpStatus.BAD_REQUEST));
+        const isDuplicate =
+          typeof msg === 'string' &&
+          (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
+        throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : response.status || HttpStatus.BAD_REQUEST);
       }
 
       return data as T;
@@ -292,9 +280,7 @@ export class ProviderService {
    * Create a new customer in the provider system
    * @deprecated Use ALAT flow: create customer locally (Tier 0), then startTier1 + face callback
    */
-  async createCustomer(
-    requestDto: ProviderCreateCustomerRequestDto,
-  ): Promise<{ customerId: string }> {
+  async createCustomer(requestDto: ProviderCreateCustomerRequestDto): Promise<{ customerId: string }> {
     const body = {
       organizationId: this.organizationId,
       ...requestDto,
@@ -306,7 +292,7 @@ export class ProviderService {
       code?: string;
       success?: boolean;
       message: string;
-      data?: { 
+      data?: {
         id?: string;
         customerId?: string;
         [key: string]: any;
@@ -318,9 +304,9 @@ export class ProviderService {
     // Check various possible status code formats
     const statusCode = response.statuscode || response.statusCode || response.code;
     const statusCodeStr = statusCode ? String(statusCode) : '';
-    const isSuccess = 
-      statusCodeStr === '00' || 
-      statusCodeStr === '200' || 
+    const isSuccess =
+      statusCodeStr === '00' ||
+      statusCodeStr === '200' ||
       (typeof statusCode === 'number' && statusCode === 200) ||
       response.success === true ||
       response.message?.toLowerCase().includes('success');
@@ -330,10 +316,7 @@ export class ProviderService {
 
     if (!isSuccess || !customerId) {
       this.logger.error(`Failed to create customer. Response: ${JSON.stringify(response)}`);
-      throw new HttpException(
-        response.message || 'Failed to create customer',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException(response.message || 'Failed to create customer', HttpStatus.BAD_REQUEST);
     }
 
     return { customerId };
@@ -450,11 +433,7 @@ export class ProviderService {
       dob: requestDto.dob,
     };
 
-    const response = await this.makeRequest<ProviderNinVerificationResponseDto>(
-      endpoint,
-      'POST',
-      body,
-    );
+    const response = await this.makeRequest<ProviderNinVerificationResponseDto>(endpoint, 'POST', body);
 
     return response;
   }
@@ -845,7 +824,10 @@ export class ProviderService {
   /**
    * Get organization wallet transactions
    */
-  async getOrganizationWalletTransactions(page?: number, pageSize?: number): Promise<{
+  async getOrganizationWalletTransactions(
+    page?: number,
+    pageSize?: number,
+  ): Promise<{
     walletHistories: Array<{
       id: string;
       walletId: string;
@@ -984,7 +966,10 @@ export class ProviderService {
   /**
    * Restrict wallet by account ID
    */
-  async restrictByAccountId(accountId: string, restrictionType: string): Promise<{
+  async restrictByAccountId(
+    accountId: string,
+    restrictionType: string,
+  ): Promise<{
     code: string;
     success: boolean;
     message: string;
@@ -1018,7 +1003,7 @@ export class ProviderService {
       return [];
     }
 
-    return response.data.map(bank => ({
+    return response.data.map((bank) => ({
       bankcode: bank.bankCode,
       bankname: bank.bankName,
     }));
@@ -1027,7 +1012,10 @@ export class ProviderService {
   /**
    * Bank account name enquiry
    */
-  async bankAccountNameEnquiry(bankCode: string, accountNumber: string): Promise<{
+  async bankAccountNameEnquiry(
+    bankCode: string,
+    accountNumber: string,
+  ): Promise<{
     destinationBankCode: string;
     accountNumber: string;
     accountName: string;
@@ -1050,10 +1038,7 @@ export class ProviderService {
     }>('/api/Payout/name-enquiry', 'POST', body);
 
     if (!response.succeeded) {
-      throw new HttpException(
-        response.message || 'Name enquiry failed',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException(response.message || 'Name enquiry failed', HttpStatus.BAD_REQUEST);
     }
 
     return response.data;
@@ -1084,13 +1069,10 @@ export class ProviderService {
       succeeded: boolean;
     }>('/api/Payout/inter-bank-transfer', 'POST', request);
 
-    console.log("response:", response);
+    console.log('response:', response);
 
     if (!response.succeeded) {
-      throw new HttpException(
-        response.message || 'Inter bank transfer failed',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException(response.message || 'Inter bank transfer failed', HttpStatus.BAD_REQUEST);
     }
 
     return {

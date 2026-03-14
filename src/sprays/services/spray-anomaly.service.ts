@@ -28,7 +28,7 @@ export interface AnomalyFinding {
 @Injectable()
 export class SprayAnomalyService {
   private readonly logger = new Logger('ANOMALY');
-  
+
   // Configuration - loaded lazily from config
   private timeWindowHours: number | null = null;
   private repeatedRecipientThreshold: number | null = null;
@@ -41,7 +41,7 @@ export class SprayAnomalyService {
   private readonly FALLBACK_REPEATED_RECIPIENT_THRESHOLD = 5;
   private readonly FALLBACK_SMURFING_TOTAL_THRESHOLD = new Decimal('100000');
   private readonly FALLBACK_SMURFING_COUNT_THRESHOLD = 10;
-  private readonly FALLBACK_SMURFING_AVG_PERCENT_THRESHOLD = 0.10;
+  private readonly FALLBACK_SMURFING_AVG_PERCENT_THRESHOLD = 0.1;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -96,10 +96,10 @@ export class SprayAnomalyService {
 
       this.logger.log(
         `Anomaly detection configured: TimeWindow=${this.timeWindowHours}h, ` +
-        `RepeatedRecipient=${this.repeatedRecipientThreshold}, ` +
-        `SmurfingTotal=${this.smurfingTotalThreshold.toString()}, ` +
-        `SmurfingCount=${this.smurfingCountThreshold}, ` +
-        `SmurfingAvgPercent=${this.smurfingAvgPercentThreshold}`,
+          `RepeatedRecipient=${this.repeatedRecipientThreshold}, ` +
+          `SmurfingTotal=${this.smurfingTotalThreshold.toString()}, ` +
+          `SmurfingCount=${this.smurfingCountThreshold}, ` +
+          `SmurfingAvgPercent=${this.smurfingAvgPercentThreshold}`,
       );
     } catch (error) {
       this.logger.warn(`Failed to load anomaly config, using fallback values: ${error.message}`);
@@ -249,7 +249,7 @@ export class SprayAnomalyService {
         for (const finding of findings) {
           // Convert severity to AML severity
           const amlSeverity = finding.severity === 'HIGH' ? 'HIGH' : finding.severity === 'MEDIUM' ? 'MEDIUM' : 'LOW';
-          
+
           try {
             this.amlLoggingService.logAnomalyDetected(
               finding.sprayId,
@@ -268,15 +268,12 @@ export class SprayAnomalyService {
             this.logger.error(`AML logging failed for anomaly detection: ${logError.message}`);
           }
         }
-        
+
         // Also log using existing method for backward compatibility
         this.logAnomalies(findings);
       }
     } catch (error) {
-      this.logger.error(
-        `Failed to detect anomalies for spray ${sprayId}: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Failed to detect anomalies for spray ${sprayId}: ${error.message}`, error.stack);
     }
 
     return findings;
@@ -405,19 +402,13 @@ export class SprayAnomalyService {
     }
 
     // Calculate total and average
-    const total = sprays.reduce(
-      (sum, spray) => sum.plus(spray.totalAmount),
-      new Decimal(0),
-    );
+    const total = sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
     const average = total.dividedBy(sprays.length);
 
     // Check if total exceeds threshold and average is less than threshold percentage
     const avgPercentOfTotal = average.dividedBy(totalThreshold);
-    
-    if (
-      total.gt(totalThreshold) &&
-      avgPercentOfTotal.lt(avgPercentThreshold)
-    ) {
+
+    if (total.gt(totalThreshold) && avgPercentOfTotal.lt(avgPercentThreshold)) {
       return {
         total,
         count: sprays.length,
@@ -491,4 +482,3 @@ export class SprayAnomalyService {
     }
   }
 }
-
