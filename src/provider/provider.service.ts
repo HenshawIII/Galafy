@@ -219,6 +219,7 @@ export class ProviderService {
   private async makeKycRequest<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', body?: any): Promise<T> {
     const url = endpoint.startsWith('http') ? endpoint : `${this.kycBaseUrl}${endpoint}`;
     const headers: Record<string, string> = {
+      'x-api-key': this.apiKey,
       'Content-Type': 'application/json',
       'Cache-Control': 'no-cache',
       'Ocp-Apim-Subscription-Key': this.kycSubscriptionKey,
