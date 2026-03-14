@@ -142,13 +142,37 @@ export class CustomerKycService {
     if (!user) throw new NotFoundException('User not found');
 
     let customer = await this.databaseService.customer.findUnique({ where: { userId } });
+    const phone = dto.phoneNumber?.trim() ?? '';
+    const email = dto.email?.trim().toLowerCase() ?? '';
+    const bvn = dto.bvn?.trim() ?? '';
+
+    const excludeCurrent = customer ? { id: { not: customer.id } } : {};
+    const existingByPhone = await this.databaseService.customer.findFirst({
+      where: { mobileNumber: phone, ...excludeCurrent },
+    });
+    if (existingByPhone) {
+      throw new ConflictException('Phone number is already registered with another account');
+    }
+    const existingByEmail = await this.databaseService.customer.findFirst({
+      where: { emailAddress: { equals: email, mode: 'insensitive' }, ...excludeCurrent },
+    });
+    if (existingByEmail) {
+      throw new ConflictException('Email address is already registered with another account');
+    }
+    const existingByBvn = await this.databaseService.customer.findFirst({
+      where: { tier1PendingBvn: bvn, ...excludeCurrent },
+    });
+    if (existingByBvn) {
+      throw new ConflictException('BVN is already being used by another account');
+    }
+
     if (!customer) {
       await this.createCustomer(userId, {
         userId,
         firstName: user.firstName ?? undefined,
         lastName: user.lastName ?? undefined,
-        emailAddress: user.email,
-        mobileNumber: dto.phoneNumber,
+        emailAddress: email || user.email,
+        mobileNumber: phone,
       });
       customer = await this.databaseService.customer.findUnique({ where: { userId } });
       if (!customer) throw new BadRequestException('Failed to create customer');
@@ -157,9 +181,9 @@ export class CustomerKycService {
     await this.databaseService.customer.update({
       where: { id: customer.id },
       data: {
-        tier1PendingBvn: dto.bvn,
-        mobileNumber: dto.phoneNumber,
-        emailAddress: dto.email,
+        tier1PendingBvn: bvn,
+        mobileNumber: phone,
+        emailAddress: email,
         tier1FaceStatus: Tier1FaceStatus.PENDING,
       },
     });
