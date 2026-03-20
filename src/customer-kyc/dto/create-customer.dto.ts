@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsDateString, IsEmail, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsDateString, IsEmail } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { KycTier } from '../../users/dto/create-user-dto.js';
 
@@ -47,21 +47,6 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsEmail({}, { message: 'Invalid email format' })
   emailAddress?: string;
-
-  @ApiPropertyOptional({ example: 'org-uuid-here', description: 'Organization ID' })
-  @IsOptional()
-  @IsString({ message: 'Organization ID must be a string' })
-  organizationId?: string;
-
-  @ApiPropertyOptional({ example: 'f671da57-e281-4b40-965f-a96f4205405e', description: 'Customer type ID' })
-  @IsOptional()
-  @IsString({ message: 'Customer type ID must be a string' })
-  customerTypeId?: string;
-
-  @ApiPropertyOptional({ example: 'c15ad9ae-c4d7-4342-b70f-de5508627e3b', description: 'Country ID' })
-  @IsOptional()
-  @IsString({ message: 'Country ID must be a string' })
-  countryId?: string;
 
   @ApiPropertyOptional({ enum: KycTier, example: KycTier.Tier_0, description: 'KYC Tier', default: KycTier.Tier_0 })
   @IsOptional()

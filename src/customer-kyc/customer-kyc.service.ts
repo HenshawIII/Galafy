@@ -65,7 +65,8 @@ export class CustomerKycService {
 
   /**
    * Handle face biometric callback (cb_uri) from ALAT face webapp.
-   * Look up customer by body.id (BVN) via tier1PendingBvn. On success call Tier 1 API with correlationId = body.c_id, then update and clear tier1PendingBvn.
+   * Look up customer by body.id (BVN) via tier1PendingBvn.
+   * Provider Tier 1 is called in `startTier1`; this callback only updates `tier1FaceStatus` (and clears tier1PendingBvn only on failure).
    * Returns { received: true } always to avoid leaking existence.
    */
   async handleFaceCallback(body: { success: boolean; c_id: string; id: string; id_type: 'bvn' | 'nin' }) {
@@ -86,58 +87,39 @@ export class CustomerKycService {
     if (!body.success) {
       await this.databaseService.customer.update({
         where: { id: customer.id },
-        data: { tier1FaceStatus: Tier1FaceStatus.FAILED, tier1PendingBvn: null },
+        data: { tier1FaceStatus: Tier1FaceStatus.FAILED, tier1PendingBvn: null, tier1CompletedAt: null },
       });
       this.logger.log(`Face callback: face failed for customer ${customer.id}`);
       return { received: true };
     }
 
-    try {
-      const res = await this.providerService.tier1BvnWithoutOtpV2({
-        phoneNumber: customer.mobileNumber ?? '',
-        email: customer.emailAddress ?? '',
-        bvn: body.id,
-        correlationId: body.c_id,
-      });
-      const trackingId = res.data?.trackingId ?? null;
-      await this.databaseService.customer.update({
-        where: { id: customer.id },
-        data: {
-          tier1CorrelationId: body.c_id,
-          tier1TrackingId: trackingId,
-          tier1FaceStatus: Tier1FaceStatus.COMPLETED,
-          tier1CompletedAt: new Date(),
-          tier: KycTier.Tier_1,
-          providerTierCode: 1,
-          providerCustomerId: trackingId ?? customer.providerCustomerId,
-          tier1PendingBvn: null,
-        },
-      });
-      await this.databaseService.bvnVerification.upsert({
-        where: { customerId: customer.id },
-        create: { customerId: customer.id },
-        update: {},
-      });
-      this.logger.log(`Face callback: Tier 1 completed for customer ${customer.id}, c_id=${body.c_id}`);
-    } catch (err) {
-      this.logger.warn(`Face callback: Tier 1 API failed for customer ${customer.id}: ${err}`);
-      await this.databaseService.customer.update({
-        where: { id: customer.id },
-        data: { tier1FaceStatus: Tier1FaceStatus.FAILED, tier1PendingBvn: null },
-      });
-    }
+    // Provider Tier1 is called in `startTier1` now. This callback only updates face status.
+    await this.databaseService.customer.update({
+      where: { id: customer.id },
+      data: {
+        tier1FaceStatus: Tier1FaceStatus.COMPLETED,
+        tier1CompletedAt: new Date(),
+      },
+    });
+    this.logger.log(`Face callback: Tier 1 face completed for customer ${customer.id}, c_id=${body.c_id}`);
 
     return { received: true };
   }
 
   /**
-   * Register for Tier 1 (BVN + face): save phone, email, bvn and set pending. Do NOT call Tier 1 API.
-   * App opens face verification URL with static cb_uri; provider POSTs to our callback with c_id, then we call Tier 1 API.
+   * Register and call Tier 1 provider immediately (BVN + face).
+   * The frontend provides `correlationId` up-front so we can return provider feedback immediately.
    */
   async startTier1(
     userId: string,
-    dto: { phoneNumber: string; email: string; bvn: string },
-  ): Promise<{ success: true }> {
+    dto: { phoneNumber: string; email: string; bvn: string; correlationId: string },
+  ): Promise<{
+    success: true;
+    correlationId: string;
+    trackingId?: string | null;
+    accountGenerationStatus?: string | null;
+    providerTierCode?: number;
+  }> {
     const user = await this.databaseService.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
@@ -145,6 +127,7 @@ export class CustomerKycService {
     const phone = dto.phoneNumber?.trim() ?? '';
     const email = dto.email?.trim().toLowerCase() ?? '';
     const bvn = dto.bvn?.trim() ?? '';
+    const correlationId = dto.correlationId?.trim() ?? '';
 
     const excludeCurrent = customer ? { id: { not: customer.id } } : {};
     const existingByPhone = await this.databaseService.customer.findFirst({
@@ -185,10 +168,66 @@ export class CustomerKycService {
         mobileNumber: phone,
         emailAddress: email,
         tier1FaceStatus: Tier1FaceStatus.PENDING,
+        tier1CompletedAt: null,
       },
     });
 
-    return { success: true };
+    try {
+      const res = await this.providerService.tier1BvnWithoutOtpV2({
+        phoneNumber: phone,
+        email,
+        bvn,
+        correlationId,
+      });
+
+      const trackingId = res.data?.trackingId ?? null;
+      const accountGenerationStatus = res.data?.accountGenerationStatus ?? null;
+
+      await this.databaseService.customer.update({
+        where: { id: customer.id },
+        data: {
+          tier1CorrelationId: correlationId,
+          tier1TrackingId: trackingId,
+          tier1FaceStatus: Tier1FaceStatus.PENDING,
+          tier1CompletedAt: null,
+          tier: KycTier.Tier_1,
+          providerTierCode: 1,
+          providerCustomerId: trackingId ?? customer.providerCustomerId,
+          tier1PendingBvn: bvn,
+        },
+      });
+
+      await this.databaseService.bvnVerification.upsert({
+        where: { customerId: customer.id },
+        create: { customerId: customer.id },
+        update: {},
+      });
+
+      this.logger.log(
+        `Tier 1 started via startTier1 for customer ${customer.id}, correlationId=${correlationId}, trackingId=${trackingId}`,
+      );
+
+      return {
+        success: true,
+        correlationId,
+        trackingId,
+        accountGenerationStatus,
+        providerTierCode: 1,
+      };
+    } catch (err) {
+      this.logger.warn(`Tier 1 provider call failed for customer ${customer.id}: ${err}`);
+      await this.databaseService.customer.update({
+        where: { id: customer.id },
+        data: {
+          tier: KycTier.Tier_0,
+          providerTierCode: 0,
+          tier1FaceStatus: Tier1FaceStatus.FAILED,
+          tier1PendingBvn: null,
+          tier1CompletedAt: null,
+        },
+      });
+      throw err;
+    }
   }
 
   /**
@@ -217,8 +256,11 @@ export class CustomerKycService {
     if (!hasBvn) {
       throw new BadRequestException('BVN verification required before Tier 2');
     }
-    if (!dto.bvn) {
-      throw new BadRequestException('BVN is required for Tier 2 submission (not stored from Tier 1)');
+
+    // Tier 2 BVN is derived from Tier 1 session (tier1PendingBvn is cleared only when Tier 1 face fails).
+    const tier1Bvn = customer.tier1PendingBvn;
+    if (!tier1Bvn) {
+      throw new BadRequestException('BVN is missing for Tier 2 submission');
     }
     const correlationId = customer.tier1CorrelationId;
     if (!correlationId) {
@@ -242,7 +284,7 @@ export class CustomerKycService {
     };
 
     const res = await this.providerService.tier2PartnershipWithoutOtpV2({
-      bvn: dto.bvn,
+      bvn: tier1Bvn,
       nin: dto.nin,
       phoneNumber,
       emailAddress,
@@ -356,9 +398,6 @@ export class CustomerKycService {
       data: {
         userId,
         providerCustomerId: null,
-        organizationId: createCustomerDto.organizationId,
-        customerTypeId: createCustomerDto.customerTypeId || 'f671da57-e281-4b40-965f-a96f4205405e',
-        countryId: createCustomerDto.countryId || 'c15ad9ae-c4d7-4342-b70f-de5508627e3b',
         firstName: createCustomerDto.firstName ?? null,
         lastName: createCustomerDto.lastName ?? null,
         middleName: createCustomerDto.middleName,
@@ -470,9 +509,6 @@ export class CustomerKycService {
     const where: any = {};
     if (query.tier) {
       where.tier = query.tier;
-    }
-    if (query.organizationId) {
-      where.organizationId = query.organizationId;
     }
 
     const customers = await this.databaseService.customer.findMany({

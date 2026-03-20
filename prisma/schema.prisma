@@ -255,9 +255,6 @@ model Customer {
 
   // Provider-side identifiers
   providerCustomerId String? @unique
-  organizationId     String?
-  customerTypeId     String?
-  countryId          String?
 
   // Tier management
   tier             KycTier @default(Tier_0)

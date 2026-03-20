@@ -18,6 +18,11 @@ export class StartTier1Dto {
   @IsString()
   @IsNotEmpty()
   bvn: string;
+
+  @ApiProperty({ example: 'corr-id-123', description: 'Correlation ID (provided by frontend)' })
+  @IsString()
+  @IsNotEmpty()
+  correlationId: string;
 }
 
 /** Residential address for ALAT Tier 2 (dropdown-driven: state, lga, city, etc.) */
@@ -88,9 +93,9 @@ export class ResidentialAddressDto {
   postalCode?: string;
 }
 
-/** ALAT Tier 2 submit: NIN + address + live face image (base64). BVN required for API but not stored from Tier 1. */
+/** ALAT Tier 2 submit: NIN + address + live face image (base64). BVN is derived from the stored Tier 1 session. */
 export class StartTier2Dto {
-  @ApiPropertyOptional({ example: '12345678901', description: 'BVN (required for provider; not stored from Tier 1)' })
+  @ApiPropertyOptional({ example: '12345678901', description: 'BVN is optional here; backend derives it from Tier 1' })
   @IsOptional()
   @IsString()
   bvn?: string;

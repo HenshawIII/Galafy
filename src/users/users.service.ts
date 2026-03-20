@@ -689,15 +689,13 @@ export class UsersService {
       username: user.username,
     };
 
-    // Get KYC status from provider if providerCustomerId exists
+    // Get KYC status from our local KYC service (enriched with partnership account details)
     let kycStatus: any = null;
-    if (customer.providerCustomerId) {
-      try {
-        kycStatus = await this.providerService.getCustomerKycStatus(customer.providerCustomerId);
-      } catch (error: any) {
-        // Log error but don't fail the request - KYC status will be null
-        console.error(`Failed to fetch KYC status for customer ${customer.providerCustomerId}:`, error.message);
-      }
+    try {
+      kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(userId);
+    } catch (error: any) {
+      // Log error but don't fail the request - KYC status will be null
+      console.error(`Failed to fetch KYC status for user ${userId}:`, error.message);
     }
 
     // Get user settings, create defaults if they don't exist
