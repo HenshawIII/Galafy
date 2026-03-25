@@ -157,6 +157,8 @@ model User {
   passwordResetOtp      String?
   refreshToken          String?   @unique
   refreshTokenExpiresAt DateTime?
+  // Incremented on every successful login to invalidate previously issued access tokens.
+  authSessionVersion   Int       @default(0)
 
   // Payout security
   payoutPin             String?   // Hashed PIN for payout verification
@@ -266,6 +268,12 @@ model Customer {
   tier1TrackingId          String?
   tier1FaceStatus          Tier1FaceStatus?
   tier1CompletedAt         DateTime?
+
+  // Tier 1 account creation callback (wallet account / nuban)
+  tier1AccountStatus      String?
+  tier1Nuban               String?
+  tier1NubanName           String?
+  tier1AccountCompletedAt DateTime?
 
   // Tier 2 flow
   tier2TrackingId           String?
@@ -435,6 +443,23 @@ model Transaction {
 
   narration String?
   metadata  Json?
+
+  // ============================
+  // New provider callback fields
+  // ============================
+  securityInfoHash String?
+
+  // Idempotency + audit for provider callbacks (strongly identifies callback events)
+  providerPlatformTransactionReference String? @unique
+  providerTransactionStan              String?
+  providerOriginalTransactionDate      DateTime?
+
+  providerStatus              String?
+  providerCallbackReceivedAt DateTime?
+
+  // Destination context needed to credit internal destination wallets (if applicable)
+  destinationAccountNumber String?
+  destinationAccountName   String?
 
   // One-to-one links to domain-specific transactions
   fundingTransaction FundingTransaction? @relation("FundingTransactionOnTransaction")

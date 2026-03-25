@@ -281,15 +281,15 @@ export class UsersService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Check for active session - if user has a valid refresh token, they're already logged in
-    if (user.refreshToken && user.refreshTokenExpiresAt) {
-      const now = new Date();
-      if (user.refreshTokenExpiresAt > now) {
-        throw new ConflictException(
-          'You are already logged in on another device. Please log out from that device first before logging in here.',
-        );
-      }
-    }
+    // Rotate session:
+    // - Allow login even if another refresh token is active
+    // - Overwrite stored refresh token so old refresh tokens stop working
+    // - Bump authSessionVersion so old access tokens are rejected immediately on next request
+    const updatedUser = await this.databaseService.user.update({
+      where: { id: user.id },
+      data: { authSessionVersion: { increment: 1 } },
+    });
+    const authSessionVersion = updatedUser.authSessionVersion;
 
     // Generate access token (short-lived: 15 minutes)
     const accessToken = this.jwtService.sign(
@@ -299,6 +299,7 @@ export class UsersService {
         firstName: user.firstName || null,
         lastName: user.lastName || null,
         type: 'access',
+        authSessionVersion,
       },
       {
         expiresIn: '15m', // Access token expires in 15 minutes
@@ -311,6 +312,7 @@ export class UsersService {
         sub: user.id,
         email: user.email,
         type: 'refresh',
+        authSessionVersion,
       },
       {
         expiresIn: '7d', // Refresh token expires in 7 days

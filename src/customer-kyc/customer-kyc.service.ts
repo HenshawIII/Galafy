@@ -169,6 +169,10 @@ export class CustomerKycService {
         emailAddress: email,
         tier1FaceStatus: Tier1FaceStatus.PENDING,
         tier1CompletedAt: null,
+        tier1AccountStatus: 'PENDING',
+        tier1AccountCompletedAt: null,
+        tier1Nuban: null,
+        tier1NubanName: null,
       },
     });
 
@@ -194,6 +198,9 @@ export class CustomerKycService {
           providerTierCode: 1,
           providerCustomerId: trackingId ?? customer.providerCustomerId,
           tier1PendingBvn: bvn,
+          // Wallet/account provisioning is async; callback will update to COMPLETED/FAILED.
+          tier1AccountStatus: 'PENDING',
+          tier1AccountCompletedAt: null,
         },
       });
 
@@ -224,6 +231,10 @@ export class CustomerKycService {
           tier1FaceStatus: Tier1FaceStatus.FAILED,
           tier1PendingBvn: null,
           tier1CompletedAt: null,
+          tier1AccountStatus: 'FAILED',
+          tier1AccountCompletedAt: null,
+          tier1Nuban: null,
+          tier1NubanName: null,
         },
       });
       throw err;
@@ -683,6 +694,9 @@ export class CustomerKycService {
       tier: customer.tier,
       providerTierCode: customer.providerTierCode,
       tier1FaceStatus: customer.tier1FaceStatus,
+      tier1AccountStatus: customer.tier1AccountStatus,
+      tier1Nuban: customer.tier1Nuban,
+      tier1NubanName: customer.tier1NubanName,
       tier2TrackingId: customer.tier2TrackingId,
       tier2AddressVerificationStatus: customer.tier2AddressVerificationStatus,
       hasNin: !!customer.ninVerification,

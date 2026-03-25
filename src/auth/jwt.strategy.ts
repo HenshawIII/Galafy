@@ -30,6 +30,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('User not found');
     }
 
+    // Immediate invalidation across devices:
+    // access token must carry the same authSessionVersion as the current DB user record.
+    const tokenSessionVersion = payload.authSessionVersion;
+    if (typeof tokenSessionVersion !== 'number' || tokenSessionVersion !== user.authSessionVersion) {
+      throw new UnauthorizedException('Session expired or was invalidated. Please log in again.');
+    }
+
     // Return user object that will be attached to request.user
     return {
       id: user.id,

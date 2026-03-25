@@ -229,15 +229,15 @@ export class AuthService {
       throw new UnauthorizedException('User not found. Please use the sign up endpoint to create an account.');
     }
 
-    // Check for active session - if user has a valid refresh token, they're already logged in
-    if (dbUser.refreshToken && dbUser.refreshTokenExpiresAt) {
-      const now = new Date();
-      if (dbUser.refreshTokenExpiresAt > now) {
-        throw new ConflictException(
-          'You are already logged in on another device. Please log out from that device first before logging in here.',
-        );
-      }
-    }
+    // Rotate session:
+    // - Always allow login
+    // - Overwrite stored refresh token (old refresh tokens stop working)
+    // - Bump authSessionVersion so old access tokens are rejected immediately
+    const updatedUser = await this.databaseService.user.update({
+      where: { id: dbUser.id },
+      data: { authSessionVersion: { increment: 1 } },
+    });
+    const authSessionVersion = updatedUser.authSessionVersion;
 
     // Remove password from response for security
     const { password, ...userWithoutPassword } = dbUser as any;
@@ -250,6 +250,7 @@ export class AuthService {
         firstName: dbUser.firstName || null,
         lastName: dbUser.lastName || null,
         type: 'access',
+        authSessionVersion,
       },
       {
         expiresIn: '15m', // Access token expires in 15 minutes
@@ -262,6 +263,7 @@ export class AuthService {
         sub: dbUser.id,
         email: dbUser.email,
         type: 'refresh',
+        authSessionVersion,
       },
       {
         expiresIn: '7d', // Refresh token expires in 7 days
@@ -276,10 +278,7 @@ export class AuthService {
     // Store refresh token in database
     await this.databaseService.user.update({
       where: { id: dbUser.id },
-      data: {
-        refreshToken,
-        refreshTokenExpiresAt,
-      },
+      data: { refreshToken, refreshTokenExpiresAt },
     });
 
     // Get KYC status if customer exists
@@ -342,6 +341,7 @@ export class AuthService {
           firstName: user.firstName || null,
           lastName: user.lastName || null,
           type: 'access',
+          authSessionVersion: user.authSessionVersion,
         },
         {
           expiresIn: '15m', // Access token expires in 15 minutes

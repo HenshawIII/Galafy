@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, UnauthorizedException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CacheService } from '../cache/cache.service.js';
@@ -643,6 +643,17 @@ export class WalletmoduleService {
       }
     }
 
+    // Resolve destination bank name (provider ProcessClientTransfer requires bankName).
+    let destinationBankName = 'Unknown';
+    try {
+      const banks = await this.providerService.getBanks();
+      destinationBankName = banks.find((b) => b.bankcode === initiateDto.bankCode)?.bankname ?? 'Unknown';
+    } catch (error: any) {
+      this.logger.warn(`Failed to resolve destination bank name: ${error.message}. Proceeding as 'Unknown'.`);
+    }
+
+    const transactionReference = initiateDto.transactionReference?.trim() || `TXN-${randomUUID()}`;
+
     // Get source account name
     const customerName =
       fromWallet.customer.firstName && fromWallet.customer.lastName
@@ -662,6 +673,9 @@ export class WalletmoduleService {
       amount: amount.toString(),
       description: initiateDto.description,
       recipientName: destinationAccountName,
+      destinationBankName,
+      transactionReference,
+      securityInfo: initiateDto.securityInfo,
       currencyId: initiateDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
       sourceAccountName,
       walletId: fromWallet.id,
@@ -698,6 +712,98 @@ export class WalletmoduleService {
     const payoutData = await this.payoutSecurityService.getAndClearPendingPayout(userId);
     if (!payoutData) {
       throw new BadRequestException('No pending payout found. Please initiate a payout first.');
+    }
+
+    // New callback-based debit-wallet flow:
+    // If the client provided `securityInfo` and `transactionReference`, we create our local Transaction in PENDING
+    // before calling the provider's ProcessClientTransfer. Wallet/ledger updates happen only via provider callbacks.
+    if (typeof payoutData.securityInfo === 'string' && payoutData.securityInfo.trim() !== '') {
+      const amount = normalizeToKobo(payoutData.amount as string | number);
+      const transactionReference: string = payoutData.transactionReference || `TXN-${randomUUID()}`;
+      const securityInfo = payoutData.securityInfo as string;
+      const securityInfoHash = createHash('sha256').update(securityInfo).digest('hex');
+
+      const narration = (payoutData.description as string) || `Wallet payout to ${payoutData.toAccountNumber}`;
+
+      // Create a PENDING Transaction and then call the provider.
+      const initiation = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
+        const fromWallet = await tx.wallet.findFirst({
+          where: { virtualAccountNumber: payoutData.fromWalletId },
+          include: {
+            customer: {
+              select: { isAmlRestricted: true, tier: true },
+            },
+          },
+        });
+
+        if (!fromWallet) throw new NotFoundException('Source wallet not found');
+        if (!fromWallet.virtualAccountNumber) throw new BadRequestException('Wallet does not have a virtual account number');
+
+        if (fromWallet.customer.isAmlRestricted) {
+          throw new BadRequestException('User account is restricted due to AML compliance. Contact support.');
+        }
+
+        // Convert amount to the provider expected number format.
+        // (We store in Decimal already; provider expects numeric amount.)
+        const createdTransaction = await tx.transaction.create({
+          data: {
+            walletId: fromWallet.id,
+            type: TransactionType.PAYOUT,
+            direction: TransactionDirection.DEBIT,
+            status: TransactionStatus.PENDING,
+            amount,
+            currencyId: fromWallet.currencyId,
+            reference: transactionReference,
+            externalReference: null,
+            groupReference: `TRANSFER-${transactionReference}`,
+            narration,
+            metadata: {
+              destinationBankCode: payoutData.bankCode ?? null,
+              destinationBankName: payoutData.destinationBankName ?? null,
+              destinationAccountNumber: payoutData.toAccountNumber ?? null,
+              destinationAccountName: payoutData.recipientName ?? null,
+              // Do not store raw securityInfo; we only store its hash in DB.
+            },
+            securityInfoHash,
+            destinationAccountNumber: payoutData.toAccountNumber ?? null,
+            destinationAccountName: payoutData.recipientName ?? null,
+          },
+        });
+
+        return {
+          createdTransactionId: createdTransaction.id,
+          sourceAccountNumber: fromWallet.virtualAccountNumber as string,
+        };
+      });
+
+      try {
+        await this.providerService.processClientTransfer({
+          securityInfo,
+          amount: amount.toNumber(),
+          destinationBankCode: payoutData.bankCode,
+          destinationBankName: payoutData.destinationBankName || 'Unknown',
+          destinationAccountNumber: payoutData.toAccountNumber,
+          destinationAccountName: payoutData.recipientName || 'Unknown',
+          sourceAccountNumber: initiation.sourceAccountNumber,
+          narration,
+          transactionReference,
+          useCustomNarration: true,
+        });
+      } catch (error: any) {
+        // Provider didn't accept the transfer; reflect failure locally so retries can happen safely.
+        await this.databaseService.transaction.update({
+          where: { reference: transactionReference },
+          data: { status: TransactionStatus.FAILED, providerStatus: 'FAILED', providerCallbackReceivedAt: new Date() },
+        });
+        throw error;
+      }
+
+      return {
+        success: true,
+        message: 'Transfer submitted and pending authorization/processing',
+        transactionRef: transactionReference,
+        status: TransactionStatus.PENDING,
+      };
     }
 
     // Convert amount from string to Decimal and normalize to kobo precision

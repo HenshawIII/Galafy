@@ -1082,6 +1082,72 @@ export class ProviderService {
     };
   }
 
+  // ====================
+  // Debit-wallet transfer
+  // ====================
+  /**
+   * ALAT Debit Wallet: ProcessClientTransfer (callback-based transfer initiation).
+   *
+   * Provider docs (testing) use:
+   * POST https://apiplayground.alat.ng/debit-wallet/api/Shared/ProcessClientTransfer
+   */
+  async processClientTransfer(request: {
+    securityInfo: string;
+    amount: number;
+    destinationBankCode: string;
+    destinationBankName: string;
+    destinationAccountNumber: string;
+    destinationAccountName: string;
+    sourceAccountNumber: string;
+    narration: string;
+    transactionReference: string;
+    useCustomNarration: boolean;
+  }): Promise<any> {
+    const url =
+      process.env.PROVIDER_DEBIT_WALLET_PROCESS_CLIENT_TRANSFER_URL ||
+      'https://apiplayground.alat.ng/debit-wallet/api/Shared/ProcessClientTransfer';
+
+    const headers: Record<string, string> = {
+      'x-api-key': this.apiKey,
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(request),
+      });
+
+      const responseText = await response.text();
+      if (!responseText || responseText.trim().length === 0) {
+        throw new HttpException('Provider API returned empty response', response.status || HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new HttpException('Invalid JSON response from provider API', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+
+      if (!response.ok) {
+        throw new HttpException(
+          data.message || data.error || 'Provider API request failed',
+          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      return data;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        `Failed to communicate with provider debit-wallet service: ${(error as any)?.message ?? String(error)}`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
+
   /**
    * Transaction status re-query
    */
