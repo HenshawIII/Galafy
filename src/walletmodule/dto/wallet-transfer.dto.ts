@@ -1,7 +1,56 @@
-import { IsString, IsNotEmpty, IsOptional, IsDecimal, Min, IsUUID, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsDecimal, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+/** Step 1: same security model as payout (OTP email + confirm with PIN + securityInfo). */
+export class InitiateWalletToWalletTransferDto {
+  @ApiProperty({ example: '9710013297', description: 'Source wallet virtual account number' })
+  @IsString()
+  @IsNotEmpty()
+  fromWalletId: string;
+
+  @ApiProperty({ example: '9710013298', description: 'Destination wallet virtual account number' })
+  @IsString()
+  @IsNotEmpty()
+  toWalletId: string;
+
+  @ApiProperty({ example: '1000.50', description: 'Amount (up to 2 decimal places)' })
+  @IsString()
+  @IsNotEmpty()
+  @IsDecimal({ decimal_digits: '0,2' })
+  @Transform(({ value }) => {
+    if (typeof value === 'number') return value.toFixed(2);
+    const num = parseFloat(value);
+    if (isNaN(num)) return value;
+    return num.toFixed(2);
+  })
+  amount: string;
+
+  @ApiPropertyOptional({ description: 'Transfer description' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Currency ID' })
+  @IsOptional()
+  @IsString()
+  currencyId?: string;
+
+  @ApiProperty({
+    description: 'Client-generated encrypted securityInfo for provider debit authorization (same as payout)',
+  })
+  @IsString()
+  @IsNotEmpty()
+  securityInfo: string;
+
+  @ApiPropertyOptional({ description: 'Optional transaction reference (max 36 chars)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(36)
+  transactionReference?: string;
+}
+
+/** @deprecated Use InitiateWalletToWalletTransferDto + confirm with OTP/PIN (provider-backed transfer). */
 export class WalletToWalletTransferDto {
   @ApiProperty({ example: '9710013297', description: 'Source wallet account number' })
   @IsString({ message: 'From wallet account number must be a string' })

@@ -13,6 +13,7 @@ import {
   Res,
   Header,
   Req,
+  GoneException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -29,10 +30,12 @@ import type { Response } from 'express';
 import { WalletmoduleService } from './walletmodule.service.js';
 import { WalletExportService } from './services/wallet-export.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
-import { CreateWalletDto } from './dto/create-wallet.dto.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
-import { WalletToWalletTransferDto, FastWalletTransferDto } from './dto/wallet-transfer.dto.js';
+import {
+  WalletToWalletTransferDto,
+  InitiateWalletToWalletTransferDto,
+} from './dto/wallet-transfer.dto.js';
 import {
   SetPayoutPinDto,
   UpdatePayoutPinDto,
@@ -41,8 +44,6 @@ import {
   ResetPayoutPinDto,
 } from './dto/payout-security.dto.js';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto.js';
-import { extractDeviceInfo } from '../common/utils/request.util.js';
-import type { Request as ExpressRequest } from 'express';
 
 @ApiTags('wallets')
 @Controller('wallets')
@@ -56,25 +57,15 @@ export class WalletmoduleController {
   ) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new wallet for the authenticated user (requires Tier 1+)' })
-  @ApiBody({})
-  @ApiResponse({ status: 201, description: 'Wallet created successfully' })
-  @ApiResponse({ status: 400, description: 'Customer tier too low or wallet creation failed' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async createWallet(
-    @Request() req: any,
-    @Req() expressReq: ExpressRequest,
-    @Body(ValidationPipe) createWalletDto: CreateWalletDto,
-  ) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-
-    // Extract device information from request
-    const deviceInfo = extractDeviceInfo(expressReq, createWalletDto);
-
-    return this.walletmoduleService.createWalletByUserId(userId, createWalletDto, deviceInfo);
+  @ApiOperation({
+    summary: 'Create wallet (removed)',
+    description: 'Wallets are provisioned when Tier 1 account-creation callback succeeds. This endpoint is retired.',
+  })
+  @ApiResponse({ status: 410, description: 'Wallet creation is callback-driven; use KYC Tier 1 flow.' })
+  async createWallet() {
+    throw new GoneException(
+      'Wallet creation via API is disabled. Complete Tier 1 KYC; your wallet is created when the bank sends the account-creation callback.',
+    );
   }
 
   @Get()
@@ -203,44 +194,46 @@ export class WalletmoduleController {
   }
 
   @Put('transfer/wallet-to-wallet')
-  @ApiOperation({ summary: 'Transfer funds between wallets' })
-  @ApiBody({
-    schema: {
-      properties: {
-        fromWalletId: { type: 'string' },
-        toWalletId: { type: 'string' },
-        amount: { type: 'number' },
-        description: { type: 'string' },
-      },
-    },
+  @ApiOperation({
+    summary: 'Transfer funds between wallets (removed)',
+    description:
+      'Replaced by provider-backed flow: POST .../transfer/wallet-to-wallet/initiate then .../confirm (same as payout security).',
   })
-  @ApiResponse({ status: 200, description: 'Transfer successful' })
-  @ApiResponse({ status: 400, description: 'Insufficient balance or transfer failed' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  @ApiResponse({ status: 410, description: 'Use initiate + confirm wallet-to-wallet endpoints' })
   async walletToWalletTransfer(@Body(ValidationPipe) transferDto: WalletToWalletTransferDto) {
     return this.walletmoduleService.walletToWalletTransfer(transferDto);
   }
 
-  @Put('payout')
-  @ApiOperation({ summary: 'Wallet payout to external bank account' })
-  @ApiExcludeEndpoint()
-  @ApiBody({
-    schema: {
-      properties: {
-        fromWalletId: { type: 'string' },
-        toAccountNumber: { type: 'string' },
-        bankCode: { type: 'string' },
-        amount: { type: 'number' },
-        description: { type: 'string' },
-        recipientName: { type: 'string' },
-      },
-    },
+  @Post('transfer/wallet-to-wallet/initiate')
+  @ApiOperation({
+    summary: 'Initiate wallet-to-wallet transfer (step 1)',
+    description: 'Sends OTP. Uses the same provider ProcessClientTransfer path as payouts after confirm.',
   })
-  @ApiResponse({ status: 200, description: 'Payout initiated successfully' })
-  @ApiResponse({ status: 400, description: 'Insufficient balance or payout failed' })
+  @ApiBody({ type: InitiateWalletToWalletTransferDto })
+  @ApiResponse({ status: 200, description: 'OTP sent' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async walletpayout(@Body(ValidationPipe) transferDto: FastWalletTransferDto) {
-    return this.walletmoduleService.walletpayout(transferDto);
+  async initiateWalletToWalletTransfer(
+    @Request() req: any,
+    @Body(ValidationPipe) dto: InitiateWalletToWalletTransferDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.initiateWalletToWalletTransfer(userId, dto);
+  }
+
+  @Post('transfer/wallet-to-wallet/confirm')
+  @ApiOperation({ summary: 'Confirm wallet-to-wallet transfer (step 2 — OTP, PIN, provider debit)' })
+  @ApiBody({ type: ConfirmPayoutDto })
+  @ApiResponse({ status: 200, description: 'Transfer submitted to provider' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async confirmWalletToWalletTransfer(@Request() req: any, @Body(ValidationPipe) confirmDto: ConfirmPayoutDto) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.confirmWalletToWalletTransfer(userId, confirmDto.otp, confirmDto.pin);
   }
 
   @Post('payout/set-pin')

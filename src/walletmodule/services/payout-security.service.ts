@@ -292,6 +292,17 @@ export class PayoutSecurityService {
   }
 
   /**
+   * Read pending transfer payload without clearing (use before confirm to route payout vs W2W).
+   */
+  async peekPendingPayout(userId: string): Promise<any | null> {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { pendingPayoutData: true },
+    });
+    return user?.pendingPayoutData ?? null;
+  }
+
+  /**
    * Store pending payout data temporarily
    */
   async storePendingPayout(userId: string, payoutData: any): Promise<void> {

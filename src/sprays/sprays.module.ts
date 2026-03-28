@@ -1,7 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module.js';
 import { LiveModule } from '../live/live.module.js';
-import { ProviderModule } from '../provider/provider.module.js';
+import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.module.js';
 import { CacheModule } from '../cache/cache.module.js';
 import { EventsModule } from '../events/events.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
@@ -17,7 +17,7 @@ import { ConfigModule } from '../config/config.module.js';
   imports: [
     DatabaseModule,
     LiveModule,
-    ProviderModule,
+    InternalLedgerModule,
     CacheModule,
     EventsModule,
     forwardRef(() => NotificationsModule),

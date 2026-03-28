@@ -31,9 +31,7 @@ import {
   CreateNinVerificationDto,
   CreateBvnVerificationDto,
   CreateAddressVerificationDto,
-  FaceCallbackDto,
 } from './dto/kyc-verification.dto.js';
-import { Public } from '../auth/public.decorator.js';
 import {
   CreateCustomerWithBvnDto,
   UpgradeWithNinAndAddressDto,
@@ -52,6 +50,7 @@ export class CustomerKycController {
   constructor(private readonly customerKycService: CustomerKycService) {}
 
   @Post()
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Create a new customer (Tier 0)' })
   @ApiResponse({
     status: 201,
@@ -115,6 +114,7 @@ export class CustomerKycController {
   }
 
   @Patch('name')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Update customer name and date of birth' })
   @ApiBody({ type: UpdateCustomerNameDto })
   @ApiResponse({
@@ -166,17 +166,8 @@ export class CustomerKycController {
     return this.customerKycService.getCustomerKycStatusByUserId(userId);
   }
 
-  @Post('kyc/face-callback')
-  @Public()
-  @ApiOperation({ summary: 'Face biometric callback (cb_uri)' })
-  @ApiBody({ type: FaceCallbackDto })
-  @ApiResponse({ status: 200, description: 'Callback received' })
-  async faceCallback(@Body(ValidationPipe) body: FaceCallbackDto) {
-    return this.customerKycService.handleFaceCallback(body);
-  }
-
   @Post('kyc/tier1/start')
-  @ApiOperation({ summary: 'Start Tier 1 (BVN + face)' })
+  @ApiOperation({ summary: 'Start Tier 1 (BVN + callback-driven account creation)' })
   @ApiBody({ type: StartTier1Dto })
   @ApiResponse({
     status: 200,
@@ -262,6 +253,7 @@ export class CustomerKycController {
   }
 
   @Post('kyc/nin')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Upgrade customer KYC with NIN (Tier 1 or Tier 2)' })
   @ApiBody({ type: CreateNinVerificationDto })
   @ApiResponse({ status: 200, description: 'NIN verification successful' })
@@ -277,6 +269,7 @@ export class CustomerKycController {
   }
 
   @Post('kyc/bvn')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Upgrade customer KYC with BVN (Tier 1 or Tier 2)' })
   @ApiBody({ type: CreateBvnVerificationDto })
   @ApiResponse({ status: 200, description: 'BVN verification successful' })
@@ -292,6 +285,7 @@ export class CustomerKycController {
   }
 
   @Post('kyc/address')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Verify customer address' })
   @ApiBody({ type: CreateAddressVerificationDto })
   @ApiResponse({ status: 200, description: 'Address verification successful' })
@@ -309,6 +303,7 @@ export class CustomerKycController {
   // ==================== KYC UTILITY ROUTES ====================
 
   @Post('utility/create-with-bvn')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Create customer and upgrade with BVN in one request (Tier 1)' })
   @ApiBody({ type: CreateCustomerWithBvnDto })
   @ApiResponse({ status: 201, description: 'Customer created and BVN verification completed successfully' })
@@ -324,6 +319,7 @@ export class CustomerKycController {
   }
 
   @Post('utility/upgrade-nin-address')
+  @ApiExcludeEndpoint()
   @ApiOperation({
     summary:
       'Upgrade customer with NIN, Address verification, and bank account name enquiry. Skips already verified steps.',
@@ -353,6 +349,7 @@ export class CustomerKycController {
   }
 
   @Post('utility-bill')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Submit utility bill for Tier 2 withdrawal limit increase' })
   @ApiBody({ type: SubmitUtilityBillDto })
   @ApiResponse({
@@ -379,6 +376,7 @@ export class CustomerKycController {
   }
 
   @Post('utility/nin-and-bill')
+  @ApiExcludeEndpoint()
   @ApiOperation({
     summary: 'Verify NIN and submit utility bill in one request',
     description:

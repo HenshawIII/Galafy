@@ -32,6 +32,7 @@ import {
   AlertStatus,
   EventStatus,
   PayoutStatus,
+  KycTier,
 } from '../../generated/prisma/enums.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
@@ -48,9 +49,9 @@ import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { Prisma } from '@prisma/client';
 import { ProviderService } from '../provider/provider.service.js';
+import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 import { WithdrawalLimitService } from '../walletmodule/services/withdrawal-limit.service.js';
-import { KycTier } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class AdminService {
@@ -68,6 +69,7 @@ export class AdminService {
     private readonly emailService: EmailService,
     private readonly walletmoduleService: WalletmoduleService,
     private readonly providerService: ProviderService,
+    private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
     private readonly withdrawalLimitService: WithdrawalLimitService,
   ) {}
@@ -3664,7 +3666,6 @@ export class AdminService {
         throw new BadRequestException('Wallet does not have a virtual account number');
       }
 
-      const virtualAccountNumber = wallet.virtualAccountNumber; // Type narrowing
       const grossAmount = payoutTransaction.amount;
       const { fee, netAmount, feePercentage } = await calculatePayoutFee(grossAmount, this.configService);
 
@@ -3690,27 +3691,18 @@ export class AdminService {
             throw new BadRequestException('Insufficient balance. Wallet balance has changed since request was made.');
           }
 
-          // Process payout - update existing PayoutTransaction instead of creating new one
-          // This is similar to processPayoutTransaction but updates the existing record
           const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
+          const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
+          if (!orgWallet) {
+            throw new BadRequestException(
+              'Organization wallet not found in database. Ensure ORGANIZATION_WALLET matches a Wallet row.',
+            );
+          }
+
           const userTransactionRef = `PAYOUT-${randomUUID()}`;
           const providerTransactionRef = randomUUID();
 
-          // Step 1: Transfer full amount from user wallet to organization wallet
-          const userToOrgProviderResponse = await this.providerService.walletToWalletTransfer({
-            fromWalletId: virtualAccountNumber,
-            toWalletId: adminWalletAccountNumber,
-            amount: grossAmount.toNumber(),
-            currencyId: wallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-            description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
-            reference: userTransactionRef,
-          });
-
-          if (!userToOrgProviderResponse.success) {
-            throw new BadRequestException(
-              `Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`,
-            );
-          }
+          await this.internalLedgerTransfer.transfer(tx, wallet.id, orgWallet.id, grossAmount);
 
           // Create DEBIT transaction for user wallet
           const userDebitTransaction = await tx.transaction.create({
@@ -3761,29 +3753,38 @@ export class AdminService {
               : null;
           const sourceAccountName = wallet.name || customerName || userName || 'Unknown';
 
-          // Step 2: Transfer netAmount from organization wallet to external bank
-          const orgToBankProviderResponse = await this.providerService.interBankTransfer({
-            destinationBankCode: payoutData.bankCode as string,
-            destinationAccountNumber: payoutData.toAccountNumber as string,
-            destinationAccountName: destinationAccountName,
-            sourceAccountNumber: adminWalletAccountNumber,
-            sourceAccountName: sourceAccountName,
-            remarks: (payoutData.description as string) || 'Wallet payout',
+          let destinationBankName = 'Unknown';
+          try {
+            const banks = await this.providerService.getBanks();
+            const normalizeBankCode = (code: string | number | null | undefined): string => {
+              if (code === null || code === undefined) return '';
+              return String(code).trim().replace(/^0+/, '') || '0';
+            };
+            const payoutBankCode = normalizeBankCode(payoutData.bankCode);
+            destinationBankName =
+              banks.find((b) => normalizeBankCode(b.bankcode) === payoutBankCode)?.bankname ?? 'Unknown';
+          } catch (e: any) {
+            this.logger.warn(`Failed to resolve bank name for approval payout: ${e.message}`);
+          }
+
+          const adminOrgSecurity = process.env.ADMIN_DEBIT_WALLET_SECURITY_INFO?.trim();
+          if (!adminOrgSecurity) {
+            throw new BadRequestException(
+              'Set ADMIN_DEBIT_WALLET_SECURITY_INFO to the organization debit-wallet securityInfo value before approving withdrawals.',
+            );
+          }
+
+          const orgToBankProviderResponse = await this.providerService.processClientTransfer({
+            securityInfo: adminOrgSecurity,
             amount: netAmount.toNumber(),
-            currencyId: payoutData.currencyId as string,
-            customerTransactionReference: providerTransactionRef,
-          });
-
-          // Update wallet balance
-          const newUserAvailableBalance = normalizeToKobo(lockedWallet.availableBalance.minus(grossAmount));
-          const newUserLedgerBalance = normalizeToKobo(lockedWallet.ledgerBalance.minus(grossAmount));
-
-          await tx.wallet.update({
-            where: { id: wallet.id },
-            data: {
-              availableBalance: newUserAvailableBalance,
-              ledgerBalance: newUserLedgerBalance,
-            },
+            destinationBankCode: payoutData.bankCode as string,
+            destinationBankName,
+            destinationAccountNumber: payoutData.toAccountNumber as string,
+            destinationAccountName,
+            sourceAccountNumber: adminWalletAccountNumber,
+            narration: (payoutData.description as string) || 'Wallet payout',
+            transactionReference: providerTransactionRef,
+            useCustomNarration: true,
           });
 
           // Update existing PayoutTransaction with processing info
@@ -3797,9 +3798,10 @@ export class AdminService {
               transactionId: userDebitTransaction.id, // Update to real transaction
               providerTransactionRef: providerTransactionRef,
               providerPayload: {
-                userToOrgTransfer: userToOrgProviderResponse.data,
+                userToOrgInternal: true,
                 orgToBankTransfer: orgToBankProviderResponse,
                 netAmount: netAmount.toString(),
+                sourceAccountName,
               },
             },
           });
@@ -3829,7 +3831,7 @@ export class AdminService {
                 destinationBank: payoutData.bankCode,
                 recipientName: destinationAccountName,
                 providerTransactionRef: providerTransactionRef,
-                userToOrgTransfer: userToOrgProviderResponse.data,
+                userToOrgInternal: true,
                 orgToBankTransfer: orgToBankProviderResponse,
               },
             },
@@ -3844,7 +3846,9 @@ export class AdminService {
 
           return {
             success: true,
-            message: orgToBankProviderResponse.message || 'Payout approved and processed successfully',
+            message:
+              (orgToBankProviderResponse && (orgToBankProviderResponse.message as string)) ||
+              'Payout approved and processed successfully',
             transactionRef: providerTransactionRef,
             payoutTransactionId: payoutTransactionId,
           };

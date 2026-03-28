@@ -14,6 +14,7 @@ import { NotificationsModule } from './notifications/notifications.module.js';
 import { CustomerKycModule } from './customer-kyc/customer-kyc.module.js';
 import { WalletmoduleModule } from './walletmodule/walletmodule.module.js';
 import { PaymentsModule } from './payments/payments.module.js';
+import { BankDirectoryModule } from './bank-directory/bank-directory.module.js';
 import { ProviderModule } from './provider/provider.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { EventsModule } from './events/events.module.js';
@@ -45,6 +46,7 @@ import { SpraysModule } from './sprays/sprays.module.js';
     CustomerKycModule,
     WalletmoduleModule,
     PaymentsModule,
+    BankDirectoryModule,
     ProviderModule,
     AdminModule,
     EventsModule,

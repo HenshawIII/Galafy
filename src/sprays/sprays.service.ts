@@ -10,7 +10,7 @@ import {
 import { DatabaseService } from '../database/database.service.js';
 import { CreateSprayDto } from './dto/create-spray.dto.js';
 import { LiveGateway } from '../live/live.gateway.js';
-import { ProviderService } from '../provider/provider.service.js';
+import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -41,7 +41,7 @@ export class SpraysService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly liveGateway: LiveGateway,
-    private readonly providerService: ProviderService,
+    private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly cacheService: CacheService,
     private readonly eventsService: EventsService,
     @Inject(forwardRef(() => NotificationsService))
@@ -245,144 +245,56 @@ export class SpraysService {
       );
     }
 
-    // Lock wallet and check balance BEFORE calling provider
-    // This prevents race conditions where multiple requests try to spend the same balance
-    const lockedSprayerWallet = await this.databaseService.$transaction(
+    const groupReference = randomUUID();
+
+    const result = await this.databaseService.$transaction(
       async (tx: Prisma.TransactionClient) => {
-        // Lock sprayer wallet row to prevent double spend
         await tx.$queryRaw`
           SELECT id FROM "Wallet" WHERE id = ${sprayerWallet.id} FOR UPDATE
         `;
 
-        // Re-fetch sprayer wallet with lock to get latest balance
-        const locked = await tx.wallet.findUnique({
+        const lockedSprayer = await tx.wallet.findUnique({
           where: { id: sprayerWallet.id },
-          select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
+          select: {
+            id: true,
+            availableBalance: true,
+            ledgerBalance: true,
+            currencyId: true,
+            riskStatus: true,
+            riskScore: true,
+          },
         });
 
-        if (!locked) {
+        if (!lockedSprayer) {
           throw new NotFoundException('Sprayer wallet not found');
         }
 
-        // Verify sufficient balance
-        if (locked.availableBalance.lt(amount)) {
+        if (lockedSprayer.availableBalance.lt(amount)) {
           throw new BadRequestException('Insufficient balance');
         }
 
-        // Check wallet freeze status (hard freeze blocks all transactions)
-        const wallet = await tx.wallet.findUnique({
-          where: { id: sprayerWallet.id },
-          select: { riskStatus: true, riskScore: true },
-        });
-
-        if (wallet?.riskStatus === 'HARD_FREEZE') {
+        if (lockedSprayer.riskStatus === 'HARD_FREEZE') {
           throw new BadRequestException(
-            `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
+            `Wallet is hard frozen due to high risk score (${lockedSprayer.riskScore?.toString() || 'N/A'}). ` +
               `All transactions are blocked. Please contact support.`,
           );
         }
 
-        return locked;
-      },
-      {
-        timeout: 5000,
-      },
-    );
+        await this.internalLedgerTransfer.transfer(tx, sprayerWallet.id, receiverWallet.id, amount);
 
-    // Generate group reference
-    const groupReference = randomUUID();
-
-    // Call provider service to execute the actual wallet-to-wallet transfer
-    this.logger.log(
-      `Calling provider service for wallet transfer: ${sprayerWallet.virtualAccountNumber} -> ${receiverWallet.virtualAccountNumber}`,
-    );
-
-    const providerResponse = await this.providerService.walletToWalletTransfer({
-      fromWalletId: sprayerWallet.virtualAccountNumber,
-      toWalletId: receiverWallet.virtualAccountNumber,
-      amount: Number(amount),
-      currencyId: sprayerWallet.currencyId,
-      description: createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`,
-      reference: idempotencyKey,
-    });
-
-    if (!providerResponse.success) {
-      this.logger.error(`Provider transfer failed: ${providerResponse.message}`);
-      throw new BadRequestException(providerResponse.message || 'Transfer failed. Please try again.');
-    }
-
-    this.logger.log(`Provider transfer successful: ${providerResponse.message}`);
-
-    // After provider succeeds, create transaction records and spray record atomically
-    // Re-fetch wallet balances inside transaction with lock to get latest balance after provider call
-    // This prevents race conditions where multiple concurrent requests use stale balance data
-    const result = await this.databaseService.$transaction(
-      async (tx: Prisma.TransactionClient) => {
-        // Re-lock and re-fetch sprayer wallet to get latest balance after provider call
-        // This ensures we use the most current balance after all concurrent requests
-        await tx.$queryRaw`
-          SELECT id FROM "Wallet" WHERE id = ${sprayerWallet.id} FOR UPDATE
-        `;
-
-        await tx.$queryRaw`
-          SELECT id FROM "Wallet" WHERE id = ${receiverWallet.id} FOR UPDATE
-        `;
-
-        // Re-fetch both wallets with lock to get latest balances
         const currentSprayerWallet = await tx.wallet.findUnique({
           where: { id: sprayerWallet.id },
-          select: {
-            id: true,
-            availableBalance: true,
-            ledgerBalance: true,
-            currencyId: true,
-          },
+          select: { availableBalance: true, ledgerBalance: true, currencyId: true },
         });
-
         const currentReceiverWallet = await tx.wallet.findUnique({
           where: { id: receiverWallet.id },
-          select: {
-            id: true,
-            availableBalance: true,
-            ledgerBalance: true,
-            currencyId: true,
-          },
+          select: { availableBalance: true, ledgerBalance: true, currencyId: true },
         });
 
-        if (!currentSprayerWallet) {
-          throw new NotFoundException('Sprayer wallet not found after provider call');
+        if (!currentSprayerWallet || !currentReceiverWallet) {
+          throw new NotFoundException('Wallet not found after internal transfer');
         }
 
-        if (!currentReceiverWallet) {
-          throw new NotFoundException('Receiver wallet not found after provider call');
-        }
-
-        // Calculate new balances from CURRENT balances (not stale lockedSprayerWallet)
-        // This ensures we always use the latest balance after all concurrent requests
-        const newSprayerAvailableBalance = currentSprayerWallet.availableBalance.minus(amount);
-        const newSprayerLedgerBalance = currentSprayerWallet.ledgerBalance.minus(amount);
-        const newReceiverAvailableBalance = currentReceiverWallet.availableBalance.plus(amount);
-        const newReceiverLedgerBalance = currentReceiverWallet.ledgerBalance.plus(amount);
-
-        // Update wallets
-        await Promise.all([
-          tx.wallet.update({
-            where: { id: sprayerWallet.id },
-            data: {
-              availableBalance: newSprayerAvailableBalance,
-              ledgerBalance: newSprayerLedgerBalance,
-            },
-          }),
-          tx.wallet.update({
-            where: { id: receiverWallet.id },
-            data: {
-              availableBalance: newReceiverAvailableBalance,
-              ledgerBalance: newReceiverLedgerBalance,
-            },
-          }),
-        ]);
-
-        // Create debit transaction
         const debitTransaction = await tx.transaction.create({
           data: {
             walletId: sprayerWallet.id,
@@ -391,18 +303,17 @@ export class SpraysService {
             status: TransactionStatus.SUCCESS,
             amount,
             currencyId: currentSprayerWallet.currencyId,
-            reference: idempotencyKey, // Use idempotency key as reference
+            reference: idempotencyKey,
             groupReference,
             narration: createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`,
             metadata: {
               eventId,
               receiverWalletId: receiverWallet.id,
-              providerResponse: providerResponse.data,
+              internalLedger: true,
             },
           },
         });
 
-        // Create credit transaction
         const creditTransaction = await tx.transaction.create({
           data: {
             walletId: receiverWallet.id,
@@ -418,12 +329,11 @@ export class SpraysService {
               eventId,
               sprayerWalletId: sprayerWallet.id,
               debitTransactionId: debitTransaction.id,
-              providerResponse: providerResponse.data,
+              internalLedger: true,
             },
           },
         });
 
-        // Create Spray record
         const spray = await tx.spray.create({
           data: {
             eventId,
@@ -435,30 +345,24 @@ export class SpraysService {
             note: createSprayDto.note,
             metadata: {
               creditTransactionId: creditTransaction.id,
-              providerResponse: providerResponse.data,
+              internalLedger: true,
             },
           },
         });
 
-        // Log spray transaction (event-based)
         this.logger.log(
-          `💰 SPRAY TRANSACTION (Event): Amount=${amount.toString()}, ` +
-            `EventId=${eventId}, EventTitle="${event.title}", ` +
-            `From=${sprayerWallet.virtualAccountNumber || sprayerWallet.id}, ` +
-            `To=${receiverWallet.virtualAccountNumber || receiverWallet.id}, ` +
-            `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
-            `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
-            `Reference=${idempotencyKey}, Note="${createSprayDto.note || 'N/A'}"`,
+          `💰 SPRAY (internal ledger): Amount=${amount.toString()}, EventId=${eventId}, ` +
+            `SprayId=${spray.id}, GroupRef=${groupReference}, Ref=${idempotencyKey}`,
         );
 
         return {
           spray,
-          sprayerBalance: newSprayerAvailableBalance,
-          receiverBalance: newReceiverAvailableBalance,
+          sprayerBalance: currentSprayerWallet.availableBalance,
+          receiverBalance: currentReceiverWallet.availableBalance,
         };
       },
       {
-        timeout: 10000, // 10 seconds timeout
+        timeout: 10000,
       },
     );
 

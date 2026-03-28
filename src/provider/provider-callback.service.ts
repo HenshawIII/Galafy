@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
+import { Tier1FaceStatus } from '../../generated/prisma/enums.js';
 
 const DEFAULT_CURRENCY_ID = 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9';
 
@@ -11,6 +12,24 @@ export class ProviderCallbackService {
   private readonly logger = new Logger(ProviderCallbackService.name);
 
   constructor(private readonly databaseService: DatabaseService) {}
+
+  private isDevMode(): boolean {
+    const nodeEnv = (process.env.NODE_ENV ?? 'development').toLowerCase();
+    return nodeEnv !== 'production';
+  }
+
+  /**
+   * Dev-safe policy:
+   * In non-production environments, optionally treat "pending" callback status as completed.
+   * This helps when sandbox callbacks are dummy and never move to Active.
+   *
+   * Enable with:
+   * - ALAT_DEV_ACCEPT_PENDING_CALLBACK=true
+   */
+  private shouldAcceptPendingInDev(): boolean {
+    if (!this.isDevMode()) return false;
+    return (process.env.ALAT_DEV_ACCEPT_PENDING_CALLBACK ?? '').toLowerCase() === 'true';
+  }
 
   private mapNubanStatusToTier1AccountStatus(nubanStatus: string | null | undefined): Tier1AccountStatus {
     const normalized = (nubanStatus ?? '').toLowerCase().trim();
@@ -28,6 +47,7 @@ export class ProviderCallbackService {
    * We must:
    *  - Map payload to Customer using `phoneNumber + email`
    *  - Idempotently update tier1 account fields
+   *  - Drive tier1FaceStatus from callback outcome (COMPLETED on success, FAILED on failure)
    *  - Create wallet record only on successful callback
    *
    * Returns `{ received: true }` to avoid leaking existence.
@@ -38,6 +58,12 @@ export class ProviderCallbackService {
     const phoneNumber = raw?.data?.phoneNumber?.trim();
     const nuban = raw?.data?.nuban?.trim();
     const nubanName = raw?.data?.nubanName?.trim();
+    const rawNubanStatus = raw?.data?.nubanStatus;
+
+    // Quick sanity-check log to aid sandbox/debug diagnostics.
+    this.logger.log(
+      `Account creation callback received: email=${email ?? 'n/a'}, phone=${phoneNumber ?? 'n/a'}, nuban=${nuban ?? 'n/a'}, nubanStatus=${rawNubanStatus ?? 'n/a'}`,
+    );
 
     if (!email || !phoneNumber || !nuban || !nubanName) {
       // Callback payload is malformed; we still avoid throwing to provider systems if possible.
@@ -45,7 +71,14 @@ export class ProviderCallbackService {
       return { received: true };
     }
 
-    const tier1AccountStatus = this.mapNubanStatusToTier1AccountStatus(raw?.data?.nubanStatus);
+    const mappedStatus = this.mapNubanStatusToTier1AccountStatus(rawNubanStatus);
+    const treatPendingAsCompleted = mappedStatus === 'PENDING' && this.shouldAcceptPendingInDev();
+    const tier1AccountStatus: Tier1AccountStatus = treatPendingAsCompleted ? 'COMPLETED' : mappedStatus;
+    if (treatPendingAsCompleted) {
+      this.logger.warn(
+        `Account creation callback (DEV POLICY): pending status accepted as COMPLETED for nuban=${nuban}. Disable with ALAT_DEV_ACCEPT_PENDING_CALLBACK=false`,
+      );
+    }
     const now = new Date();
 
     // Map by phone + email (not providerCustomerId) as per your docs.
@@ -69,9 +102,11 @@ export class ProviderCallbackService {
       where: { id: customer.id },
       data: {
         tier1AccountStatus,
+        tier1FaceStatus: tier1AccountStatus === 'COMPLETED' ? Tier1FaceStatus.COMPLETED : Tier1FaceStatus.FAILED,
         tier1Nuban: nuban,
         tier1NubanName: nubanName,
         tier1AccountCompletedAt: tier1AccountStatus === 'COMPLETED' ? now : null,
+        tier1CompletedAt: tier1AccountStatus === 'COMPLETED' ? now : null,
       },
     });
 

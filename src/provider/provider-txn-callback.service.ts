@@ -148,9 +148,34 @@ export class ProviderTxnCallbackService {
       // Apply wallet balance changes only on first transition to SUCCESS.
       if (mappedStatus === TransactionStatus.SUCCESS && previousStatus !== TransactionStatus.SUCCESS) {
         const amount = txn.amount;
+        const sourceWalletId = txn.walletId;
 
-        // Debit source wallet
-        const sourceWallet = await tx.wallet.findUnique({ where: { id: txn.walletId } });
+        let destinationWalletId: string | null = null;
+        if (txn.destinationAccountNumber) {
+          const destRow = await tx.wallet.findFirst({
+            where: { virtualAccountNumber: txn.destinationAccountNumber },
+            select: { id: true },
+          });
+          if (destRow) {
+            destinationWalletId = destRow.id;
+          }
+        }
+
+        // Lock all involved wallets in deterministic order (matches InternalLedgerTransferService) to avoid
+        // deadlocks and lost updates when multiple callbacks touch the same wallet concurrently.
+        const walletIdsToLock = [...new Set([sourceWalletId, ...(destinationWalletId ? [destinationWalletId] : [])])].sort(
+          (a, b) => a.localeCompare(b),
+        );
+        for (const wid of walletIdsToLock) {
+          await tx.$queryRaw`
+            SELECT id FROM "Wallet" WHERE id = ${wid} FOR UPDATE
+          `;
+        }
+
+        const sourceWallet = await tx.wallet.findUnique({
+          where: { id: sourceWalletId },
+          select: { id: true, availableBalance: true, ledgerBalance: true },
+        });
         if (!sourceWallet) {
           throw new BadRequestException(`Source wallet not found for transaction=${transactionReference}`);
         }
@@ -163,10 +188,10 @@ export class ProviderTxnCallbackService {
           },
         });
 
-        // Credit destination wallet if internal
-        if (txn.destinationAccountNumber) {
-          const destinationWallet = await tx.wallet.findFirst({
-            where: { virtualAccountNumber: txn.destinationAccountNumber },
+        if (destinationWalletId) {
+          const destinationWallet = await tx.wallet.findUnique({
+            where: { id: destinationWalletId },
+            select: { id: true, availableBalance: true, ledgerBalance: true },
           });
 
           if (destinationWallet) {
@@ -204,6 +229,28 @@ export class ProviderTxnCallbackService {
                   },
                 },
               });
+            }
+
+            const debitMeta =
+              typeof txn.metadata === 'object' && txn.metadata !== null
+                ? (txn.metadata as Record<string, unknown>)
+                : null;
+            if (debitMeta?.walletToWalletSpray === true) {
+              const existingSpray = await tx.spray.findFirst({ where: { transactionId: txn.id } });
+              if (!existingSpray) {
+                await tx.spray.create({
+                  data: {
+                    eventId: null,
+                    sprayerWalletId: txn.walletId,
+                    receiverWalletId: destinationWallet.id,
+                    transactionId: txn.id,
+                    transactionGroupReference: txn.groupReference,
+                    totalAmount: amount,
+                    note: txn.narration,
+                    metadata: { providerWalletToWallet: true },
+                  },
+                });
+              }
             }
           }
         }

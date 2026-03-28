@@ -64,10 +64,9 @@ export class CustomerKycService {
   }
 
   /**
-   * Handle face biometric callback (cb_uri) from ALAT face webapp.
-   * Look up customer by body.id (BVN) via tier1PendingBvn.
-   * Provider Tier 1 is called in `startTier1`; this callback only updates `tier1FaceStatus` (and clears tier1PendingBvn only on failure).
-   * Returns { received: true } always to avoid leaking existence.
+   * Legacy face callback handler (endpoint currently disabled).
+   * Tier 1 face completion is now driven by account-creation callback status.
+   * This method is retained for backward compatibility and non-breaking reuse if needed.
    */
   async handleFaceCallback(body: { success: boolean; c_id: string; id: string; id_type: 'bvn' | 'nin' }) {
     if (body.id_type !== 'bvn') {
@@ -107,7 +106,7 @@ export class CustomerKycService {
   }
 
   /**
-   * Register and call Tier 1 provider immediately (BVN + face).
+   * Register and call Tier 1 provider immediately (BVN + account-creation callback flow).
    * The frontend provides `correlationId` up-front so we can return provider feedback immediately.
    */
   async startTier1(

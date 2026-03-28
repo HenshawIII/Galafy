@@ -4,12 +4,8 @@ import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import {
-  CreateWalletDto,
-  GetWalletByIdDto,
-  GetWalletByAccountNumberDto,
-  GetWalletHistoryDto,
   WalletToWalletTransferDto,
-  FastWalletTransferDto,
+  InitiateWalletToWalletTransferDto,
   UpdateBankAccountDto,
 } from './dto/index.js';
 import { InitiatePayoutDto } from './dto/payout-security.dto.js';
@@ -18,16 +14,15 @@ import { KycTier } from '../users/dto/create-user-dto.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
-import { normalizeToKobo } from '../common/utils/money.util.js';
+import { normalizeToKobo, toDisplayAmount } from '../common/utils/money.util.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
-import { DeviceAbuseDetectionService, DeviceInfo } from '../common/services/device-abuse-detection.service.js';
 import { EmailService } from '../users/email.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, GoneException } from '@nestjs/common';
 
 @Injectable()
 export class WalletmoduleService {
@@ -41,152 +36,10 @@ export class WalletmoduleService {
     private readonly organizationWalletService: OrganizationWalletService,
     private readonly walletRiskService: WalletRiskService,
     private readonly amlLoggingService: AmlLoggingService,
-    private readonly deviceAbuseDetectionService: DeviceAbuseDetectionService,
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
     private readonly withdrawalLimitService: WithdrawalLimitService,
   ) {}
-
-  /**
-   * Create a new wallet for a customer
-   * Customers must be at least Tier 1 to create a wallet
-   */
-  /**
-   * Create wallet by userId
-   */
-  async createWalletByUserId(userId: string, createWalletDto: CreateWalletDto, deviceInfo?: DeviceInfo) {
-    // Find customer by userId
-    const customer = await this.databaseService.customer.findUnique({
-      where: { userId },
-      include: {
-        user: true,
-      },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    // Check if customer is at least Tier 1
-    if (customer.tier === KycTier.Tier_0) {
-      throw new BadRequestException('Customer must be at least Tier 1 to create a wallet');
-    }
-
-    // Detect device/IP abuse before creating wallet
-    let abuseResult;
-    if (deviceInfo) {
-      abuseResult = await this.deviceAbuseDetectionService.detectAbuse(userId, customer.id, deviceInfo);
-
-      // Log warning if abuse detected (but don't block - let compliance review)
-      if (abuseResult.isAbuse) {
-        this.logger.warn(
-          `⚠️ Wallet creation flagged for abuse detection: User ${userId}, ` +
-            `Reasons: ${abuseResult.reasons.join(', ')}`,
-        );
-      }
-    }
-
-    // Generate wallet ID (UUID) - Prisma will auto-generate with @default(uuid())
-    // We'll create the wallet first, then use its ID for provider
-    const tempWallet = await this.databaseService.wallet.create({
-      data: {
-        customerId: customer.id,
-        currencyId: createWalletDto.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-        walletGroupId: createWalletDto.walletGroupId || undefined,
-        walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
-        walletClassificationId: createWalletDto.walletClassificationId || undefined,
-        availableBalance: 0,
-        ledgerBalance: 0,
-        overdraft: createWalletDto.overdraft || 0,
-        isInternal: createWalletDto.isInternal || false,
-        isDefault: createWalletDto.isDefault || false,
-        name:
-          createWalletDto.name ||
-          (customer.firstName && customer.lastName
-            ? `${customer.firstName} ${customer.lastName}`
-            : customer.firstName || customer.lastName || 'Wallet'),
-        mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
-      },
-    });
-    const walletId = tempWallet.id;
-
-    // Create wallet with provider
-    const providerRequest = {
-      id: walletId,
-      customerId: customer.providerCustomerId,
-      currencyId: createWalletDto.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-      walletGroupId: createWalletDto.walletGroupId || undefined,
-      walletRestrictionId: createWalletDto.walletRestrictionId || undefined,
-      walletClassificationId: createWalletDto.walletClassificationId || undefined,
-      availableBalance: createWalletDto.availableBalance || 0,
-      ledgerBalance: createWalletDto.ledgerBalance || 0,
-      overdraft: createWalletDto.overdraft || 0,
-      isInternal: createWalletDto.isInternal || false,
-      isDefault: createWalletDto.isDefault || true,
-      name:
-        createWalletDto.name ||
-        (customer.firstName && customer.lastName
-          ? `${customer.firstName} ${customer.lastName}`
-          : customer.firstName || customer.lastName || 'Wallet'),
-      mobNum: createWalletDto.mobNum || customer.mobileNumber || undefined,
-    };
-
-    let providerResponse;
-    try {
-      providerResponse = await this.providerService.createWallet(providerRequest);
-    } catch (error) {
-      // Delete the temporary wallet if provider call fals
-      await this.databaseService.wallet.delete({ where: { id: walletId } });
-      this.logger.error(`Failed to create wallet with provider: ${error.message}`);
-      throw new BadRequestException(error.message || 'Failed to create wallet with provider service');
-    }
-
-    // Update wallet with provider response
-    const wallet = await this.databaseService.wallet.update({
-      where: { id: walletId },
-      data: {
-        providerWalletId: providerResponse.walletId,
-        availableBalance: providerResponse.virtualAccount ? 0 : createWalletDto.availableBalance || 0,
-        ledgerBalance: providerResponse.virtualAccount ? 0 : createWalletDto.ledgerBalance || 0,
-        mobNum: providerResponse.mobNum || createWalletDto.mobNum,
-        virtualAccountNumber: providerResponse.virtualAccount?.accountNumber,
-        virtualBankCode: providerResponse.virtualAccount?.bankCode,
-        virtualBankName: providerResponse.virtualAccount?.bankName,
-        walletClassificationId: providerResponse.walletClassificationId || createWalletDto.walletClassificationId,
-      },
-      include: {
-        customer: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Record wallet creation event with device information
-    if (deviceInfo) {
-      await this.deviceAbuseDetectionService.recordWalletCreation(
-        wallet.id,
-        userId,
-        customer.id,
-        deviceInfo,
-        abuseResult,
-      );
-    }
-
-    return wallet;
-  }
 
   /**
    * Get wallet by ID
@@ -244,52 +97,7 @@ export class WalletmoduleService {
       return wallet;
     }
 
-    // If not found, query provider
-    try {
-      const providerWallet = await this.providerService.getWalletByAccountNumber(accountNumber);
-
-      // Try to find wallet by provider wallet ID
-      const localWallet = await this.databaseService.wallet.findUnique({
-        where: { providerWalletId: providerWallet.walletId },
-        include: {
-          customer: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (localWallet) {
-        // Update balances from provider
-        await this.databaseService.wallet.update({
-          where: { id: localWallet.id },
-          data: {
-            availableBalance: providerWallet.availableBalance,
-            ledgerBalance: providerWallet.ledgerBalance,
-          },
-        });
-
-        return {
-          ...localWallet,
-          availableBalance: providerWallet.availableBalance,
-          ledgerBalance: providerWallet.ledgerBalance,
-        };
-      }
-
-      // Return provider data if local wallet not found
-      return providerWallet;
-    } catch (error) {
-      this.logger.error(`Failed to get wallet from provider: ${error.message}`);
-      throw new NotFoundException('Wallet not found');
-    }
+    throw new NotFoundException('Wallet not found');
   }
 
   /**
@@ -329,265 +137,268 @@ export class WalletmoduleService {
   }
 
   /**
-   * Wallet to wallet transfer
+   * @deprecated Wallet-to-wallet transfers go through the provider (ProcessClientTransfer). Use
+   * `initiateWalletToWalletTransfer` + `confirmWalletToWalletTransfer` (OTP, PIN, callbacks).
    */
-  async walletToWalletTransfer(transferDto: WalletToWalletTransferDto) {
-    // Verify both wallets exist by account number
+  walletToWalletTransfer(_transferDto: WalletToWalletTransferDto): never {
+    throw new GoneException(
+      'Direct wallet-to-wallet transfer is disabled. Use POST /wallets/transfer/wallet-to-wallet/initiate ' +
+        'then POST /wallets/transfer/wallet-to-wallet/confirm (same provider flow as payouts).',
+    );
+  }
+
+  /**
+   * Wallet-to-wallet — step 1: validate, store pending payload, send OTP (same pattern as payout).
+   */
+  async initiateWalletToWalletTransfer(userId: string, dto: InitiateWalletToWalletTransferDto) {
     const fromWallet = await this.databaseService.wallet.findFirst({
-      where: { virtualAccountNumber: transferDto.fromWalletId },
+      where: { virtualAccountNumber: dto.fromWalletId },
+      include: { customer: { include: { user: true } } },
     });
 
     if (!fromWallet) {
       throw new NotFoundException('Source wallet not found');
     }
-
+    if (fromWallet.customer.userId !== userId) {
+      throw new UnauthorizedException('You do not have access to this wallet');
+    }
     if (!fromWallet.virtualAccountNumber) {
       throw new BadRequestException('Source wallet does not have a virtual account number');
     }
 
     const toWallet = await this.databaseService.wallet.findFirst({
-      where: { virtualAccountNumber: transferDto.toWalletId },
+      where: { virtualAccountNumber: dto.toWalletId },
+      include: { customer: true },
     });
 
     if (!toWallet) {
       throw new NotFoundException('Destination wallet not found');
     }
-
     if (!toWallet.virtualAccountNumber) {
       throw new BadRequestException('Destination wallet does not have a virtual account number');
     }
+    if (fromWallet.id === toWallet.id) {
+      throw new BadRequestException('Source and destination wallet must differ');
+    }
+    if (!toWallet.virtualBankCode?.trim()) {
+      throw new BadRequestException(
+        'Destination wallet is missing provider bank routing (virtualBankCode). It cannot receive a provider transfer yet.',
+      );
+    }
 
-    // Convert amount from string to Decimal and normalize to kobo precision
-    const amount = normalizeToKobo(transferDto.amount);
+    const amount = normalizeToKobo(dto.amount);
+    if (fromWallet.availableBalance.lt(amount)) {
+      throw new BadRequestException('Insufficient balance');
+    }
 
-    // Check wallet freeze status (hard freeze blocks all transactions)
     await this.walletRiskService.checkWalletFreezeStatus(fromWallet.id, true);
 
-    // Check sufficient balance using Decimal comparison
-    if (fromWallet.availableBalance.lt(amount)) {
-      throw new BadRequestException('Insufficient balance');
+    if (fromWallet.customer.isAmlRestricted) {
+      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
+    }
+    if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
+      throw new ForbiddenException(
+        'Transfers are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
+      );
     }
 
-    // Generate internal reference if not provided
-    const internalReference = transferDto.reference || `SPRAY-${randomUUID()}`;
-    const groupReference = `GRP-${randomUUID()}`; // Group reference to link both transactions
+    const transactionReference = dto.transactionReference?.trim() || `TXN-${randomUUID()}`;
+    const destinationAccountName =
+      toWallet.name ||
+      [toWallet.customer.firstName, toWallet.customer.lastName].filter(Boolean).join(' ').trim() ||
+      'Unknown';
 
-    // Execute transfer with provider using account numbers
-    const providerResponse = await this.providerService.walletToWalletTransfer({
-      fromWalletId: fromWallet.virtualAccountNumber,
-      toWalletId: toWallet.virtualAccountNumber,
-      amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-      description: transferDto.description,
-      reference: internalReference,
-    });
-
-    if (!providerResponse.success) {
-      throw new BadRequestException(providerResponse.message || 'Transfer failed');
-    }
-
-    // Update wallet balances using Decimal methods
-    const fromAvailableBalance = normalizeToKobo(fromWallet.availableBalance.minus(amount));
-    const fromLedgerBalance = normalizeToKobo(fromWallet.ledgerBalance.minus(amount));
-    const toAvailableBalance = normalizeToKobo(toWallet.availableBalance.plus(amount));
-    const toLedgerBalance = normalizeToKobo(toWallet.ledgerBalance.plus(amount));
-
-    // Create Transaction records for both wallets
-    // DEBIT transaction for sender
-    const debitTransaction = await this.databaseService.transaction.create({
-      data: {
-        walletId: fromWallet.id,
-        type: TransactionType.SPRAY,
-        direction: TransactionDirection.DEBIT,
-        status: TransactionStatus.SUCCESS,
-        amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-        reference: internalReference,
-        externalReference: null, // Wallet-to-wallet (sprays) only use internal reference
-        groupReference: groupReference,
-        narration: transferDto.description || 'Wallet to wallet transfer',
-      },
-    });
-
-    // CREDIT transaction for receiver
-    const creditTransaction = await this.databaseService.transaction.create({
-      data: {
-        walletId: toWallet.id,
-        type: TransactionType.SPRAY,
-        direction: TransactionDirection.CREDIT,
-        status: TransactionStatus.SUCCESS,
-        amount,
-        currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-        reference: `SPRAY-CREDIT-${randomUUID()}`, // Unique reference for credit side
-        externalReference: null,
-        groupReference: groupReference, // Same group reference to link transactions
-        narration: transferDto.description || 'Wallet to wallet transfer',
-      },
-    });
-
-    // Create Spray record linked to the DEBIT transaction
-    const spray = await this.databaseService.spray.create({
-      data: {
-        eventId: null, // Can be set if this is part of an event
-        sprayerWalletId: fromWallet.id,
-        receiverWalletId: toWallet.id,
-        transactionId: debitTransaction.id, // Link to the debit transaction
-        transactionGroupReference: groupReference,
-        totalAmount: amount,
-        note: transferDto.description,
-        metadata: {
-          creditTransactionId: creditTransaction.id,
-          providerResponse: providerResponse.data,
-        },
-      },
-    });
-
-    // Log spray transaction
-    this.logger.log(
-      `💰 SPRAY TRANSACTION: Amount=${amount.toString()}, ` +
-        `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
-        `To=${toWallet.virtualAccountNumber} (${toWallet.id}), ` +
-        `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
-        `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
-        `Reference=${internalReference}, Description="${transferDto.description || 'Wallet to wallet transfer'}"`,
-    );
-
-    // Update wallet balances
-    await Promise.all([
-      this.databaseService.wallet.update({
-        where: { id: fromWallet.id },
-        data: {
-          availableBalance: new Decimal(fromAvailableBalance),
-          ledgerBalance: new Decimal(fromLedgerBalance),
-        },
-      }),
-      this.databaseService.wallet.update({
-        where: { id: toWallet.id },
-        data: {
-          availableBalance: new Decimal(toAvailableBalance),
-          ledgerBalance: new Decimal(toLedgerBalance),
-        },
-      }),
-    ]);
-
-    const result = {
-      success: true,
-      message: providerResponse.message,
-      fromWalletId: fromWallet.virtualAccountNumber,
-      toWalletId: toWallet.virtualAccountNumber,
-      amount: transferDto.amount,
-      transactionId: debitTransaction.id,
-      sprayId: spray.id,
-      reference: internalReference,
-      groupReference: groupReference,
-      data: providerResponse.data,
+    const pending = {
+      kind: 'walletToWallet' as const,
+      fromWalletId: dto.fromWalletId,
+      toWalletId: dto.toWalletId,
+      amount: amount.toString(),
+      description: dto.description,
+      transactionReference,
+      securityInfo: dto.securityInfo,
+      currencyId: dto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
+      destinationBankCode: toWallet.virtualBankCode.trim(),
+      destinationBankName: (toWallet.virtualBankName || 'Unknown').trim() || 'Unknown',
+      destinationAccountName,
+      walletId: fromWallet.id,
+      toWalletInternalId: toWallet.id,
     };
 
-    // Recalculate risk scores for both wallets (outside transaction to avoid blocking)
-    this.walletRiskService.updateWalletRiskScore(fromWallet.id).catch((error) => {
-      this.logger.error(`Failed to update risk score for sender wallet: ${error.message}`);
-    });
-    this.walletRiskService.updateWalletRiskScore(toWallet.id).catch((error) => {
-      this.logger.error(`Failed to update risk score for receiver wallet: ${error.message}`);
-    });
-
-    return result;
-  }
-
-  /**
-   * Wallet payout (to external account) - Legacy method (kept for backward compatibility)
-   * @deprecated Use initiatePayout and confirmPayout instead
-   */
-  async walletpayout(transferDto: FastWalletTransferDto) {
-    const fromWallet = await this.databaseService.wallet.findFirst({
-      where: { virtualAccountNumber: transferDto.fromWalletId },
-      include: {
-        customer: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
-
-    if (!fromWallet) {
-      throw new NotFoundException('Source wallet not found');
-    }
-
-    if (!fromWallet.virtualAccountNumber) {
-      throw new BadRequestException('Wallet does not have a virtual account number');
-    }
-
-    // Convert amount from string to Decimal and normalize to kobo precision
-    const amount = normalizeToKobo(transferDto.amount);
-
-    // Check sufficient balance using Decimal comparison
-    if (fromWallet.availableBalance.lt(amount)) {
-      throw new BadRequestException('Insufficient balance');
-    }
-
-    // Get destination account name if not provided (via name enquiry)
-    let destinationAccountName = transferDto.recipientName;
-    if (!destinationAccountName) {
-      try {
-        const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
-          transferDto.bankCode,
-          transferDto.toAccountNumber,
-        );
-        destinationAccountName = nameEnquiry.accountName;
-      } catch (error) {
-        this.logger.warn(`Name enquiry failed: ${error.message}. Proceeding without account name.`);
-        destinationAccountName = 'Unknown';
-      }
-    }
-
-    // Get source account name
-    const customerName =
-      fromWallet.customer.firstName && fromWallet.customer.lastName
-        ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
-        : null;
-    const userName =
-      fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
-        ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
-        : null;
-    const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
-
-    // Generate transaction reference if not provided (max 36 characters)
-    // Use UUID directly (36 chars) to meet provider requirement
-    const transactionReference = transferDto.reference || randomUUID();
-
-    // Execute inter-bank transfer with provider
-    const providerResponse = await this.providerService.interBankTransfer({
-      destinationBankCode: transferDto.bankCode,
-      destinationAccountNumber: transferDto.toAccountNumber,
-      destinationAccountName: destinationAccountName,
-      sourceAccountNumber: fromWallet.virtualAccountNumber,
-      sourceAccountName: sourceAccountName,
-      remarks: transferDto.description || 'Fast wallet transfer',
-      amount: amount.toNumber(), // Convert to number for provider API
-      currencyId: transferDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-      customerTransactionReference: transactionReference,
-    });
-
-    // Update wallet balance using Decimal methods
-    const newAvailableBalance = normalizeToKobo(fromWallet.availableBalance.minus(amount));
-    const newLedgerBalance = normalizeToKobo(fromWallet.ledgerBalance.minus(amount));
-
-    await this.databaseService.wallet.update({
-      where: { id: fromWallet.id },
-      data: {
-        availableBalance: new Decimal(newAvailableBalance),
-        ledgerBalance: new Decimal(newLedgerBalance),
-      },
-    });
+    await this.payoutSecurityService.storePendingPayout(userId, pending);
+    await this.payoutSecurityService.generateAndSendOtp(userId);
 
     return {
       success: true,
-      message: providerResponse.message,
-      transactionRef: providerResponse.transactionRef,
-      fromWalletId: fromWallet.id,
-      toAccountNumber: transferDto.toAccountNumber,
-      amount: transferDto.amount,
+      message: 'OTP sent to your email. Confirm the transfer with the OTP and your PIN.',
+      expiresIn: '10 minutes',
+    };
+  }
+
+  /**
+   * Wallet-to-wallet — step 2: OTP + PIN, then ProcessClientTransfer (provider debits; callbacks settle balances).
+   */
+  async confirmWalletToWalletTransfer(userId: string, otp: string, pin: string) {
+    await this.payoutSecurityService.verifyOtp(userId, otp);
+
+    const isPinValid = await this.payoutSecurityService.verifyPayoutPin(userId, pin);
+    if (!isPinValid) {
+      throw new UnauthorizedException('Invalid PIN');
+    }
+
+    const peek = await this.payoutSecurityService.peekPendingPayout(userId);
+    if (!peek || peek.kind !== 'walletToWallet') {
+      throw new BadRequestException(
+        'No pending wallet-to-wallet transfer. Please initiate a wallet transfer first.',
+      );
+    }
+
+    const pending = await this.payoutSecurityService.getAndClearPendingPayout(userId);
+    if (!pending || pending.kind !== 'walletToWallet') {
+      throw new BadRequestException(
+        'No pending wallet-to-wallet transfer. Please initiate a wallet transfer first.',
+      );
+    }
+
+    if (typeof pending.securityInfo !== 'string' || pending.securityInfo.trim() === '') {
+      throw new BadRequestException(
+        'Transfer requires securityInfo from the client. Please initiate the transfer again from the current app version.',
+      );
+    }
+
+    const amount = normalizeToKobo(pending.amount as string | number);
+    const transactionReference: string = pending.transactionReference || `TXN-${randomUUID()}`;
+    const securityInfo = pending.securityInfo as string;
+    const securityInfoHash = createHash('sha256').update(securityInfo).digest('hex');
+    const narration =
+      (pending.description as string) || `Wallet transfer to ${pending.toWalletId as string}`;
+
+    const fromWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: pending.fromWalletId as string },
+      include: { customer: { include: { user: true } } },
+    });
+    const toWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: pending.toWalletId as string },
+    });
+
+    if (!fromWallet || !toWallet) {
+      throw new NotFoundException('Source or destination wallet not found');
+    }
+    if (fromWallet.customer.userId !== userId) {
+      throw new UnauthorizedException('You do not have access to this wallet');
+    }
+    if (fromWallet.id === toWallet.id) {
+      throw new BadRequestException('Source and destination wallet must differ');
+    }
+    if (fromWallet.customer.isAmlRestricted) {
+      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
+    }
+    if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
+      throw new ForbiddenException(
+        'Transfers are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
+      );
+    }
+
+    await this.walletRiskService.checkWalletFreezeStatus(fromWallet.id, false);
+
+    const initiation = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
+      const lockedFrom = await tx.wallet.findFirst({
+        where: { virtualAccountNumber: pending.fromWalletId as string },
+        include: { customer: { select: { userId: true } } },
+      });
+      if (!lockedFrom || lockedFrom.customer.userId !== userId) {
+        throw new UnauthorizedException('You do not have access to this wallet');
+      }
+
+      await tx.$queryRaw`
+        SELECT id FROM "Wallet" WHERE id = ${lockedFrom.id} FOR UPDATE
+      `;
+
+      const lockedUserWallet = await tx.wallet.findUnique({
+        where: { id: lockedFrom.id },
+        select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true, virtualAccountNumber: true },
+      });
+
+      if (!lockedUserWallet?.virtualAccountNumber) {
+        throw new BadRequestException('Source wallet does not have a virtual account number');
+      }
+      if (lockedUserWallet.availableBalance.lt(amount)) {
+        throw new BadRequestException('Insufficient balance');
+      }
+
+      const risk = await tx.wallet.findUnique({
+        where: { id: lockedFrom.id },
+        select: { riskStatus: true, riskScore: true },
+      });
+
+      if (risk?.riskStatus === 'HARD_FREEZE' || risk?.riskStatus === 'SOFT_FREEZE') {
+        throw new BadRequestException(
+          risk.riskStatus === 'HARD_FREEZE'
+            ? `Wallet is hard frozen due to high risk score (${risk.riskScore?.toString() || 'N/A'}). Contact support.`
+            : `Wallet is soft frozen due to elevated risk score (${risk.riskScore?.toString() || 'N/A'}). Transfers are blocked.`,
+        );
+      }
+
+      await tx.transaction.create({
+        data: {
+          walletId: lockedFrom.id,
+          type: TransactionType.SPRAY,
+          direction: TransactionDirection.DEBIT,
+          status: TransactionStatus.PENDING,
+          amount,
+          currencyId: lockedFrom.currencyId,
+          reference: transactionReference,
+          externalReference: null,
+          groupReference: `TRANSFER-${transactionReference}`,
+          narration,
+          securityInfoHash,
+          destinationAccountNumber: toWallet.virtualAccountNumber,
+          destinationAccountName: pending.destinationAccountName as string,
+          metadata: {
+            destinationBankCode: pending.destinationBankCode,
+            destinationBankName: pending.destinationBankName,
+            destinationAccountNumber: toWallet.virtualAccountNumber,
+            destinationAccountName: pending.destinationAccountName,
+            walletToWalletSpray: true,
+            receiverWalletId: toWallet.id,
+          },
+        },
+      });
+
+      return { sourceAccountNumber: lockedUserWallet.virtualAccountNumber as string };
+    });
+
+    try {
+      await this.providerService.processClientTransfer({
+        securityInfo,
+        amount: amount.toNumber(),
+        destinationBankCode: pending.destinationBankCode as string,
+        destinationBankName: (pending.destinationBankName as string) || 'Unknown',
+        destinationAccountNumber: toWallet.virtualAccountNumber as string,
+        destinationAccountName: (pending.destinationAccountName as string) || 'Unknown',
+        sourceAccountNumber: initiation.sourceAccountNumber,
+        narration,
+        transactionReference,
+        useCustomNarration: true,
+      });
+    } catch (error: any) {
+      await this.databaseService.transaction.update({
+        where: { reference: transactionReference },
+        data: { status: TransactionStatus.FAILED, providerStatus: 'FAILED', providerCallbackReceivedAt: new Date() },
+      });
+      throw error;
+    }
+
+    this.logger.log(
+      `W2W submitted via provider: ref=${transactionReference}, from=${pending.fromWalletId}, to=${pending.toWalletId}, amount=${amount.toString()}`,
+    );
+
+    return {
+      success: true,
+      message: 'Transfer submitted and pending provider authorization/processing',
+      transactionRef: transactionReference,
+      status: TransactionStatus.PENDING,
+      fromWalletId: pending.fromWalletId,
+      toWalletId: pending.toWalletId,
     };
   }
 
@@ -667,6 +478,7 @@ export class WalletmoduleService {
 
     // Prepare payout data to store temporarily
     const payoutData = {
+      kind: 'payout' as const,
       fromWalletId: initiateDto.fromWalletId,
       bankCode: initiateDto.bankCode,
       toAccountNumber: initiateDto.toAccountNumber,
@@ -695,737 +507,268 @@ export class WalletmoduleService {
   }
 
   /**
-   * Confirm payout - Step 2: Verify OTP and PIN, execute payout
-   * Implements fee-based payout: 3% fee to organization wallet, 97% to customer
+   * Confirm payout - Step 2: Verify OTP and PIN, execute payout (debit-wallet + callbacks only).
    */
   async confirmPayout(userId: string, otp: string, pin: string) {
-    // Verify OTP
     await this.payoutSecurityService.verifyOtp(userId, otp);
 
-    // Verify PIN
     const isPinValid = await this.payoutSecurityService.verifyPayoutPin(userId, pin);
     if (!isPinValid) {
       throw new UnauthorizedException('Invalid PIN');
     }
 
-    // Retrieve pending payout data
+    const peek = await this.payoutSecurityService.peekPendingPayout(userId);
+    if (!peek) {
+      throw new BadRequestException('No pending payout found. Please initiate a payout first.');
+    }
+    if (peek.kind === 'walletToWallet') {
+      throw new BadRequestException(
+        'You have a pending wallet-to-wallet transfer. Confirm it with POST /wallets/transfer/wallet-to-wallet/confirm instead.',
+      );
+    }
+
     const payoutData = await this.payoutSecurityService.getAndClearPendingPayout(userId);
     if (!payoutData) {
       throw new BadRequestException('No pending payout found. Please initiate a payout first.');
     }
 
-    // New callback-based debit-wallet flow:
-    // If the client provided `securityInfo` and `transactionReference`, we create our local Transaction in PENDING
-    // before calling the provider's ProcessClientTransfer. Wallet/ledger updates happen only via provider callbacks.
-    if (typeof payoutData.securityInfo === 'string' && payoutData.securityInfo.trim() !== '') {
-      const amount = normalizeToKobo(payoutData.amount as string | number);
-      const transactionReference: string = payoutData.transactionReference || `TXN-${randomUUID()}`;
-      const securityInfo = payoutData.securityInfo as string;
-      const securityInfoHash = createHash('sha256').update(securityInfo).digest('hex');
+    if (typeof payoutData.securityInfo !== 'string' || payoutData.securityInfo.trim() === '') {
+      throw new BadRequestException(
+        'Payout confirmation requires securityInfo from the client. Please initiate payout again from the current app version.',
+      );
+    }
 
-      const narration = (payoutData.description as string) || `Wallet payout to ${payoutData.toAccountNumber}`;
+    const amount = normalizeToKobo(payoutData.amount as string | number);
+    const transactionReference: string = payoutData.transactionReference || `TXN-${randomUUID()}`;
+    const securityInfo = payoutData.securityInfo as string;
+    const securityInfoHash = createHash('sha256').update(securityInfo).digest('hex');
+    const narration = (payoutData.description as string) || `Wallet payout to ${payoutData.toAccountNumber}`;
 
-      // Create a PENDING Transaction and then call the provider.
-      const initiation = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
-        const fromWallet = await tx.wallet.findFirst({
-          where: { virtualAccountNumber: payoutData.fromWalletId },
-          include: {
-            customer: {
-              select: { isAmlRestricted: true, tier: true },
+    const previewWallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: payoutData.fromWalletId },
+      include: {
+        customer: { include: { user: true } },
+      },
+    });
+
+    if (!previewWallet) {
+      throw new NotFoundException('Source wallet not found');
+    }
+    if (previewWallet.customer.userId !== userId) {
+      throw new UnauthorizedException('You do not have access to this wallet');
+    }
+    if (previewWallet.customer.isAmlRestricted) {
+      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
+    }
+    if (previewWallet.customer.tier === KycTier.Tier_0 || previewWallet.customer.tier === KycTier.Tier_1) {
+      throw new ForbiddenException(
+        'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
+      );
+    }
+
+    await this.walletRiskService.checkWalletFreezeStatus(previewWallet.id, false);
+
+    const { fee, netAmount, feePercentage } = await calculatePayoutFee(amount, this.configService);
+
+    if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
+      const limitCheck = await this.withdrawalLimitService.checkDailyLimit(previewWallet.customer.id, amount);
+      if (!limitCheck.allowed) {
+        const approvalResult = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
+          const fromWallet = await tx.wallet.findFirst({
+            where: { virtualAccountNumber: payoutData.fromWalletId },
+            include: { customer: true },
+          });
+          if (!fromWallet) throw new NotFoundException('Source wallet not found');
+
+          let destinationAccountName = payoutData.recipientName as string;
+          if (!destinationAccountName) {
+            try {
+              const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
+                payoutData.bankCode as string,
+                payoutData.toAccountNumber as string,
+              );
+              destinationAccountName = nameEnquiry.accountName;
+            } catch (error: any) {
+              this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
+              destinationAccountName = 'Unknown';
+            }
+          }
+
+          let bankAccount = await tx.bankAccount.findFirst({
+            where: {
+              customerId: fromWallet.customerId,
+              accountNumber: payoutData.toAccountNumber as string,
+              bankCode: payoutData.bankCode as string,
             },
-          },
+          });
+
+          if (!bankAccount) {
+            bankAccount = await tx.bankAccount.create({
+              data: {
+                customerId: fromWallet.customerId,
+                accountName: destinationAccountName,
+                accountNumber: payoutData.toAccountNumber as string,
+                bankCode: payoutData.bankCode as string,
+                isVerified: true,
+              },
+            });
+          }
+
+          const placeholderTransaction = await tx.transaction.create({
+            data: {
+              walletId: fromWallet.id,
+              type: TransactionType.PAYOUT,
+              direction: TransactionDirection.DEBIT,
+              status: TransactionStatus.PENDING,
+              amount,
+              currencyId: fromWallet.currencyId,
+              reference: `PAYOUT-PENDING-${randomUUID()}`,
+              externalReference: null,
+              narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'} (Pending Approval)`,
+              metadata: {
+                fee: fee.toString(),
+                netAmount: netAmount.toString(),
+                feePercentage: feePercentage.toString(),
+                feeType: 'payout',
+                destinationAccount: payoutData.toAccountNumber,
+                destinationBank: payoutData.bankCode,
+                requiresApproval: true,
+                approvalReason: 'Exceeds daily withdrawal limit',
+              },
+            },
+          });
+
+          const pendingPayoutTransaction = await tx.payoutTransaction.create({
+            data: {
+              walletId: fromWallet.id,
+              bankAccountId: bankAccount.id,
+              amount,
+              fee,
+              status: 'PENDING',
+              transactionId: placeholderTransaction.id,
+              requiresApproval: true,
+              approvalReason: 'Exceeds daily withdrawal limit',
+              providerPayload: {
+                payoutData,
+                limitCheck: {
+                  currentLimit: limitCheck.currentLimit.toString(),
+                  used: limitCheck.used.toString(),
+                  remaining: limitCheck.remaining.toString(),
+                },
+              },
+            },
+          });
+
+          return {
+            success: true,
+            message: 'Withdrawal request submitted for admin approval. You will be notified once it is reviewed.',
+            requiresApproval: true as const,
+            payoutTransactionId: pendingPayoutTransaction.id,
+            transactionId: placeholderTransaction.id,
+          };
         });
 
-        if (!fromWallet) throw new NotFoundException('Source wallet not found');
-        if (!fromWallet.virtualAccountNumber) throw new BadRequestException('Wallet does not have a virtual account number');
+        this.logger.log(
+          `Withdrawal requires approval (limit). PayoutTransactionId: ${approvalResult.payoutTransactionId}`,
+        );
+        return approvalResult;
+      }
+    }
 
-        if (fromWallet.customer.isAmlRestricted) {
-          throw new BadRequestException('User account is restricted due to AML compliance. Contact support.');
-        }
+    const initiation = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
+      const fromWallet = await tx.wallet.findFirst({
+        where: { virtualAccountNumber: payoutData.fromWalletId },
+        include: {
+          customer: {
+            select: { isAmlRestricted: true, tier: true, userId: true },
+          },
+        },
+      });
 
-        // Convert amount to the provider expected number format.
-        // (We store in Decimal already; provider expects numeric amount.)
-        const createdTransaction = await tx.transaction.create({
-          data: {
-            walletId: fromWallet.id,
-            type: TransactionType.PAYOUT,
-            direction: TransactionDirection.DEBIT,
-            status: TransactionStatus.PENDING,
-            amount,
-            currencyId: fromWallet.currencyId,
-            reference: transactionReference,
-            externalReference: null,
-            groupReference: `TRANSFER-${transactionReference}`,
-            narration,
-            metadata: {
-              destinationBankCode: payoutData.bankCode ?? null,
-              destinationBankName: payoutData.destinationBankName ?? null,
-              destinationAccountNumber: payoutData.toAccountNumber ?? null,
-              destinationAccountName: payoutData.recipientName ?? null,
-              // Do not store raw securityInfo; we only store its hash in DB.
-            },
-            securityInfoHash,
+      if (!fromWallet) throw new NotFoundException('Source wallet not found');
+      if (!fromWallet.virtualAccountNumber) throw new BadRequestException('Wallet does not have a virtual account number');
+      if (fromWallet.customer.userId !== userId) throw new UnauthorizedException('You do not have access to this wallet');
+
+      await tx.$queryRaw`
+        SELECT id FROM "Wallet" WHERE id = ${fromWallet.id} FOR UPDATE
+      `;
+
+      const lockedUserWallet = await tx.wallet.findUnique({
+        where: { id: fromWallet.id },
+        select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
+      });
+
+      if (!lockedUserWallet) throw new NotFoundException('User wallet not found after lock');
+      if (lockedUserWallet.availableBalance.lt(amount)) {
+        throw new BadRequestException('Insufficient balance');
+      }
+
+      const risk = await tx.wallet.findUnique({
+        where: { id: fromWallet.id },
+        select: { riskStatus: true, riskScore: true },
+      });
+
+      if (risk?.riskStatus === 'HARD_FREEZE' || risk?.riskStatus === 'SOFT_FREEZE') {
+        throw new BadRequestException(
+          risk.riskStatus === 'HARD_FREEZE'
+            ? `Wallet is hard frozen due to high risk score (${risk.riskScore?.toString() || 'N/A'}). Contact support.`
+            : `Wallet is soft frozen due to elevated risk score (${risk.riskScore?.toString() || 'N/A'}). Payouts are blocked.`,
+        );
+      }
+
+      await tx.transaction.create({
+        data: {
+          walletId: fromWallet.id,
+          type: TransactionType.PAYOUT,
+          direction: TransactionDirection.DEBIT,
+          status: TransactionStatus.PENDING,
+          amount,
+          currencyId: fromWallet.currencyId,
+          reference: transactionReference,
+          externalReference: null,
+          groupReference: `TRANSFER-${transactionReference}`,
+          narration,
+          metadata: {
+            destinationBankCode: payoutData.bankCode ?? null,
+            destinationBankName: payoutData.destinationBankName ?? null,
             destinationAccountNumber: payoutData.toAccountNumber ?? null,
             destinationAccountName: payoutData.recipientName ?? null,
           },
-        });
-
-        return {
-          createdTransactionId: createdTransaction.id,
-          sourceAccountNumber: fromWallet.virtualAccountNumber as string,
-        };
-      });
-
-      try {
-        await this.providerService.processClientTransfer({
-          securityInfo,
-          amount: amount.toNumber(),
-          destinationBankCode: payoutData.bankCode,
-          destinationBankName: payoutData.destinationBankName || 'Unknown',
-          destinationAccountNumber: payoutData.toAccountNumber,
-          destinationAccountName: payoutData.recipientName || 'Unknown',
-          sourceAccountNumber: initiation.sourceAccountNumber,
-          narration,
-          transactionReference,
-          useCustomNarration: true,
-        });
-      } catch (error: any) {
-        // Provider didn't accept the transfer; reflect failure locally so retries can happen safely.
-        await this.databaseService.transaction.update({
-          where: { reference: transactionReference },
-          data: { status: TransactionStatus.FAILED, providerStatus: 'FAILED', providerCallbackReceivedAt: new Date() },
-        });
-        throw error;
-      }
-
-      return {
-        success: true,
-        message: 'Transfer submitted and pending authorization/processing',
-        transactionRef: transactionReference,
-        status: TransactionStatus.PENDING,
-      };
-    }
-
-    // Convert amount from string to Decimal and normalize to kobo precision
-    const grossAmount = normalizeToKobo(payoutData.amount as string | number);
-
-    // Calculate payout fee (3%)
-    const { fee, netAmount, feePercentage } = await calculatePayoutFee(grossAmount, this.configService);
-
-    // Use database transaction for atomicity
-    const result = await this.databaseService.$transaction(
-      async (tx: Prisma.TransactionClient) => {
-        // Find user wallet
-        const fromWallet = await tx.wallet.findFirst({
-          where: { virtualAccountNumber: payoutData.fromWalletId },
-          include: {
-            customer: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        });
-
-        if (!fromWallet) {
-          throw new NotFoundException('Source wallet not found');
-        }
-
-        if (!fromWallet.virtualAccountNumber) {
-          throw new BadRequestException('Wallet does not have a virtual account number');
-        }
-
-        // Lock user wallet
-        await tx.$queryRaw`
-          SELECT id FROM "Wallet" WHERE id = ${fromWallet.id} FOR UPDATE
-        `;
-
-        // Re-fetch with lock to get latest balance
-        const lockedUserWallet = await tx.wallet.findUnique({
-          where: { id: fromWallet.id },
-          select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
-        });
-
-        if (!lockedUserWallet) {
-          throw new NotFoundException('User wallet not found after lock');
-        }
-
-        // Check AML restriction
-        if (fromWallet.customer.isAmlRestricted) {
-          throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-        }
-
-        // Only Tier_2 and Tier_3 users are allowed to withdraw
-        if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
-          throw new ForbiddenException(
-            'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-          );
-        }
-
-        // Check withdrawal limit for Tier 2 and Tier 3 users
-        let requiresApproval = false;
-        if (fromWallet.customer.tier === KycTier.Tier_2 || fromWallet.customer.tier === KycTier.Tier_3) {
-          const limitCheck = await this.withdrawalLimitService.checkDailyLimit(fromWallet.customer.id, grossAmount);
-
-          if (!limitCheck.allowed) {
-            // Instead of throwing error, create a pending approval request
-            requiresApproval = true;
-
-            // Get destination account name if not provided
-            let destinationAccountName = payoutData.recipientName as string;
-            if (!destinationAccountName) {
-              try {
-                const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
-                  payoutData.bankCode as string,
-                  payoutData.toAccountNumber as string,
-                );
-                destinationAccountName = nameEnquiry.accountName;
-              } catch (error) {
-                this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
-                destinationAccountName = 'Unknown';
-              }
-            }
-
-            // Find or create bank account record
-            let bankAccount = await tx.bankAccount.findFirst({
-              where: {
-                customerId: fromWallet.customerId,
-                accountNumber: payoutData.toAccountNumber as string,
-                bankCode: payoutData.bankCode as string,
-              },
-            });
-
-            if (!bankAccount) {
-              bankAccount = await tx.bankAccount.create({
-                data: {
-                  customerId: fromWallet.customerId,
-                  accountName: destinationAccountName,
-                  accountNumber: payoutData.toAccountNumber as string,
-                  bankCode: payoutData.bankCode as string,
-                  isVerified: true,
-                },
-              });
-            }
-
-            // Create a placeholder transaction for the pending approval
-            const placeholderTransaction = await tx.transaction.create({
-              data: {
-                walletId: fromWallet.id,
-                type: TransactionType.PAYOUT,
-                direction: TransactionDirection.DEBIT,
-                status: TransactionStatus.PENDING,
-                amount: grossAmount,
-                currencyId: fromWallet.currencyId,
-                reference: `PAYOUT-PENDING-${randomUUID()}`,
-                externalReference: null,
-                narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'} (Pending Approval)`,
-                metadata: {
-                  fee: fee.toString(),
-                  netAmount: netAmount.toString(),
-                  feePercentage: feePercentage.toString(),
-                  feeType: 'payout',
-                  destinationAccount: payoutData.toAccountNumber,
-                  destinationBank: payoutData.bankCode,
-                  requiresApproval: true,
-                  approvalReason: 'Exceeds daily withdrawal limit',
-                },
-              },
-            });
-
-            // Create PayoutTransaction with requiresApproval flag
-            const pendingPayoutTransaction = await tx.payoutTransaction.create({
-              data: {
-                walletId: fromWallet.id,
-                bankAccountId: bankAccount.id,
-                amount: grossAmount,
-                fee,
-                status: 'PENDING',
-                transactionId: placeholderTransaction.id,
-                requiresApproval: true,
-                approvalReason: 'Exceeds daily withdrawal limit',
-                providerPayload: {
-                  payoutData: payoutData,
-                  limitCheck: {
-                    currentLimit: limitCheck.currentLimit.toString(),
-                    used: limitCheck.used.toString(),
-                    remaining: limitCheck.remaining.toString(),
-                  },
-                },
-              },
-            });
-
-            // Return early - no wallet debit, no provider calls
-            return {
-              success: true,
-              message: 'Withdrawal request submitted for admin approval. You will be notified once it is reviewed.',
-              requiresApproval: true,
-              payoutTransactionId: pendingPayoutTransaction.id,
-              transactionId: placeholderTransaction.id,
-            };
-          }
-        }
-
-        // Re-check balance (in case it changed)
-        if (lockedUserWallet.availableBalance.lt(grossAmount)) {
-          throw new BadRequestException('Insufficient balance');
-        }
-
-        // Check wallet freeze status (soft freeze blocks payouts, hard freeze blocks all)
-        // For payouts, we check with blockAllTransactions=false to allow soft freeze to block
-        const wallet = await tx.wallet.findUnique({
-          where: { id: fromWallet.id },
-          select: { riskStatus: true, riskScore: true },
-        });
-
-        if (wallet?.riskStatus === 'HARD_FREEZE') {
-          // Log AML transaction block (non-blocking)
-          try {
-            this.amlLoggingService.logTransactionBlocked(
-              fromWallet.id,
-              'N/A', // Transaction ID not yet created
-              'PAYOUT',
-              'DEBIT',
-              grossAmount,
-              `Hard freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
-              wallet.riskStatus,
-              wallet.riskScore?.toNumber(),
-              fromWallet.customerId,
-              userId,
-              {
-                destinationAccount: payoutData.toAccountNumber,
-                destinationBank: payoutData.bankCode,
-              },
-            );
-          } catch (logError) {
-            // Log the logging error but don't block transaction
-            this.logger.error(`AML logging failed for hard freeze: ${logError.message}`);
-          }
-
-          throw new BadRequestException(
-            `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-              `All transactions are blocked. Please contact support.`,
-          );
-        }
-
-        if (wallet?.riskStatus === 'SOFT_FREEZE') {
-          // Log AML transaction block (non-blocking)
-          try {
-            this.amlLoggingService.logTransactionBlocked(
-              fromWallet.id,
-              'N/A', // Transaction ID not yet created
-              'PAYOUT',
-              'DEBIT',
-              grossAmount,
-              `Soft freeze - Risk score: ${wallet.riskScore?.toString() || 'N/A'}`,
-              wallet.riskStatus,
-              wallet.riskScore?.toNumber(),
-              fromWallet.customerId,
-              userId,
-              {
-                destinationAccount: payoutData.toAccountNumber,
-                destinationBank: payoutData.bankCode,
-              },
-            );
-          } catch (logError) {
-            // Log the logging error but don't block transaction
-            this.logger.error(`AML logging failed for soft freeze: ${logError.message}`);
-          }
-
-          throw new BadRequestException(
-            `Wallet is soft frozen due to elevated risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-              `Payouts are blocked. Please contact support.`,
-          );
-        }
-
-        // Process payout using helper method (normal flow - within limit)
-        return await this.processPayoutTransaction(
-          tx,
-          fromWallet,
-          payoutData,
-          grossAmount,
-          fee,
-          netAmount,
-          feePercentage,
-        );
-      },
-      {
-        timeout: 15000, // 15 second timeout for payout transaction
-      },
-    );
-
-    // Handle post-payout actions only for successful payouts (not approval-required)
-    // Use type guard: check if 'requiresApproval' exists in result to narrow the union type
-    if (result.success && !('requiresApproval' in result)) {
-      // TypeScript now knows this is a successful payout with fromWalletId, toAccountNumber, etc.
-      const successfulResult = result as {
-        success: boolean;
-        message: string;
-        transactionRef: string;
-        fromWalletId: string;
-        toAccountNumber: string;
-        bankCode: string;
-        bankName: string | null;
-        amount: string;
-        fee: string;
-        netAmount: string;
-        payoutTransactionId: string;
-      };
-
-      // Recalculate risk score after payout (outside transaction to avoid blocking)
-      this.walletRiskService.updateWalletRiskScore(successfulResult.fromWalletId).catch((error) => {
-        this.logger.error(`Failed to update risk score after payout: ${error.message}`);
-      });
-
-      // Send email notification for withdrawal request (PENDING status)
-      // Fetch wallet with user info and bank account for email
-      const walletWithUser = await this.databaseService.wallet.findUnique({
-        where: { id: successfulResult.fromWalletId },
-        include: {
-          customer: {
-            include: {
-              user: true,
-              bankAccounts: {
-                where: {
-                  accountNumber: successfulResult.toAccountNumber,
-                },
-                take: 1,
-              },
-            },
-          },
+          securityInfoHash,
+          destinationAccountNumber: payoutData.toAccountNumber ?? null,
+          destinationAccountName: payoutData.recipientName ?? null,
         },
       });
 
-      if (walletWithUser?.customer?.user?.email) {
-        const firstName = walletWithUser.customer.user.firstName || walletWithUser.customer.firstName || undefined;
-        const bankAccount = walletWithUser.customer.bankAccounts?.[0];
-        const bankName = bankAccount?.accountName ? undefined : undefined; // Could look up from bankCode if needed
-
-        this.emailService
-          .sendWithdrawalStatusAlert(
-            walletWithUser.customer.user.email,
-            successfulResult.amount,
-            'PENDING',
-            successfulResult.toAccountNumber,
-            successfulResult.transactionRef,
-            'Your withdrawal request has been submitted and is being processed.',
-            firstName,
-            bankName,
-            new Date(),
-          )
-          .catch((error) => {
-            this.logger.error(`Failed to send withdrawal request email: ${error.message}`);
-          });
-      }
-    } else if (result.success && 'requiresApproval' in result) {
-      // For approval-required withdrawals, we could send a different email notification
-      // but for now, we'll skip the risk score update and email since it's pending approval
-      const approvalResult = result as {
-        success: boolean;
-        message: string;
-        requiresApproval: boolean;
-        payoutTransactionId: string;
-        transactionId: string;
-      };
-      this.logger.log(
-        `Withdrawal requires approval. Skipping risk score update and email notification. PayoutTransactionId: ${approvalResult.payoutTransactionId}`,
-      );
-    }
-
-    return result;
-  }
-
-  /**
-   * Process payout transaction - helper method for executing payout
-   * This method handles the actual payout processing: wallet debit, provider calls, transaction creation
-   * Can be called from confirmPayout (normal flow) or approveWithdrawal (admin approval flow)
-   */
-  async processPayoutTransaction(
-    tx: Prisma.TransactionClient,
-    fromWallet: any,
-    payoutData: any,
-    grossAmount: Decimal,
-    fee: Decimal,
-    netAmount: Decimal,
-    feePercentage: Decimal,
-  ) {
-    // Get admin wallet account number (for tracking purposes)
-    const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
-
-    // Generate transaction references
-    const userTransactionRef = `PAYOUT-${randomUUID()}`;
-    const providerTransactionRef = randomUUID();
-
-    // Step 1: Transfer full amount from user wallet to organization wallet (wallet-to-wallet)
-    // Execute with provider - use account number directly
-    const userToOrgProviderResponse = await this.providerService.walletToWalletTransfer({
-      fromWalletId: fromWallet.virtualAccountNumber,
-      toWalletId: adminWalletAccountNumber, // Use account number directly from env
-      amount: grossAmount.toNumber(),
-      currencyId: fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-      description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
-      reference: userTransactionRef,
+      return { sourceAccountNumber: fromWallet.virtualAccountNumber as string };
     });
 
-    if (!userToOrgProviderResponse.success) {
-      throw new BadRequestException(`Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`);
-    }
-
-    // Log PAYOUT LEG 1: User wallet → Organization wallet
-    this.logger.log(
-      `💸 PAYOUT LEG 1 (User→Org): Amount=${grossAmount.toString()}, ` +
-        `From=${fromWallet.virtualAccountNumber} (${fromWallet.id}), ` +
-        `To=${adminWalletAccountNumber}, ` +
-        `Reference=${userTransactionRef}, ` +
-        `ProviderResponse=${JSON.stringify(userToOrgProviderResponse.data)}`,
-    );
-
-    // Lock user wallet for balance update
-    await tx.$queryRaw`
-      SELECT id FROM "Wallet" WHERE id = ${fromWallet.id} FOR UPDATE
-    `;
-
-    // Re-fetch with lock to get latest balance
-    const lockedUserWallet = await tx.wallet.findUnique({
-      where: { id: fromWallet.id },
-      select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
-    });
-
-    if (!lockedUserWallet) {
-      throw new NotFoundException('User wallet not found after lock');
-    }
-
-    // Re-check balance (in case it changed)
-    if (lockedUserWallet.availableBalance.lt(grossAmount)) {
-      throw new BadRequestException('Insufficient balance');
-    }
-
-    // Create DEBIT transaction for user wallet (full amount)
-    // Transaction table only tracks user-facing transactions
-    const userDebitTransaction = await tx.transaction.create({
-      data: {
-        walletId: fromWallet.id,
-        type: TransactionType.PAYOUT,
-        direction: TransactionDirection.DEBIT,
-        status: TransactionStatus.SUCCESS,
-        amount: grossAmount,
-        currencyId: fromWallet.currencyId,
-        reference: userTransactionRef,
-        externalReference: null,
-        narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'}`,
-        metadata: {
-          fee: fee.toString(),
-          netAmount: netAmount.toString(),
-          feePercentage: feePercentage.toString(),
-          feeType: 'payout',
-          destinationAccount: payoutData.toAccountNumber,
-          destinationBank: payoutData.bankCode,
-        },
-      },
-    });
-
-    // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
-    // Get destination account name if not provided
-    let destinationAccountName = payoutData.recipientName as string;
-    if (!destinationAccountName) {
-      try {
-        const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
-          payoutData.bankCode as string,
-          payoutData.toAccountNumber as string,
-        );
-        destinationAccountName = nameEnquiry.accountName;
-      } catch (error) {
-        this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
-        destinationAccountName = 'Unknown';
-      }
-    }
-
-    // Get source account name
-    const customerName =
-      fromWallet.customer.firstName && fromWallet.customer.lastName
-        ? `${fromWallet.customer.firstName} ${fromWallet.customer.lastName}`
-        : null;
-    const userName =
-      fromWallet.customer.user.firstName && fromWallet.customer.user.lastName
-        ? `${fromWallet.customer.user.firstName} ${fromWallet.customer.user.lastName}`
-        : null;
-    const sourceAccountName = fromWallet.name || customerName || userName || 'Unknown';
-
-    // Step 2: Transfer 97% (netAmount) from organization wallet to external bank
-    // Execute inter-bank transfer from organization wallet
-    // Use admin wallet account number directly from env
-    const orgToBankProviderResponse = await this.providerService.interBankTransfer({
-      destinationBankCode: payoutData.bankCode as string,
-      destinationAccountNumber: payoutData.toAccountNumber as string,
-      destinationAccountName: destinationAccountName,
-      sourceAccountNumber: adminWalletAccountNumber, // Use account number directly from env
-      sourceAccountName: sourceAccountName,
-      remarks: (payoutData.description as string) || 'Wallet payout',
-      amount: netAmount.toNumber(), // Transfer net amount (97%)
-      currencyId: payoutData.currencyId as string,
-      customerTransactionReference: providerTransactionRef,
-    });
-
-    // Log PAYOUT LEG 2: Organization wallet → External bank
-    this.logger.log(
-      `💸 PAYOUT LEG 2 (Org→Bank): NetAmount=${netAmount.toString()}, ` +
-        `GrossAmount=${grossAmount.toString()}, Fee=${fee.toString()}, ` +
-        `From=${adminWalletAccountNumber}, ` +
-        `To=${payoutData.toAccountNumber} (${payoutData.bankCode}), ` +
-        `RecipientName="${destinationAccountName}", ` +
-        `ProviderRef=${providerTransactionRef}, ` +
-        `UserTxId=${userDebitTransaction.id}, ` +
-        `ProviderResponse=${JSON.stringify(orgToBankProviderResponse)}`,
-    );
-
-    // Update user wallet balance (deduct full amount)
-    const newUserAvailableBalance = normalizeToKobo(lockedUserWallet.availableBalance.minus(grossAmount));
-    const newUserLedgerBalance = normalizeToKobo(lockedUserWallet.ledgerBalance.minus(grossAmount));
-
-    // Update user wallet
-    await tx.wallet.update({
-      where: { id: fromWallet.id },
-      data: {
-        availableBalance: newUserAvailableBalance,
-        ledgerBalance: newUserLedgerBalance,
-      },
-    });
-
-    // Find or create bank account record
-    let bankAccount = await tx.bankAccount.findFirst({
-      where: {
-        customerId: fromWallet.customerId,
-        accountNumber: payoutData.toAccountNumber as string,
-        bankCode: payoutData.bankCode as string,
-      },
-    });
-
-    if (!bankAccount) {
-      bankAccount = await tx.bankAccount.create({
-        data: {
-          customerId: fromWallet.customerId,
-          accountName: destinationAccountName,
-          accountNumber: payoutData.toAccountNumber as string,
-          bankCode: payoutData.bankCode as string,
-          isVerified: true,
-        },
-      });
-    }
-
-    // Create PayoutTransaction record
-    const payoutTransaction = await tx.payoutTransaction.create({
-      data: {
-        walletId: fromWallet.id,
-        bankAccountId: bankAccount.id,
-        amount: grossAmount, // Full amount requested
-        fee, // 3% fee
-        status: 'PENDING', // Will be updated by webhook
-        transactionId: userDebitTransaction.id, // Link to user debit transaction
-        providerTransactionRef, // Link to provider transaction
-        providerPayload: {
-          userToOrgTransfer: userToOrgProviderResponse.data,
-          orgToBankTransfer: orgToBankProviderResponse,
-          netAmount: netAmount.toString(),
-        },
-      },
-    });
-
-    // Create AdminFee record (separate table for fee tracking)
-    // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
-    // feePercentage should be between 0 and 1 (e.g., 0.03 for 3%), so we ensure it's properly formatted
-    const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
-
-    // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
-    if (normalizedFeePercentage.gte(new Decimal('10'))) {
-      this.logger.error(
-        `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
-          `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.03 for 3%), not percentage (e.g., 3).`,
-      );
-      throw new BadRequestException(
-        `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
-          `Fee percentage must be less than 10. Please check ADMIN_PAYOUT_FEE environment variable.`,
-      );
-    }
-
-    await tx.adminFee.create({
-      data: {
-        walletId: fromWallet.id,
-        customerId: fromWallet.customerId,
-        amount: fee, // 3% fee
-        feeType: 'payout',
-        feePercentage: normalizedFeePercentage,
-        relatedTransactionId: userDebitTransaction.id, // Link to user's payout transaction
-        payoutTransactionId: payoutTransaction.id, // Link to payout transaction
-        status: 'COLLECTED',
-        grossAmount: grossAmount,
-        netAmount: netAmount,
-        adminWalletAccountNumber: adminWalletAccountNumber,
-        metadata: {
-          destinationAccount: payoutData.toAccountNumber,
-          destinationBank: payoutData.bankCode,
-          recipientName: destinationAccountName,
-          providerTransactionRef: providerTransactionRef,
-          userToOrgTransfer: userToOrgProviderResponse.data,
-          orgToBankTransfer: orgToBankProviderResponse,
-        },
-      },
-    });
-
-    // Record withdrawal for Tier 2 and Tier 3 users (outside transaction to avoid blocking)
-    if (fromWallet.customer.tier === KycTier.Tier_2 || fromWallet.customer.tier === KycTier.Tier_3) {
-      this.withdrawalLimitService.recordWithdrawal(fromWallet.customer.id, grossAmount).catch((error) => {
-        this.logger.error(`Failed to record withdrawal for customer ${fromWallet.customer.id}: ${error.message}`);
-      });
-    }
-
-    // Get bank name from bank code
-    let bankName: string | null = null;
     try {
-      const banks = await this.providerService.getBanks();
-
-      // Helper function to normalize bank codes for comparison (remove leading zeros)
-      const normalizeBankCode = (code: string | number | null | undefined): string => {
-        if (code === null || code === undefined) return '';
-        return String(code).trim().replace(/^0+/, '') || '0';
-      };
-
-      const payoutBankCode = normalizeBankCode(payoutData.bankCode);
-
-      // Find matching bank using normalized comparison
-      const bank = banks.find((b) => {
-        const bankCode = normalizeBankCode(b.bankcode);
-        return bankCode === payoutBankCode;
+      await this.providerService.processClientTransfer({
+        securityInfo,
+        amount: amount.toNumber(),
+        destinationBankCode: payoutData.bankCode,
+        destinationBankName: payoutData.destinationBankName || 'Unknown',
+        destinationAccountNumber: payoutData.toAccountNumber,
+        destinationAccountName: payoutData.recipientName || 'Unknown',
+        sourceAccountNumber: initiation.sourceAccountNumber,
+        narration,
+        transactionReference,
+        useCustomNarration: true,
       });
-
-      bankName = bank?.bankname || null;
     } catch (error: any) {
-      this.logger.warn(`Failed to fetch bank name for code ${payoutData.bankCode}: ${error.message}`);
-      // Continue without bank name - not critical
+      await this.databaseService.transaction.update({
+        where: { reference: transactionReference },
+        data: { status: TransactionStatus.FAILED, providerStatus: 'FAILED', providerCallbackReceivedAt: new Date() },
+      });
+      throw error;
     }
-
-    // Log complete payout transaction
-    this.logger.log(
-      `✅ PAYOUT CONFIRMED: GrossAmount=${grossAmount.toString()}, ` +
-        `Fee=${fee.toString()}, NetAmount=${netAmount.toString()}, ` +
-        `WalletId=${fromWallet.id}, ` +
-        `ToAccount=${payoutData.toAccountNumber}, ` +
-        `BankCode=${payoutData.bankCode}, ` +
-        `PayoutTxId=${payoutTransaction.id}, ` +
-        `UserTxId=${userDebitTransaction.id}, ` +
-        `ProviderRef=${providerTransactionRef}`,
-    );
 
     return {
       success: true,
-      message: orgToBankProviderResponse.message || 'Payout initiated successfully',
-      transactionRef: providerTransactionRef,
-      fromWalletId: fromWallet.id,
-      toAccountNumber: payoutData.toAccountNumber,
-      bankCode: payoutData.bankCode,
-      bankName: bankName,
-      amount: grossAmount.toString(),
-      fee: fee.toString(),
-      netAmount: netAmount.toString(),
-      payoutTransactionId: payoutTransaction.id,
+      message: 'Transfer submitted and pending authorization/processing',
+      transactionRef: transactionReference,
+      status: TransactionStatus.PENDING,
     };
   }
 
@@ -1468,190 +811,104 @@ export class WalletmoduleService {
       throw new BadRequestException('Wallet does not have a virtual account number');
     }
 
-    // Get history from provider using account number
-    // Request more records if filtering is needed to ensure we have enough results after filtering
-    const providerPageSize =
-      query || status || type || minAmount !== undefined || maxAmount !== undefined
-        ? (pageSize || 20) * 3 // Request 3x more to account for filtering
-        : pageSize || 20;
+    const startRange = new Date(`${fromDate}T00:00:00.000Z`);
+    const endRange = new Date(`${toDate}T23:59:59.999Z`);
 
-    const history = await this.providerService.getWalletHistoryByAccountNumber(
-      wallet.virtualAccountNumber,
-      fromDate,
-      toDate,
-      page,
-      providerPageSize,
-    );
+    const andConditions: object[] = [
+      { walletId: wallet.id },
+      { createdAt: { gte: startRange, lte: endRange } },
+    ];
 
-    // Get database transactions to match status and type if filters are provided
-    let dbTransactions: Map<string, { status: string; type: string }> = new Map();
-    // For SPRAY type, we also need groupReference to match credit transactions
-    let sprayTransactions: Array<{
-      reference: string | null;
-      externalReference: string | null;
-      groupReference: string | null;
-      status: string;
-      type: string;
-      amount: any;
-      createdAt: Date;
-    }> = [];
-    if ((status && status !== 'all') || (type && type !== 'all')) {
-      const transactions = await this.databaseService.transaction.findMany({
-        where: {
-          walletId: wallet.id,
-          createdAt: {
-            gte: new Date(fromDate),
-            lte: new Date(toDate + 'T23:59:59.999Z'),
-          },
-        },
-        select: {
-          reference: true,
-          externalReference: true,
-          groupReference: true,
-          status: true,
-          type: true,
-          amount: true,
-          createdAt: true,
-        },
-      });
-
-      // Store spray transactions separately for special handling
-      if (type && type.toLowerCase() === 'spray') {
-        sprayTransactions = transactions.filter((tx) => tx.type === 'SPRAY');
-      }
-
-      // Create a map of reference -> {status, type} for quick lookup
-      // Check both reference and externalReference to match provider's transactionReference
-      transactions.forEach((tx) => {
-        const txData = { status: tx.status, type: tx.type };
-        if (tx.reference) {
-          dbTransactions.set(tx.reference, txData);
-        }
-        if (tx.externalReference) {
-          dbTransactions.set(tx.externalReference, txData);
-        }
-      });
-    }
-
-    // Apply filters
-    let filteredTransactions = history.transactions || [];
-
-    // Search filter (case-insensitive search in description)
-    if (query && query.trim()) {
-      const searchQuery = query.trim().toLowerCase();
-      filteredTransactions = filteredTransactions.filter(
-        (tx) =>
-          tx.description?.toLowerCase().includes(searchQuery) || tx.reference?.toLowerCase().includes(searchQuery),
-      );
-    }
-
-    // Status filter
-    if (status && status !== 'all') {
-      filteredTransactions = filteredTransactions.filter((tx) => {
-        const txData = dbTransactions.get(tx.reference || '');
-        if (!txData) return false; // Skip if we can't find transaction in database
-
-        const statusMap: Record<string, string> = {
-          successful: 'SUCCESS',
-          pending: 'PENDING',
-          failed: 'FAILED',
-        };
-        return txData.status === statusMap[status.toLowerCase()];
-      });
-    }
-
-    // Type filter
     if (type && type !== 'all') {
-      const typeMap: Record<string, string> = {
-        inflow: 'INFLOW',
-        spray: 'SPRAY',
-        payout: 'PAYOUT',
-        refund: 'REFUND',
-        adjustment: 'ADJUSTMENT',
+      const typeMap: Record<string, TransactionType> = {
+        inflow: TransactionType.INFLOW,
+        spray: TransactionType.SPRAY,
+        payout: TransactionType.PAYOUT,
+        refund: TransactionType.REFUND,
+        adjustment: TransactionType.ADJUSTMENT,
       };
-      const targetType = typeMap[type.toLowerCase()];
-
-      if (type.toLowerCase() === 'spray') {
-        // Special handling for SPRAY type to include both debit and credit transactions
-        // Credit spray transactions may have different references from the provider,
-        // so we need to match them using fuzzy matching (amount + timestamp)
-        filteredTransactions = filteredTransactions.filter((tx) => {
-          // First try direct reference match
-          let txData = dbTransactions.get(tx.reference || '');
-
-          // If no direct match, try to find a matching spray transaction
-          // by checking if any spray transaction has a matching reference or externalReference
-          if (!txData) {
-            const matchingSpray = sprayTransactions.find(
-              (st) =>
-                (st.reference && st.reference === tx.reference) ||
-                (st.externalReference && st.externalReference === tx.reference),
-            );
-
-            if (matchingSpray) {
-              txData = { status: matchingSpray.status, type: matchingSpray.type };
-            } else {
-              // If still no match, try fuzzy matching by amount and timestamp
-              // This handles cases where provider reference doesn't match our reference
-              // This is especially important for credit spray transactions which may have different references
-              const providerAmount = new Decimal(tx.amount || 0);
-              const providerTimestamp = tx.timestamp ? new Date(tx.timestamp) : null;
-
-              const fuzzyMatch = sprayTransactions.find((st) => {
-                // Amount must match exactly
-                if (!st.amount) return false;
-                const amountMatch = new Decimal(st.amount).equals(providerAmount);
-                if (!amountMatch) return false;
-
-                // Timestamp must be very close (within 2 minutes) to ensure we're matching the right transaction
-                if (providerTimestamp) {
-                  const timeDiff = Math.abs(providerTimestamp.getTime() - st.createdAt.getTime());
-                  // Allow 2 minute window for matching (accounts for slight timing differences)
-                  return timeDiff <= 2 * 60 * 1000;
-                }
-                // If no timestamp, only match by amount (less reliable, but better than nothing)
-                return true;
-              });
-
-              if (fuzzyMatch) {
-                txData = { status: fuzzyMatch.status, type: fuzzyMatch.type };
-              }
-            }
-          }
-
-          if (!txData) return false;
-          return txData.type === 'SPRAY';
-        });
-      } else {
-        // For other types, use existing logic
-        filteredTransactions = filteredTransactions.filter((tx) => {
-          const txData = dbTransactions.get(tx.reference || '');
-          if (!txData) return false; // Skip if we can't find transaction in database
-          return txData.type === targetType;
-        });
+      const mapped = typeMap[type.toLowerCase()];
+      if (mapped) {
+        andConditions.push({ type: mapped });
       }
     }
 
-    // Amount range filter
-    if (minAmount !== undefined) {
-      filteredTransactions = filteredTransactions.filter((tx) => tx.amount >= minAmount);
-    }
-    if (maxAmount !== undefined) {
-      filteredTransactions = filteredTransactions.filter((tx) => tx.amount <= maxAmount);
+    if (status && status !== 'all') {
+      const statusMap: Record<string, TransactionStatus> = {
+        successful: TransactionStatus.SUCCESS,
+        pending: TransactionStatus.PENDING,
+        failed: TransactionStatus.FAILED,
+      };
+      const mapped = statusMap[status.toLowerCase()];
+      if (mapped) {
+        andConditions.push({ status: mapped });
+      }
     }
 
-    // Re-paginate after filtering
-    const totalFiltered = filteredTransactions.length;
-    const startIndex = ((page || 1) - 1) * (pageSize || 20);
-    const endIndex = startIndex + (pageSize || 20);
-    const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex);
+    if (minAmount !== undefined || maxAmount !== undefined) {
+      const amountFilter: { gte?: Decimal; lte?: Decimal } = {};
+      if (minAmount !== undefined) amountFilter.gte = new Decimal(minAmount);
+      if (maxAmount !== undefined) amountFilter.lte = new Decimal(maxAmount);
+      andConditions.push({ amount: amountFilter });
+    }
+
+    if (query && query.trim()) {
+      const q = query.trim();
+      andConditions.push({
+        OR: [
+          { narration: { contains: q, mode: 'insensitive' } },
+          { reference: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    const where = { AND: andConditions };
+
+    const priorRows = await this.databaseService.transaction.findMany({
+      where: { walletId: wallet.id, createdAt: { lt: startRange } },
+      select: { direction: true, amount: true },
+    });
+
+    let priorNet = new Decimal(0);
+    for (const r of priorRows) {
+      priorNet = priorNet.plus(r.direction === TransactionDirection.CREDIT ? r.amount : r.amount.neg());
+    }
+
+    const allFiltered = await this.databaseService.transaction.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const balanceAfterById = new Map<string, number>();
+    let run = priorNet;
+    for (const t of allFiltered) {
+      run = normalizeToKobo(run.plus(t.direction === TransactionDirection.CREDIT ? t.amount : t.amount.neg()));
+      balanceAfterById.set(t.id, toDisplayAmount(run));
+    }
+
+    const totalFiltered = allFiltered.length;
+    const limit = pageSize || 20;
+    const p = page || 1;
+    const startIndex = (p - 1) * limit;
+    const pageSlice = allFiltered.slice(startIndex, startIndex + limit).reverse();
+
+    const paginatedTransactions = pageSlice.map((t) => ({
+      id: t.id,
+      reference: t.reference,
+      description: t.narration ?? '',
+      amount: toDisplayAmount(t.amount),
+      type: t.direction === TransactionDirection.CREDIT ? 'CREDIT' : 'DEBIT',
+      timestamp: t.createdAt.toISOString(),
+      status: t.status.toLowerCase(),
+      balance: balanceAfterById.get(t.id) ?? toDisplayAmount(wallet.ledgerBalance),
+    }));
 
     const result = {
       transactions: paginatedTransactions,
       total: totalFiltered,
-      page: page || 1,
-      limit: pageSize || 20,
-      totalPages: Math.ceil(totalFiltered / (pageSize || 20)),
+      page: p,
+      limit,
+      totalPages: Math.ceil(totalFiltered / limit) || 1,
     };
 
     // Cache for 30 seconds (transaction history changes frequently)
