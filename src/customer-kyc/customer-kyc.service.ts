@@ -186,6 +186,8 @@ export class CustomerKycService {
       const trackingId = res.data?.trackingId ?? null;
       const accountGenerationStatus = res.data?.accountGenerationStatus ?? null;
 
+      // trackingId is not globally unique from the provider (e.g. sandbox); keep it in tier1TrackingId only.
+      // Do not copy into providerCustomerId (@unique) — legacy /api/v1/customer flows are not used for ALAT Tier 1.
       await this.databaseService.customer.update({
         where: { id: customer.id },
         data: {
@@ -195,7 +197,6 @@ export class CustomerKycService {
           tier1CompletedAt: null,
           tier: KycTier.Tier_1,
           providerTierCode: 1,
-          providerCustomerId: trackingId ?? customer.providerCustomerId,
           tier1PendingBvn: bvn,
           // Wallet/account provisioning is async; callback will update to COMPLETED/FAILED.
           tier1AccountStatus: 'PENDING',
@@ -403,7 +404,7 @@ export class CustomerKycService {
       throw new ConflictException('Customer already exists for this user');
     }
 
-    // Create customer in our DB only (Tier 0). No provider call; providerCustomerId set when Tier 1 completes.
+    // Create customer in our DB only (Tier 0). ALAT Tier 1 stores session id in tier1TrackingId; providerCustomerId stays null.
     const customer = await this.databaseService.customer.create({
       data: {
         userId,
