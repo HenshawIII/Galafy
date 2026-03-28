@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../database/database.service.js';
 import { NotificationsService } from '../notifications.service.js';
-import { EventStatus } from '../../../generated/prisma/enums.js';
+import { EventStatus, SprayStatus } from '../../../generated/prisma/enums.js';
 
 /**
  * Scheduled task to send rejoin notifications to users who left events
@@ -54,14 +54,14 @@ export class RejoinNotificationsTask {
       for (const event of liveEvents) {
         // Get event statistics for custom messages
         const sprayStats = await this.databaseService.spray.aggregate({
-          where: { eventId: event.id },
+          where: { eventId: event.id, status: SprayStatus.CONFIRMED },
           _count: { id: true },
           _sum: { totalAmount: true },
         });
 
         // Get top spray (highest single spray amount) with sprayer info
         const topSpray = await this.databaseService.spray.findFirst({
-          where: { eventId: event.id },
+          where: { eventId: event.id, status: SprayStatus.CONFIRMED },
           orderBy: { totalAmount: 'desc' },
           include: {
             sprayerWallet: {

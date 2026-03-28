@@ -573,105 +573,15 @@ export class WalletmoduleService {
     if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
       const limitCheck = await this.withdrawalLimitService.checkDailyLimit(previewWallet.customer.id, amount);
       if (!limitCheck.allowed) {
-        const approvalResult = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
-          const fromWallet = await tx.wallet.findFirst({
-            where: { virtualAccountNumber: payoutData.fromWalletId },
-            include: { customer: true },
-          });
-          if (!fromWallet) throw new NotFoundException('Source wallet not found');
-
-          let destinationAccountName = payoutData.recipientName as string;
-          if (!destinationAccountName) {
-            try {
-              const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
-                payoutData.bankCode as string,
-                payoutData.toAccountNumber as string,
-              );
-              destinationAccountName = nameEnquiry.accountName;
-            } catch (error: any) {
-              this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
-              destinationAccountName = 'Unknown';
-            }
-          }
-
-          let bankAccount = await tx.bankAccount.findFirst({
-            where: {
-              customerId: fromWallet.customerId,
-              accountNumber: payoutData.toAccountNumber as string,
-              bankCode: payoutData.bankCode as string,
-            },
-          });
-
-          if (!bankAccount) {
-            bankAccount = await tx.bankAccount.create({
-              data: {
-                customerId: fromWallet.customerId,
-                accountName: destinationAccountName,
-                accountNumber: payoutData.toAccountNumber as string,
-                bankCode: payoutData.bankCode as string,
-                isVerified: true,
-              },
-            });
-          }
-
-          const placeholderTransaction = await tx.transaction.create({
-            data: {
-              walletId: fromWallet.id,
-              type: TransactionType.PAYOUT,
-              direction: TransactionDirection.DEBIT,
-              status: TransactionStatus.PENDING,
-              amount,
-              currencyId: fromWallet.currencyId,
-              reference: `PAYOUT-PENDING-${randomUUID()}`,
-              externalReference: null,
-              narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'} (Pending Approval)`,
-              metadata: {
-                fee: fee.toString(),
-                netAmount: netAmount.toString(),
-                feePercentage: feePercentage.toString(),
-                feeType: 'payout',
-                destinationAccount: payoutData.toAccountNumber,
-                destinationBank: payoutData.bankCode,
-                requiresApproval: true,
-                approvalReason: 'Exceeds daily withdrawal limit',
-              },
-            },
-          });
-
-          const pendingPayoutTransaction = await tx.payoutTransaction.create({
-            data: {
-              walletId: fromWallet.id,
-              bankAccountId: bankAccount.id,
-              amount,
-              fee,
-              status: 'PENDING',
-              transactionId: placeholderTransaction.id,
-              requiresApproval: true,
-              approvalReason: 'Exceeds daily withdrawal limit',
-              providerPayload: {
-                payoutData,
-                limitCheck: {
-                  currentLimit: limitCheck.currentLimit.toString(),
-                  used: limitCheck.used.toString(),
-                  remaining: limitCheck.remaining.toString(),
-                },
-              },
-            },
-          });
-
-          return {
-            success: true,
-            message: 'Withdrawal request submitted for admin approval. You will be notified once it is reviewed.',
-            requiresApproval: true as const,
-            payoutTransactionId: pendingPayoutTransaction.id,
-            transactionId: placeholderTransaction.id,
-          };
+        throw new BadRequestException({
+          message:
+            'This withdrawal exceeds your remaining daily limit. Reduce the amount or try again after your limit resets.',
+          dailyLimit: {
+            limit: limitCheck.currentLimit.toString(),
+            used: limitCheck.used.toString(),
+            remaining: limitCheck.remaining.toString(),
+          },
         });
-
-        this.logger.log(
-          `Withdrawal requires approval (limit). PayoutTransactionId: ${approvalResult.payoutTransactionId}`,
-        );
-        return approvalResult;
       }
     }
 

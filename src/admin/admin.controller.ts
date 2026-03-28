@@ -514,6 +514,28 @@ export class AdminController {
     return this.adminService.rejectKycRequest(requestId, adminId, dto);
   }
 
+  @Patch('customers/:customerId/promote-tier-3')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
+  @RequirePermission(PERMISSIONS.APPROVE_KYC)
+  @ApiOperation({
+    summary: 'Promote customer to Tier 3',
+    description:
+      'Sets customer from Tier 2 to Tier 3 after manual verification (e.g. bank address). Rejects if tier is not Tier 2.',
+  })
+  @ApiParam({ name: 'customerId', description: 'Customer ID' })
+  @ApiBody({ type: ApproveKycDto, required: false })
+  @ApiResponse({ status: 200, description: 'Customer promoted to Tier 3' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiResponse({ status: 400, description: 'Customer is not Tier 2' })
+  async promoteCustomerToTier3(
+    @Param('customerId') customerId: string,
+    @Body(new ValidationPipe({ skipMissingProperties: true })) dto: ApproveKycDto,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    return this.adminService.promoteCustomerToTier3(customerId, adminId, dto);
+  }
+
   @Post('kyc/utility-bills/:submissionId/approve')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
   @RequirePermission(PERMISSIONS.APPROVE_UTILITY_BILL)
@@ -1357,6 +1379,7 @@ export class AdminController {
   })
   @ApiParam({ name: 'id', description: 'Payout Transaction ID' })
   @ApiResponse({ status: 200, description: 'Withdrawal approved successfully' })
+  @ApiResponse({ status: 410, description: 'Admin approval workflow disabled' })
   @ApiResponse({ status: 404, description: 'Withdrawal not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async approveWithdrawal(@Param('id') payoutTransactionId: string, @Request() req: any) {

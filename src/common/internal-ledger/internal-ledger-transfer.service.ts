@@ -4,7 +4,9 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { normalizeToKobo } from '../utils/money.util.js';
 
 /**
- * Moves funds between two internal wallet rows (same ledger). No provider call.
+ * Moves funds between two internal wallet rows (same ledger) without a provider call.
+ * Prefer provider-initiated transfers + callbacks for product flows; this remains for
+ * legacy/admin paths where the partner API cannot yet represent the movement (see admin payout approval).
  * Use consistent wallet lock ordering to reduce deadlocks.
  */
 @Injectable()

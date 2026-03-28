@@ -1,18 +1,34 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { TransactionCallbackDto } from './dto/transaction-callback.dto.js';
-import { TransactionDirection, TransactionStatus, TransactionType } from '../../generated/prisma/enums.js';
+import {
+  TransactionDirection,
+  TransactionStatus,
+  TransactionType,
+  SprayStatus,
+} from '../../generated/prisma/enums.js';
 import { Prisma } from '@prisma/client';
+import { InflowCreditService } from '../common/inflow-credit/inflow-credit.service.js';
+import { WalletRiskService } from '../common/services/wallet-risk.service.js';
+import { normalizeToKobo } from '../common/utils/money.util.js';
+import { EmailService } from '../users/email.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 @Injectable()
 export class ProviderTxnCallbackService {
   private readonly logger = new Logger(ProviderTxnCallbackService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly inflowCreditService: InflowCreditService,
+    private readonly walletRiskService: WalletRiskService,
+    private readonly emailService: EmailService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   private computeSecurityInfoHash(securityInfo: string): string {
-    // Must match what we store at initiation time (sha256 -> hex).
     return createHash('sha256').update(securityInfo).digest('hex');
   }
 
@@ -21,19 +37,33 @@ export class ProviderTxnCallbackService {
     if (normalized === 'PENDING') return TransactionStatus.PENDING;
     if (normalized === 'SUCCESSFUL') return TransactionStatus.SUCCESS;
     if (normalized === 'FAILED') return TransactionStatus.FAILED;
-    // Unknown provider status -> keep transaction in PENDING to avoid false success.
     return TransactionStatus.PENDING;
   }
 
   /**
-   * Bank calls this to authorize the transaction (client side).
-   * We validate `securityInfo` against `Transaction.securityInfoHash`.
+   * Stable idempotency key for transaction-notification credits when the provider omits a unique reference.
    */
+  private buildTransactionNotificationProviderReference(raw: any): string {
+    const explicit = raw?.reference ?? raw?.transactionId ?? raw?.platformTransactionReference;
+    if (explicit != null && String(explicit).trim() !== '') {
+      return `TN-${String(explicit).trim()}`;
+    }
+    const accountNumber = String(raw?.accountNumber ?? '').trim();
+    const amount = String(raw?.amount ?? '');
+    let td = '';
+    if (raw?.transactionDate != null && raw?.transactionDate !== '') {
+      const d = new Date(raw.transactionDate);
+      td = isNaN(d.getTime()) ? String(raw.transactionDate) : d.toISOString();
+    }
+    const narration = String(raw?.narration ?? '').trim();
+    const h = createHash('sha256').update(`${accountNumber}|${amount}|${td}|${narration}`, 'utf8').digest('hex');
+    return `NOTIF-${h}`;
+  }
+
   async handleTransactionAuthCallback(raw: any): Promise<{ transactionReference: string; authorized: boolean }> {
     const transactionReference: string = raw?.transactionReference ?? '';
     const securityInfo: unknown = raw?.securityInfo;
 
-    // Basic guard: must exist.
     if (!transactionReference || typeof securityInfo !== 'string') {
       return { transactionReference: transactionReference || '', authorized: false };
     }
@@ -50,12 +80,7 @@ export class ProviderTxnCallbackService {
     return { transactionReference, authorized: computed === txn.securityInfoHash };
   }
 
-  /**
-   * Bank calls this with transaction status updates.
-   * This is idempotent using provider `platformTransactionReference`.
-   */
   async handleTransactionCallback(raw: any): Promise<{ received: true }> {
-    // Support flat `data` (docs) or nested `result.data` (some provider payloads).
     const data: TransactionCallbackDto['data'] | undefined = raw?.data ?? raw?.result?.data;
     const transactionReference = data?.transactionReference;
     const platformTransactionReference = data?.platformTransactionReference;
@@ -66,7 +91,6 @@ export class ProviderTxnCallbackService {
     );
 
     if (!transactionReference || !platformTransactionReference) {
-      // If payload is malformed, we don't want to crash the webhook handler.
       return { received: true };
     }
 
@@ -74,9 +98,18 @@ export class ProviderTxnCallbackService {
     const receivedAt = new Date();
     const creditRef = `CREDIT-${platformTransactionReference}`;
 
-    // Atomic update: lock the debit transaction and involved wallet rows.
+    const notifyHolder: {
+      v: {
+        userId: string;
+        email: string | null;
+        amountFormatted: string;
+        transactionReference: string;
+        destinationAccountNumber: string | null;
+        firstName?: string;
+      } | null;
+    } = { v: null };
+
     await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
-      // Lock transaction row
       const txn = await tx.transaction.findUnique({
         where: { reference: transactionReference },
         include: {
@@ -95,12 +128,10 @@ export class ProviderTxnCallbackService {
         SELECT id FROM "Transaction" WHERE id = ${txn.id} FOR UPDATE
       `;
 
-      // If we've already processed SUCCESS for the same platformRef, skip wallet changes.
       if (
         txn.providerPlatformTransactionReference === platformTransactionReference &&
         txn.status === TransactionStatus.SUCCESS
       ) {
-        // Still ensure provider refs are persisted (idempotent).
         await tx.transaction.update({
           where: { id: txn.id },
           data: {
@@ -108,21 +139,19 @@ export class ProviderTxnCallbackService {
             providerStatus: providerStatus,
             providerCallbackReceivedAt: receivedAt,
             providerTransactionStan: data?.transactionStan ?? null,
-            providerOriginalTransactionDate: null, // will set below if parseable
+            providerOriginalTransactionDate: null,
           },
         });
 
         return;
       }
 
-      // Parse original txn date (provider misspells "original" as "orinalTxnTransactionDate")
       let parsedOriginalTxnDate: Date | null = null;
       if (typeof data?.orinalTxnTransactionDate === 'string') {
         const candidate = new Date(data.orinalTxnTransactionDate);
         parsedOriginalTxnDate = isNaN(candidate.getTime()) ? null : candidate;
       }
 
-      // Update transaction provider fields + mapped status.
       const previousStatus = txn.status;
       await tx.transaction.update({
         where: { id: txn.id },
@@ -146,7 +175,41 @@ export class ProviderTxnCallbackService {
         },
       });
 
-      // Apply wallet balance changes only on first transition to SUCCESS.
+      if (mappedStatus === TransactionStatus.FAILED && previousStatus !== TransactionStatus.FAILED) {
+        const sprayRow = await tx.spray.findFirst({ where: { transactionId: txn.id } });
+        if (sprayRow?.status === SprayStatus.PENDING_PROVIDER) {
+          const prev =
+            typeof sprayRow.metadata === 'object' && sprayRow.metadata !== null
+              ? (sprayRow.metadata as Record<string, unknown>)
+              : {};
+          await tx.spray.update({
+            where: { id: sprayRow.id },
+            data: {
+              status: SprayStatus.FAILED,
+              metadata: { ...prev, providerFailed: true } as any,
+            },
+          });
+        }
+        const failMeta =
+          typeof txn.metadata === 'object' && txn.metadata !== null
+            ? (txn.metadata as Record<string, unknown>)
+            : null;
+        if (failMeta?.inflowAdminFeeSweep === true && typeof failMeta.inflowTransactionId === 'string') {
+          const inflowTxn = await tx.transaction.findUnique({ where: { id: failMeta.inflowTransactionId } });
+          if (inflowTxn) {
+            const im =
+              typeof inflowTxn.metadata === 'object' && inflowTxn.metadata !== null
+                ? { ...(inflowTxn.metadata as Record<string, unknown>) }
+                : {};
+            im.feeSweepFailed = true;
+            await tx.transaction.update({
+              where: { id: inflowTxn.id },
+              data: { metadata: im as any },
+            });
+          }
+        }
+      }
+
       if (mappedStatus === TransactionStatus.SUCCESS && previousStatus !== TransactionStatus.SUCCESS) {
         const amount = txn.amount;
         const sourceWalletId = txn.walletId;
@@ -162,8 +225,6 @@ export class ProviderTxnCallbackService {
           }
         }
 
-        // Lock all involved wallets in deterministic order (matches InternalLedgerTransferService) to avoid
-        // deadlocks and lost updates when multiple callbacks touch the same wallet concurrently.
         const walletIdsToLock = [...new Set([sourceWalletId, ...(destinationWalletId ? [destinationWalletId] : [])])].sort(
           (a, b) => a.localeCompare(b),
         );
@@ -204,16 +265,22 @@ export class ProviderTxnCallbackService {
               },
             });
 
-            // Idempotently create credit transaction
             const creditTxn = await tx.transaction.findUnique({
               where: { reference: creditRef },
             });
+
+            const debitMeta =
+              typeof txn.metadata === 'object' && txn.metadata !== null
+                ? (txn.metadata as Record<string, unknown>)
+                : null;
+            const isPayoutRefundCredit = debitMeta?.payoutRefundCredit === true;
+            const creditType = isPayoutRefundCredit ? TransactionType.PAYOUT : TransactionType.INFLOW;
 
             if (!creditTxn) {
               await tx.transaction.create({
                 data: {
                   walletId: destinationWallet.id,
-                  type: TransactionType.INFLOW,
+                  type: creditType,
                   direction: TransactionDirection.CREDIT,
                   status: TransactionStatus.SUCCESS,
                   amount,
@@ -227,16 +294,51 @@ export class ProviderTxnCallbackService {
                       platformTransactionReference,
                       transactionStan: data?.transactionStan ?? null,
                     },
+                    ...(isPayoutRefundCredit
+                      ? {
+                          payoutRefundCredit: true,
+                          originalPayoutPaymentRef: txn.externalReference ?? null,
+                        }
+                      : {}),
                   },
                 },
               });
             }
 
-            const debitMeta =
-              typeof txn.metadata === 'object' && txn.metadata !== null
-                ? (txn.metadata as Record<string, unknown>)
-                : null;
-            if (debitMeta?.walletToWalletSpray === true) {
+            if (debitMeta?.eventSpray === true && debitMeta?.sprayCompletion) {
+              const sc = debitMeta.sprayCompletion as Record<string, unknown>;
+              const existingEventSpray = await tx.spray.findFirst({ where: { transactionId: txn.id } });
+              if (!existingEventSpray) {
+                const eventIdStr = typeof sc.eventId === 'string' ? sc.eventId : null;
+                const receiverWid = typeof sc.receiverWalletId === 'string' ? sc.receiverWalletId : null;
+                if (eventIdStr && receiverWid) {
+                  await tx.spray.create({
+                    data: {
+                      eventId: eventIdStr,
+                      sprayerWalletId: txn.walletId,
+                      receiverWalletId: receiverWid,
+                      transactionId: txn.id,
+                      transactionGroupReference: txn.groupReference,
+                      totalAmount: amount,
+                      note: typeof sc.note === 'string' ? sc.note : null,
+                      metadata: { providerConfirmed: true },
+                    },
+                  });
+                }
+              } else if (existingEventSpray.status === SprayStatus.PENDING_PROVIDER) {
+                const prev =
+                  typeof existingEventSpray.metadata === 'object' && existingEventSpray.metadata !== null
+                    ? (existingEventSpray.metadata as Record<string, unknown>)
+                    : {};
+                await tx.spray.update({
+                  where: { id: existingEventSpray.id },
+                  data: {
+                    status: SprayStatus.CONFIRMED,
+                    metadata: { ...prev, providerConfirmed: true } as any,
+                  },
+                });
+              }
+            } else if (debitMeta?.walletToWalletSpray === true) {
               const existingSpray = await tx.spray.findFirst({ where: { transactionId: txn.id } });
               if (!existingSpray) {
                 await tx.spray.create({
@@ -251,45 +353,288 @@ export class ProviderTxnCallbackService {
                     metadata: { providerWalletToWallet: true },
                   },
                 });
+              } else if (existingSpray.status === SprayStatus.PENDING_PROVIDER) {
+                const prev =
+                  typeof existingSpray.metadata === 'object' && existingSpray.metadata !== null
+                    ? (existingSpray.metadata as Record<string, unknown>)
+                    : {};
+                await tx.spray.update({
+                  where: { id: existingSpray.id },
+                  data: {
+                    status: SprayStatus.CONFIRMED,
+                    metadata: { ...prev, providerConfirmed: true } as any,
+                  },
+                });
               }
             }
+
+            if (debitMeta?.inflowAdminFeeSweep === true) {
+              const inflowTxId =
+                typeof debitMeta.inflowTransactionId === 'string' ? debitMeta.inflowTransactionId : null;
+              const adminFeeId = typeof debitMeta.adminFeeId === 'string' ? debitMeta.adminFeeId : null;
+              if (inflowTxId) {
+                const inflowTxn = await tx.transaction.findUnique({ where: { id: inflowTxId } });
+                if (inflowTxn) {
+                  const im =
+                    typeof inflowTxn.metadata === 'object' && inflowTxn.metadata !== null
+                      ? { ...(inflowTxn.metadata as Record<string, unknown>) }
+                      : {};
+                  im.feeSweepPending = false;
+                  await tx.transaction.update({
+                    where: { id: inflowTxId },
+                    data: {
+                      status: TransactionStatus.SUCCESS,
+                      metadata: im as any,
+                    },
+                  });
+                }
+              }
+              if (adminFeeId) {
+                await tx.adminFee.update({
+                  where: { id: adminFeeId },
+                  data: { status: 'COLLECTED' },
+                });
+              }
+            }
+
+            if (debitMeta?.eventSpray === true && debitMeta?.sprayCompletion) {
+              const sc = debitMeta.sprayCompletion as Record<string, unknown>;
+              const receiverUserId = typeof sc.receiverUserId === 'string' ? sc.receiverUserId : null;
+              const sprayerUserId = typeof sc.sprayerUserId === 'string' ? sc.sprayerUserId : null;
+              const receiverRole = sc.receiverRole as string | undefined;
+              const eventTitle = typeof sc.eventTitle === 'string' ? sc.eventTitle : 'Event';
+              if (
+                receiverUserId &&
+                (receiverRole === 'CELEBRANT' || receiverRole === 'PERFORMER') &&
+                sprayerUserId
+              ) {
+                this.databaseService.user
+                  .findUnique({
+                    where: { id: sprayerUserId },
+                    select: { username: true, profilePicture: true },
+                  })
+                  .then((sprayerUser) => {
+                    const sprayerName = sprayerUser?.username || sprayerUser?.profilePicture || 'Someone';
+                    return this.notificationsService.sendNotificationIfEnabled(receiverUserId, {
+                      notification: {
+                        title: 'You were sprayed!',
+                        body: `${sprayerName} sprayed you ${amount.toString()}`,
+                      },
+                      data: {
+                        type: 'SPRAY_RECEIVED',
+                        eventId: typeof sc.eventId === 'string' ? sc.eventId : '',
+                        eventTitle,
+                        amount: amount.toString(),
+                        sprayerId: sprayerUserId,
+                        sprayerName,
+                      },
+                    });
+                  })
+                  .catch((e) => this.logger.warn(`Spray push notification failed: ${e.message}`));
+              }
+            }
+
+            this.walletRiskService.updateWalletRiskScore(destinationWallet.id).catch((e) => {
+              this.logger.error(`Risk score update (receiver) failed: ${e.message}`);
+            });
           }
         }
+
+        const payerWallet = await tx.wallet.findUnique({
+          where: { id: sourceWalletId },
+          include: {
+            customer: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        });
+        if (payerWallet?.customer?.userId) {
+          notifyHolder.v = {
+            userId: payerWallet.customer.userId,
+            email: payerWallet.customer.user?.email ?? null,
+            amountFormatted: amount.toFixed(2),
+            transactionReference,
+            destinationAccountNumber: txn.destinationAccountNumber,
+            firstName: payerWallet.customer.user?.firstName ?? payerWallet.customer.firstName ?? undefined,
+          };
+        }
+
+        this.walletRiskService.updateWalletRiskScore(sourceWalletId).catch((e) => {
+          this.logger.error(`Risk score update (source) failed: ${e.message}`);
+        });
       }
     });
+
+    const n = notifyHolder.v;
+    if (n) {
+      const destDisplay = n.destinationAccountNumber || 'Recipient';
+      if (n.email) {
+        this.emailService
+          .sendWithdrawalStatusAlert(
+            n.email,
+            n.amountFormatted,
+            'success',
+            destDisplay,
+            n.transactionReference,
+            data?.narration ?? undefined,
+            n.firstName,
+            undefined,
+            new Date(),
+          )
+          .catch((error) => {
+            this.logger.error(`Failed to send transfer success email: ${error.message}`);
+          });
+      }
+      try {
+        await this.notificationsService.sendNotificationIfEnabled(n.userId, {
+          notification: {
+            title: 'Transfer successful',
+            body: `Your transfer of ₦${n.amountFormatted} completed`,
+          },
+          data: {
+            type: 'TRANSFER_SUCCESS',
+            amount: n.amountFormatted,
+            reference: n.transactionReference,
+            destinationAccountNumber: n.destinationAccountNumber || '',
+          },
+        });
+      } catch (e: any) {
+        this.logger.warn(`Failed to send transfer success push: ${e.message}`);
+      }
+    }
 
     return { received: true };
   }
 
-  /**
-   * Near real-time notification for debit/credit statuses on custom wallets.
-   * For now we persist nothing; persistence will be implemented in the next step.
-   */
   async handleTransactionNotification(raw: any): Promise<{ received: true }> {
     this.logger.debug(`Transaction notification received for account=${raw?.accountNumber}`);
 
-    const accountNumber: string | undefined = raw?.accountNumber?.toString();
-    const transactionType: string | undefined = raw?.transactionType?.toString();
+    const accountNumber: string | undefined = raw?.accountNumber?.toString()?.trim() || undefined;
+    const transactionTypeRaw: string | undefined = raw?.transactionType?.toString();
+    const transactionTypeNorm = transactionTypeRaw?.trim().toLowerCase();
 
-    // Resolve wallet if possible (to link the event for later troubleshooting/auditing).
     const wallet = accountNumber
       ? await this.databaseService.wallet.findFirst({
           where: { virtualAccountNumber: accountNumber },
         })
       : null;
 
-    // Persist as a provider webhook event (no ledger updates here).
+    if (transactionTypeNorm === 'credit') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for credit transaction notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for credit transaction notifications');
+      }
+
+      const grossAmount = normalizeToKobo(amountRaw);
+      const providerFee = normalizeToKobo(0);
+      const providerReference = this.buildTransactionNotificationProviderReference(raw);
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim() ? raw.narration.trim() : 'Inflow payment';
+
+      const providerPayload = {
+        ...raw,
+        walletId: wallet?.id ?? null,
+        virtualAccountNumber: accountNumber,
+        transactionType: transactionTypeRaw ?? null,
+      };
+
+      const result = await this.inflowCreditService.processBankInflow({
+        accountNumber,
+        grossAmount,
+        providerFee,
+        providerReference,
+        narration,
+        providerPayload,
+        webhookEvent: { event: 'transaction-notification', paymentReference: providerReference },
+      });
+
+      const walletId = result.walletId;
+      if (walletId) {
+        this.walletRiskService.updateWalletRiskScore(walletId).catch((error) => {
+          this.logger.error(`Failed to update risk score after transaction-notification inflow: ${error.message}`);
+        });
+      }
+
+      if (result.status === 'success' && !result.isDuplicate && walletId) {
+        const walletWithUser = await this.databaseService.wallet.findUnique({
+          where: { id: walletId },
+          include: {
+            customer: {
+              include: {
+                user: true,
+              },
+            },
+            fundings: {
+              where: { providerReference },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+          },
+        });
+
+        if (walletWithUser?.customer?.user?.email && walletWithUser.virtualAccountNumber) {
+          const amountFormatted = grossAmount.toFixed(2);
+          const fundingTransaction = walletWithUser.fundings?.[0];
+          const firstName =
+            walletWithUser.customer.user.firstName || walletWithUser.customer.firstName || undefined;
+          const paymentMethod = fundingTransaction?.channel || 'BANK_TRANSFER';
+          const fundingDate = fundingTransaction?.createdAt || new Date();
+
+          this.emailService
+            .sendWalletFundingAlert(
+              walletWithUser.customer.user.email,
+              amountFormatted,
+              walletWithUser.virtualAccountNumber,
+              providerReference,
+              firstName,
+              paymentMethod,
+              fundingDate,
+            )
+            .catch((error) => {
+              this.logger.error(`Failed to send wallet funding email: ${error.message}`);
+            });
+
+          const walletOwnerUserId = walletWithUser.customer.userId;
+          if (walletOwnerUserId) {
+            try {
+              await this.notificationsService.sendNotificationIfEnabled(walletOwnerUserId, {
+                notification: {
+                  title: 'Wallet Funded',
+                  body: `You received ₦${amountFormatted} in your wallet`,
+                },
+                data: {
+                  type: 'INFLOW_RECEIVED',
+                  amount: amountFormatted,
+                  reference: providerReference,
+                  walletId: walletId,
+                  virtualAccountNumber: walletWithUser.virtualAccountNumber || '',
+                  paymentMethod: paymentMethod,
+                },
+              });
+            } catch (notificationError: any) {
+              this.logger.warn(`Failed to send inflow push notification: ${notificationError.message}`);
+            }
+          }
+        }
+      }
+
+      return { received: true };
+    }
+
     await this.databaseService.providerWebhookEvent.create({
       data: {
         event: 'transaction-notification',
-        paymentReference: accountNumber
-          ? `notif-${accountNumber}-${raw?.transactionDate ?? ''}`
-          : undefined,
+        paymentReference: accountNumber ? `notif-${accountNumber}-${raw?.transactionDate ?? ''}` : undefined,
         payload: {
           ...raw,
           walletId: wallet?.id ?? null,
           virtualAccountNumber: accountNumber ?? null,
-          transactionType: transactionType ?? null,
+          transactionType: transactionTypeRaw ?? null,
         },
         processingStatus: 'PROCESSED',
       },
@@ -298,4 +643,3 @@ export class ProviderTxnCallbackService {
     return { received: true };
   }
 }
-

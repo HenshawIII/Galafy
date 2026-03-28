@@ -6,23 +6,20 @@ import {
   TransactionType,
   TransactionDirection,
   TransactionStatus,
-  FundingStatus,
   PayoutStatus,
-  FundingChannel,
 } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
-import { randomUUID } from 'crypto';
 import { config } from 'dotenv';
 import { normalizeToKobo } from '../common/utils/money.util.js';
-import { calculateFundingFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
-import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { EmailService } from '../users/email.service.js';
+import { ProviderService } from '../provider/provider.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '../config/config.service.js';
+import { InflowCreditService } from '../common/inflow-credit/inflow-credit.service.js';
 config();
 
 @Injectable()
@@ -33,12 +30,13 @@ export class WebhooksService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly organizationWalletService: OrganizationWalletService,
-    private readonly internalLedgerTransfer: InternalLedgerTransferService,
+    private readonly providerService: ProviderService,
     private readonly walletRiskService: WalletRiskService,
     private readonly emailService: EmailService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
     private readonly configService: ConfigService,
+    private readonly inflowCreditService: InflowCreditService,
   ) {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     if (!this.apiKey) {
@@ -68,246 +66,26 @@ export class WebhooksService {
   async handleInflowWebhook(webhookDto: InflowWebhookDto) {
     const { data } = webhookDto;
 
-    // Normalize gross amount to kobo precision
     const grossAmount = normalizeToKobo(data.amount);
     const providerFee = normalizeToKobo(data.fee || 0);
 
-    // Find wallet first to get wallet ID for risk score update
-    const wallet = await this.databaseService.wallet.findFirst({
-      where: { virtualAccountNumber: data.accountNumber },
+    const result = await this.inflowCreditService.processBankInflow({
+      accountNumber: data.accountNumber,
+      grossAmount,
+      providerFee,
+      providerReference: data.reference,
+      narration: data.description || 'Inflow payment',
+      senderName: data.senderName,
+      senderBank: data.senderBank,
+      providerPayload: webhookDto,
+      webhookEvent: { event: 'nip', paymentReference: data.reference },
     });
 
-    if (!wallet) {
-      throw new NotFoundException(`Wallet not found for account number: ${data.accountNumber}`);
+    const walletId = result.walletId;
+    if (!walletId) {
+      return result;
     }
 
-    const walletId = wallet.id;
-
-    // Use database transaction with row locks for concurrency and idempotency
-    const result = await this.databaseService.$transaction(
-      async (tx: Prisma.TransactionClient) => {
-        // Re-fetch wallet within transaction for locking
-        const wallet = await tx.wallet.findFirst({
-          where: { virtualAccountNumber: data.accountNumber },
-          include: {
-            customer: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        });
-
-        if (!wallet) {
-          this.logger.warn(`Wallet not found for account number: ${data.accountNumber}`);
-          throw new NotFoundException(`Wallet not found for account number: ${data.accountNumber}`);
-        }
-
-        // Lock wallet row to prevent concurrent processing
-        await tx.$queryRaw`
-          SELECT id FROM "Wallet" WHERE id = ${wallet.id} FOR UPDATE
-        `;
-
-        // Check idempotency: if this provider reference was already processed, return existing
-        const existingFunding = await tx.fundingTransaction.findUnique({
-          where: { providerReference: data.reference },
-          include: {
-            transaction: true,
-          },
-        });
-
-        if (existingFunding) {
-          this.logger.log(
-            `INFLOW webhook already processed (idempotency): ${data.reference} - returning existing transaction`,
-          );
-          return {
-            status: 'success',
-            message: 'Webhook already processed (idempotent)',
-            transactionId: existingFunding.transactionId,
-            fundingTransactionId: existingFunding.id,
-            isDuplicate: true,
-          };
-        }
-
-        // Calculate admin fee based on amount threshold
-        const { fee: adminFee, netAmount, feePercentage } = await calculateFundingFee(grossAmount, this.configService);
-
-        // Get admin wallet account number (for tracking purposes)
-        const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
-
-        // Re-fetch user wallet with lock to get latest balances
-        // Need virtualAccountNumber for wallet-to-wallet transfer
-        const lockedUserWallet = await tx.wallet.findUnique({
-          where: { id: wallet.id },
-          select: {
-            id: true,
-            availableBalance: true,
-            ledgerBalance: true,
-            currencyId: true,
-            customerId: true,
-            virtualAccountNumber: true,
-          },
-        });
-
-        if (!lockedUserWallet) {
-          throw new NotFoundException('User wallet not found after lock');
-        }
-
-        if (!lockedUserWallet.virtualAccountNumber) {
-          throw new BadRequestException('User wallet does not have a virtual account number');
-        }
-
-        // Generate internal references
-        const userTransactionRef = `INFLOW-${randomUUID()}`;
-        const feeTransferRef = `FEE-TRANSFER-${randomUUID()}`;
-        const groupReference = `GRP-${randomUUID()}`;
-
-        const newUserAvailableBalanceAfterCredit = normalizeToKobo(lockedUserWallet.availableBalance.plus(grossAmount));
-        const newUserLedgerBalanceAfterCredit = normalizeToKobo(lockedUserWallet.ledgerBalance.plus(grossAmount));
-
-        await tx.wallet.update({
-          where: { id: wallet.id },
-          data: {
-            availableBalance: newUserAvailableBalanceAfterCredit,
-            ledgerBalance: newUserLedgerBalanceAfterCredit,
-          },
-        });
-
-        const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
-        if (!orgWallet) {
-          throw new BadRequestException(
-            'Organization wallet record not found in database. Set ORGANIZATION_WALLET to a virtual account that exists in the Wallet table.',
-          );
-        }
-
-        await this.internalLedgerTransfer.transfer(tx, wallet.id, orgWallet.id, adminFee);
-
-        // Create Transaction record for user wallet (net amount)
-        // Transaction table only tracks user-facing transactions
-        const userTransaction = await tx.transaction.create({
-          data: {
-            walletId: wallet.id,
-            type: TransactionType.INFLOW,
-            direction: TransactionDirection.CREDIT,
-            status: TransactionStatus.SUCCESS,
-            amount: netAmount, // User receives net amount (after admin fee)
-            currencyId: wallet.currencyId,
-            reference: userTransactionRef,
-            externalReference: data.reference, // Provider reference
-            groupReference,
-            narration: data.description || 'Inflow payment',
-            metadata: {
-              senderName: data.senderName,
-              senderBank: data.senderBank,
-              providerFee: providerFee.toString(),
-              adminFee: adminFee.toString(),
-              grossAmount: grossAmount.toString(),
-              feePercentage: feePercentage.toString(),
-              feeType: 'funding',
-              feeTransferReference: feeTransferRef,
-              internalLedger: true,
-            },
-          },
-        });
-
-        // Create FundingTransaction record (stores gross amount and admin fee)
-        const fundingTransaction = await tx.fundingTransaction.create({
-          data: {
-            walletId: wallet.id,
-            amount: grossAmount, // Store gross amount
-            fee: adminFee, // Store admin fee (not provider fee)
-            channel: FundingChannel.BANK_TRANSFER,
-            status: FundingStatus.SUCCESS,
-            transactionId: userTransaction.id,
-            providerReference: data.reference, // Used for idempotency
-            providerPayload: webhookDto as any,
-          },
-        });
-
-        // Log funding transaction
-        this.logger.log(
-          `💰 FUNDING TRANSACTION: GrossAmount=${grossAmount.toString()}, ` +
-            `NetAmount=${netAmount.toString()}, AdminFee=${adminFee.toString()}, ` +
-            `ProviderFee=${providerFee.toString()}, ` +
-            `WalletId=${wallet.id}, AccountNumber=${data.accountNumber}, ` +
-            `TxId=${userTransaction.id}, FundingTxId=${fundingTransaction.id}, ` +
-            `ProviderRef=${data.reference}, InternalRef=${userTransactionRef}, ` +
-            `SenderName="${data.senderName}", SenderBank="${data.senderBank}", ` +
-            `Description="${data.description || 'Inflow payment'}"`,
-        );
-
-        // Create AdminFee record (separate table for fee tracking)
-        // Normalize feePercentage to ensure it fits in DECIMAL(5,4) - max value is 9.9999
-        // feePercentage should be between 0 and 1 (e.g., 0.10 for 10%), so we ensure it's properly formatted
-        const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
-
-        // Validate that feePercentage is within bounds (should be < 10 for DECIMAL(5,4))
-        if (normalizedFeePercentage.gte(new Decimal('10'))) {
-          this.logger.error(
-            `Fee percentage ${normalizedFeePercentage.toString()} exceeds maximum allowed value (9.9999). ` +
-              `This might indicate an incorrectly configured env variable. Expected decimal (e.g., 0.10 for 10%), not percentage (e.g., 10).`,
-          );
-          throw new BadRequestException(
-            `Invalid fee percentage: ${normalizedFeePercentage.toString()}. ` +
-              `Fee percentage must be less than 10. Please check ADMIN_FUNDING_FEE environment variable.`,
-          );
-        }
-
-        await tx.adminFee.create({
-          data: {
-            walletId: wallet.id,
-            customerId: lockedUserWallet.customerId,
-            amount: adminFee, // The fee amount
-            feeType: 'funding',
-            feePercentage: normalizedFeePercentage,
-            relatedTransactionId: userTransaction.id, // Link to user's inflow transaction
-            fundingTransactionId: fundingTransaction.id, // Link to funding transaction
-            status: 'COLLECTED',
-            grossAmount: grossAmount,
-            netAmount: netAmount,
-            adminWalletAccountNumber: adminWalletAccountNumber,
-            metadata: {
-              providerReference: data.reference,
-              providerFee: providerFee.toString(),
-              threshold: grossAmount.lte(new Decimal('100000.00')) ? 'below_100k' : 'above_100k',
-              senderName: data.senderName,
-              senderBank: data.senderBank,
-              feeTransferReference: feeTransferRef,
-              internalLedger: true,
-            },
-          },
-        });
-
-        // Store webhook event
-        await tx.providerWebhookEvent.create({
-          data: {
-            event: 'nip',
-            paymentReference: data.reference,
-            payload: webhookDto as any,
-            processingStatus: 'PROCESSED',
-          },
-        });
-
-        // Additional summary log (keeping existing log for backward compatibility)
-        this.logger.log(
-          `INFLOW webhook processed: ${data.reference} - Gross: ${grossAmount.toString()}, Fee: ${adminFee.toString()}, Net: ${netAmount.toString()} to wallet ${wallet.id}`,
-        );
-
-        return {
-          status: 'success',
-          message: 'Webhook processed successfully',
-          transactionId: userTransaction.id,
-          fundingTransactionId: fundingTransaction.id,
-          isDuplicate: false,
-        };
-      },
-      {
-        timeout: 10000, // 10 second timeout
-      },
-    );
-
-    // Recalculate risk score after transaction (outside transaction to avoid blocking)
-    // This runs asynchronously so it doesn't slow down the webhook response
     this.walletRiskService.updateWalletRiskScore(walletId).catch((error) => {
       this.logger.error(`Failed to update risk score after inflow: ${error.message}`);
     });
@@ -404,6 +182,18 @@ export class WebhooksService {
     }
 
     const walletId = payoutTransaction.walletId;
+
+    const refundHolder: {
+      v: {
+        refundRef: string;
+        grossAmount: Decimal;
+        userVirtual: string;
+        userBankCode: string;
+        userBankName: string;
+        orgSourceVirtual: string;
+        narration: string;
+      } | null;
+    } = { v: null };
 
     // Use database transaction for atomicity
     const result = await this.databaseService.$transaction(
@@ -511,72 +301,91 @@ export class WebhooksService {
           });
         }
 
-        // If failed, refund full amount to user wallet
+        // If failed, return funds via provider org wallet → user VA (DB balances update on SUCCESS callback only).
         if (payoutStatus === PayoutStatus.FAILED || payoutStatus === PayoutStatus.REJECTED) {
-          // Check if refund has already been processed (idempotency check)
-          // Look for existing refund transaction with this payment reference
-          const existingRefund = await tx.transaction.findFirst({
+          const existingLegacyRefund = await tx.transaction.findFirst({
             where: {
               walletId: payoutTransaction.wallet.id,
               externalReference: data.paymentReference,
               type: TransactionType.PAYOUT,
               direction: TransactionDirection.CREDIT,
-              narration: {
-                contains: 'Payout refund',
-              },
+              narration: { contains: 'Payout refund' },
             },
           });
 
-          if (existingRefund) {
+          const refundRef = `REFUND-ORG-${data.paymentReference}`;
+          const existingProviderRefund = await tx.transaction.findUnique({
+            where: { reference: refundRef },
+          });
+
+          if (existingLegacyRefund || existingProviderRefund) {
             this.logger.log(
-              `Refund already processed for payout ${data.paymentReference}. ` +
-                `Skipping refund transfer. Existing refund transaction: ${existingRefund.id}`,
+              `Refund already recorded for payout ${data.paymentReference}. Skipping new provider refund initiation.`,
             );
           } else {
             const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
-            if (!orgWallet) {
+            if (!orgWallet?.virtualAccountNumber) {
               throw new BadRequestException(
-                'Organization wallet not found in database; cannot refund payout. Ensure ORGANIZATION_WALLET matches a Wallet row.',
+                'Organization wallet or virtual account missing; cannot initiate provider refund.',
               );
             }
 
             const userWallet = await tx.wallet.findUnique({
               where: { id: payoutTransaction.wallet.id },
-              select: { id: true, currencyId: true },
+              select: {
+                id: true,
+                currencyId: true,
+                virtualAccountNumber: true,
+                virtualBankCode: true,
+                virtualBankName: true,
+              },
             });
 
-            if (!userWallet) {
-              throw new NotFoundException('User wallet not found for refund');
+            if (!userWallet?.virtualAccountNumber || !userWallet.virtualBankCode) {
+              throw new BadRequestException(
+                'User wallet is missing virtual account or bank code; cannot refund via provider.',
+              );
             }
-
-            const refundReference = `REFUND-${data.paymentReference}-${randomUUID()}`;
-
-            await this.internalLedgerTransfer.transfer(tx, orgWallet.id, userWallet.id, grossAmount);
 
             await tx.transaction.create({
               data: {
-                walletId: payoutTransaction.wallet.id,
-                type: TransactionType.PAYOUT,
-                direction: TransactionDirection.CREDIT,
-                status: TransactionStatus.SUCCESS,
+                walletId: orgWallet.id,
+                type: TransactionType.REFUND,
+                direction: TransactionDirection.DEBIT,
+                status: TransactionStatus.PENDING,
                 amount: grossAmount,
-                currencyId: userWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-                reference: refundReference,
+                currencyId: orgWallet.currencyId,
+                reference: refundRef,
                 externalReference: data.paymentReference,
-                narration: `Payout refund: ${data.deliveryStatusMessage || 'Payout failed'}`,
+                destinationAccountNumber: userWallet.virtualAccountNumber,
+                destinationAccountName:
+                  `${payoutTransaction.wallet.customer?.firstName ?? ''} ${payoutTransaction.wallet.customer?.lastName ?? ''}`.trim() ||
+                  'Customer',
+                narration: `Payout refund to user VA (${data.paymentReference})`,
+                groupReference: `REFUND-GRP-${data.paymentReference}`,
                 metadata: {
+                  payoutRefundCredit: true,
                   originalPayoutTransactionId: payoutTransaction.id,
-                  originalTransactionId: payoutTransaction.transactionId,
+                  originalUserWalletId: userWallet.id,
                   refundReason: data.status,
                   deliveryStatusMessage: data.deliveryStatusMessage,
                   deliveryStatusCode: data.deliveryStatusCode,
-                  internalLedger: true,
                 },
               },
             });
 
+            refundHolder.v = {
+              refundRef,
+              grossAmount,
+              userVirtual: userWallet.virtualAccountNumber,
+              userBankCode: userWallet.virtualBankCode,
+              userBankName: userWallet.virtualBankName?.trim() || 'Wallet',
+              orgSourceVirtual: orgWallet.virtualAccountNumber,
+              narration: `Payout refund ${data.paymentReference}`,
+            };
+
             this.logger.log(
-              `Payout failed: Refunded ${grossAmount.toString()} org→user (internal ledger). RefundRef=${refundReference}, PaymentRef=${data.paymentReference}`,
+              `Payout failed: initiated provider refund org→user. RefundRef=${refundRef}, PaymentRef=${data.paymentReference}, Amount=${grossAmount.toString()}`,
             );
           }
         }
@@ -604,6 +413,53 @@ export class WebhooksService {
         timeout: 10000,
       },
     );
+
+    const refundJob = refundHolder.v;
+    if (refundJob) {
+      const adminOrgSecurity = process.env.ADMIN_DEBIT_WALLET_SECURITY_INFO?.trim();
+      if (!adminOrgSecurity) {
+        this.logger.error(
+          'ADMIN_DEBIT_WALLET_SECURITY_INFO is not set; cannot call provider for payout refund. Marking refund transaction FAILED.',
+        );
+        await this.databaseService.transaction
+          .update({
+            where: { reference: refundJob.refundRef },
+            data: {
+              status: TransactionStatus.FAILED,
+              providerStatus: 'CONFIG_ERROR',
+              providerCallbackReceivedAt: new Date(),
+            },
+          })
+          .catch((e) => this.logger.error(`Failed to mark refund txn failed: ${e.message}`));
+      } else {
+        try {
+          await this.providerService.processClientTransfer({
+            securityInfo: adminOrgSecurity,
+            amount: refundJob.grossAmount.toNumber(),
+            destinationBankCode: refundJob.userBankCode,
+            destinationBankName: refundJob.userBankName,
+            destinationAccountNumber: refundJob.userVirtual,
+            destinationAccountName: 'Customer',
+            sourceAccountNumber: refundJob.orgSourceVirtual,
+            narration: refundJob.narration,
+            transactionReference: refundJob.refundRef,
+            useCustomNarration: true,
+          });
+        } catch (err: any) {
+          this.logger.error(`Provider payout refund failed: ${err?.message ?? err}`);
+          await this.databaseService.transaction
+            .update({
+              where: { reference: refundJob.refundRef },
+              data: {
+                status: TransactionStatus.FAILED,
+                providerStatus: 'FAILED',
+                providerCallbackReceivedAt: new Date(),
+              },
+            })
+            .catch((e) => this.logger.error(`Failed to mark refund txn failed: ${e.message}`));
+        }
+      }
+    }
 
     // Recalculate risk score after payout webhook (outside transaction to avoid blocking)
     this.walletRiskService.updateWalletRiskScore(walletId).catch((error) => {

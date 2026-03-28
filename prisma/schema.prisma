@@ -97,6 +97,12 @@ enum EventRole {
   CELEBRANT
 }
 
+enum SprayStatus {
+  PENDING_PROVIDER
+  CONFIRMED
+  FAILED
+}
+
 enum AdminRole {
   SUPER_ADMIN
   OPERATIONS
@@ -564,6 +570,8 @@ model Spray {
   totalAmount Decimal @db.Decimal(19, 2)
   note        String?
   metadata    Json?
+
+  status SprayStatus @default(CONFIRMED)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

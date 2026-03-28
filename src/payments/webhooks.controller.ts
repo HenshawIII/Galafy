@@ -8,6 +8,7 @@ import {
   HttpStatus,
   UnauthorizedException,
   BadRequestException,
+  GoneException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service.js';
@@ -48,6 +49,11 @@ export class WebhooksController {
 
     // Route to appropriate handler based on event type
     if (body.event === 'nip') {
+      if (process.env.INFLOW_VIA_LEGACY_WEBHOOK === 'false') {
+        throw new GoneException(
+          'Legacy NIP inflow webhook is disabled. Inflow is processed via the provider transaction-notification callback.',
+        );
+      }
       return this.webhooksService.handleInflowWebhook(body as InflowWebhookDto);
     } else if (body.event === 'payout') {
       return this.webhooksService.handlePayoutWebhook(body as PayoutWebhookDto);

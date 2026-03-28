@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { UsersService } from './users.service.js';
 import { UsersController } from './users.controller.js';
 import { DatabaseModule } from '../database/database.module.js';
@@ -13,7 +13,7 @@ config();
 @Module({
   imports: [
     DatabaseModule,
-    ProviderModule,
+    forwardRef(() => ProviderModule),
     CustomerKycModule,
     CacheModule,
     JwtModule.register({

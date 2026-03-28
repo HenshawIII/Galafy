@@ -8,10 +8,18 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { UsersModule } from '../users/users.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConfigModule } from '../config/config.module.js';
-import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.module.js';
+import { InflowCreditModule } from '../common/inflow-credit/inflow-credit.module.js';
+import { ProviderModule } from '../provider/provider.module.js';
 
 @Module({
-  imports: [DatabaseModule, InternalLedgerModule, UsersModule, forwardRef(() => NotificationsModule), ConfigModule],
+  imports: [
+    DatabaseModule,
+    ProviderModule,
+    InflowCreditModule,
+    UsersModule,
+    forwardRef(() => NotificationsModule),
+    ConfigModule,
+  ],
   controllers: [WebhooksController],
   providers: [WebhooksService, OrganizationWalletService, WalletRiskService, AmlLoggingService],
   exports: [WebhooksService],

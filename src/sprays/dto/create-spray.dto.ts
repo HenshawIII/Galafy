@@ -35,6 +35,14 @@ export class CreateSprayDto {
   @IsString()
   note?: string;
 
+  @ApiProperty({
+    description:
+      'Client-generated encrypted securityInfo for provider debit authorization (same model as wallet-to-wallet transfer). Required so funds move only via the payment partner.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  securityInfo!: string;
+
   // Validation: At least one of receiverUserId or receiverParticipantId must be provided
   @ValidateIf((o) => !o.receiverUserId && !o.receiverParticipantId)
   @IsNotEmpty({ message: 'Either receiverUserId or receiverParticipantId must be provided' })

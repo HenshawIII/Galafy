@@ -12,7 +12,7 @@ import { DatabaseService } from '../database/database.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
 import { SearchEventDto } from './dto/search-event.dto.js';
-import { EventStatus, EventRole, EventVisibility, KycTier } from '../../generated/prisma/enums.js';
+import { EventStatus, EventRole, EventVisibility, KycTier, SprayStatus } from '../../generated/prisma/enums.js';
 import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -599,6 +599,7 @@ export class EventsService {
             },
           },
           sprays: {
+            where: { status: SprayStatus.CONFIRMED },
             include: {
               sprayerWallet: {
                 include: {
@@ -1502,7 +1503,7 @@ export class EventsService {
 
     // Get all sprays for this event with sprayer wallet and user info
     const sprays = await this.databaseService.spray.findMany({
-      where: { eventId },
+      where: { eventId, status: SprayStatus.CONFIRMED },
       select: {
         id: true,
         totalAmount: true,
@@ -1697,6 +1698,7 @@ export class EventsService {
             },
           },
           sprays: {
+            where: { status: SprayStatus.CONFIRMED },
             include: {
               sprayerWallet: {
                 include: {
@@ -1716,7 +1718,6 @@ export class EventsService {
           _count: {
             select: {
               participants: true,
-              sprays: true,
             },
           },
         },
@@ -1757,7 +1758,7 @@ export class EventsService {
         endsAt: eventWithWATDates.endsAt,
         hostUser: event.hostUser,
         participantCount: event._count.participants,
-        sprayCount: event._count.sprays,
+        sprayCount: (event.sprays || []).length,
         uniqueSprayerCount: uniqueSprayerCount,
         createdAt: event.createdAt,
       };

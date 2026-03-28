@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  GoneException,
   Logger,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
@@ -33,6 +34,7 @@ import {
   EventStatus,
   PayoutStatus,
   KycTier,
+  SprayStatus,
 } from '../../generated/prisma/enums.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
@@ -44,7 +46,6 @@ import * as crypto from 'crypto';
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { EmailService } from '../users/email.service.js';
-import { WalletmoduleService } from '../walletmodule/walletmodule.service.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { Prisma } from '@prisma/client';
@@ -67,7 +68,6 @@ export class AdminService {
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
-    private readonly walletmoduleService: WalletmoduleService,
     private readonly providerService: ProviderService,
     private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
@@ -1082,6 +1082,43 @@ export class AdminService {
     await this.logAdminAction(adminId, 'KYC_REJECTED', 'KYC_REQUEST', requestId, { reason: dto.reason }, dto.reason);
 
     return updatedRequest;
+  }
+
+  /**
+   * Manual Tier 3 promotion after off-line verification (e.g. bank address). Customer must already be Tier 2.
+   */
+  async promoteCustomerToTier3(customerId: string, adminId: string, dto?: ApproveKycDto) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (customer.tier !== KycTier.Tier_2) {
+      throw new BadRequestException('Customer must be Tier 2 to be promoted to Tier 3 via this endpoint');
+    }
+
+    const previousTier = customer.tier;
+    const updated = await this.databaseService.customer.update({
+      where: { id: customerId },
+      data: {
+        tier: KycTier.Tier_3,
+        providerTierCode: 3,
+      },
+    });
+
+    await this.logAdminAction(
+      adminId,
+      'CUSTOMER_TIER3_PROMOTED',
+      'CUSTOMER',
+      customerId,
+      { previousTier, newTier: KycTier.Tier_3, notes: dto?.notes },
+      dto?.notes,
+    );
+
+    return updated;
   }
 
   /**
@@ -2921,6 +2958,7 @@ export class AdminService {
 
     const where: any = {
       eventId,
+      status: SprayStatus.CONFIRMED,
     };
 
     if (filters.startDate || filters.endDate) {
@@ -3047,10 +3085,11 @@ export class AdminService {
 
     const limit = filters.limit || 10;
 
-    // Get all sprays for the event
+    // Get all confirmed sprays for the event
     const sprays = await this.databaseService.spray.findMany({
       where: {
         eventId,
+        status: SprayStatus.CONFIRMED,
       },
       include: {
         sprayerWallet: {
@@ -3605,304 +3644,12 @@ export class AdminService {
   }
 
   /**
-   * Approve withdrawal (if manual approval workflow exists)
-   * For withdrawals that require approval (exceed daily limit), processes the payout
-   * For other withdrawals, just updates status to PROCESSING
+   * Admin approval for over-limit withdrawals has been removed; payouts must stay within daily limits.
    */
-  async approveWithdrawal(payoutTransactionId: string, adminId: string) {
-    const payoutTransaction = await this.databaseService.payoutTransaction.findUnique({
-      where: { id: payoutTransactionId },
-      include: {
-        transaction: true,
-        wallet: {
-          include: {
-            customer: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        },
-        bankAccount: true,
-      },
-    });
-
-    if (!payoutTransaction) {
-      throw new NotFoundException('Withdrawal not found');
-    }
-
-    // If already successful, return as-is
-    if (payoutTransaction.status === PayoutStatus.SUCCESS) {
-      return payoutTransaction;
-    }
-
-    // Check if this withdrawal requires approval
-    if (payoutTransaction.requiresApproval && payoutTransaction.status === PayoutStatus.PENDING) {
-      // Process the payout that was pending approval
-      const providerPayload = payoutTransaction.providerPayload as any;
-      const payoutData = providerPayload?.payoutData;
-
-      if (!payoutData) {
-        throw new BadRequestException('Payout data not found. Cannot process approval.');
-      }
-
-      // Re-check balance and limit before processing
-      const wallet = await this.databaseService.wallet.findUnique({
-        where: { id: payoutTransaction.walletId },
-        include: {
-          customer: {
-            include: {
-              user: true,
-            },
-          },
-        },
-      });
-
-      if (!wallet) {
-        throw new NotFoundException('Wallet not found');
-      }
-
-      if (!wallet.virtualAccountNumber) {
-        throw new BadRequestException('Wallet does not have a virtual account number');
-      }
-
-      const grossAmount = payoutTransaction.amount;
-      const { fee, netAmount, feePercentage } = await calculatePayoutFee(grossAmount, this.configService);
-
-      // Process payout within a transaction
-      const result = await this.databaseService.$transaction(
-        async (tx: Prisma.TransactionClient) => {
-          // Lock wallet
-          await tx.$queryRaw`
-            SELECT id FROM "Wallet" WHERE id = ${wallet.id} FOR UPDATE
-          `;
-
-          // Re-check balance
-          const lockedWallet = await tx.wallet.findUnique({
-            where: { id: wallet.id },
-            select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
-          });
-
-          if (!lockedWallet) {
-            throw new NotFoundException('Wallet not found after lock');
-          }
-
-          if (lockedWallet.availableBalance.lt(grossAmount)) {
-            throw new BadRequestException('Insufficient balance. Wallet balance has changed since request was made.');
-          }
-
-          const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
-          const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
-          if (!orgWallet) {
-            throw new BadRequestException(
-              'Organization wallet not found in database. Ensure ORGANIZATION_WALLET matches a Wallet row.',
-            );
-          }
-
-          const userTransactionRef = `PAYOUT-${randomUUID()}`;
-          const providerTransactionRef = randomUUID();
-
-          await this.internalLedgerTransfer.transfer(tx, wallet.id, orgWallet.id, grossAmount);
-
-          // Create DEBIT transaction for user wallet
-          const userDebitTransaction = await tx.transaction.create({
-            data: {
-              walletId: wallet.id,
-              type: TransactionType.PAYOUT,
-              direction: TransactionDirection.DEBIT,
-              status: TransactionStatus.SUCCESS,
-              amount: grossAmount,
-              currencyId: wallet.currencyId,
-              reference: userTransactionRef,
-              externalReference: null,
-              narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'}`,
-              metadata: {
-                fee: fee.toString(),
-                netAmount: netAmount.toString(),
-                feePercentage: feePercentage.toString(),
-                feeType: 'payout',
-                destinationAccount: payoutData.toAccountNumber,
-                destinationBank: payoutData.bankCode,
-              },
-            },
-          });
-
-          // Get destination account name
-          let destinationAccountName = payoutData.recipientName as string;
-          if (!destinationAccountName) {
-            try {
-              const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
-                payoutData.bankCode as string,
-                payoutData.toAccountNumber as string,
-              );
-              destinationAccountName = nameEnquiry.accountName;
-            } catch (error) {
-              this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
-              destinationAccountName = 'Unknown';
-            }
-          }
-
-          // Get source account name
-          const customerName =
-            wallet.customer.firstName && wallet.customer.lastName
-              ? `${wallet.customer.firstName} ${wallet.customer.lastName}`
-              : null;
-          const userName =
-            wallet.customer.user.firstName && wallet.customer.user.lastName
-              ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
-              : null;
-          const sourceAccountName = wallet.name || customerName || userName || 'Unknown';
-
-          let destinationBankName = 'Unknown';
-          try {
-            const banks = await this.providerService.getBanks();
-            const normalizeBankCode = (code: string | number | null | undefined): string => {
-              if (code === null || code === undefined) return '';
-              return String(code).trim().replace(/^0+/, '') || '0';
-            };
-            const payoutBankCode = normalizeBankCode(payoutData.bankCode);
-            destinationBankName =
-              banks.find((b) => normalizeBankCode(b.bankcode) === payoutBankCode)?.bankname ?? 'Unknown';
-          } catch (e: any) {
-            this.logger.warn(`Failed to resolve bank name for approval payout: ${e.message}`);
-          }
-
-          const adminOrgSecurity = process.env.ADMIN_DEBIT_WALLET_SECURITY_INFO?.trim();
-          if (!adminOrgSecurity) {
-            throw new BadRequestException(
-              'Set ADMIN_DEBIT_WALLET_SECURITY_INFO to the organization debit-wallet securityInfo value before approving withdrawals.',
-            );
-          }
-
-          const orgToBankProviderResponse = await this.providerService.processClientTransfer({
-            securityInfo: adminOrgSecurity,
-            amount: netAmount.toNumber(),
-            destinationBankCode: payoutData.bankCode as string,
-            destinationBankName,
-            destinationAccountNumber: payoutData.toAccountNumber as string,
-            destinationAccountName,
-            sourceAccountNumber: adminWalletAccountNumber,
-            narration: (payoutData.description as string) || 'Wallet payout',
-            transactionReference: providerTransactionRef,
-            useCustomNarration: true,
-          });
-
-          // Update existing PayoutTransaction with processing info
-          await tx.payoutTransaction.update({
-            where: { id: payoutTransactionId },
-            data: {
-              requiresApproval: false,
-              approvedBy: adminId,
-              approvedAt: new Date(),
-              status: PayoutStatus.PROCESSING, // Will be updated to SUCCESS by webhook
-              transactionId: userDebitTransaction.id, // Update to real transaction
-              providerTransactionRef: providerTransactionRef,
-              providerPayload: {
-                userToOrgInternal: true,
-                orgToBankTransfer: orgToBankProviderResponse,
-                netAmount: netAmount.toString(),
-                sourceAccountName,
-              },
-            },
-          });
-
-          // Delete placeholder transaction
-          await tx.transaction.delete({
-            where: { id: payoutTransaction.transactionId },
-          });
-
-          // Create AdminFee record
-          const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
-          await tx.adminFee.create({
-            data: {
-              walletId: wallet.id,
-              customerId: wallet.customerId,
-              amount: fee,
-              feeType: 'payout',
-              feePercentage: normalizedFeePercentage,
-              relatedTransactionId: userDebitTransaction.id,
-              payoutTransactionId: payoutTransactionId,
-              status: 'COLLECTED',
-              grossAmount: grossAmount,
-              netAmount: netAmount,
-              adminWalletAccountNumber: adminWalletAccountNumber,
-              metadata: {
-                destinationAccount: payoutData.toAccountNumber,
-                destinationBank: payoutData.bankCode,
-                recipientName: destinationAccountName,
-                providerTransactionRef: providerTransactionRef,
-                userToOrgInternal: true,
-                orgToBankTransfer: orgToBankProviderResponse,
-              },
-            },
-          });
-
-          // Record withdrawal (outside transaction)
-          if (wallet.customer.tier === KycTier.Tier_2 || wallet.customer.tier === KycTier.Tier_3) {
-            this.withdrawalLimitService.recordWithdrawal(wallet.customer.id, grossAmount).catch((error) => {
-              this.logger.error(`Failed to record withdrawal: ${error.message}`);
-            });
-          }
-
-          return {
-            success: true,
-            message:
-              (orgToBankProviderResponse && (orgToBankProviderResponse.message as string)) ||
-              'Payout approved and processed successfully',
-            transactionRef: providerTransactionRef,
-            payoutTransactionId: payoutTransactionId,
-          };
-        },
-        {
-          timeout: 15000,
-        },
-      );
-
-      // Log admin action
-      await this.logAdminAction(adminId, 'WITHDRAWAL_APPROVED', 'PAYOUT_TRANSACTION', payoutTransactionId, {
-        amount: payoutTransaction.amount.toString(),
-        previousStatus: payoutTransaction.status,
-        newStatus: PayoutStatus.PROCESSING,
-        requiresApproval: true,
-      });
-
-      // Fetch updated payout transaction
-      const updatedPayout = await this.databaseService.payoutTransaction.findUnique({
-        where: { id: payoutTransactionId },
-        include: {
-          transaction: true,
-          wallet: {
-            include: {
-              customer: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-          bankAccount: true,
-        },
-      });
-
-      return updatedPayout;
-    } else {
-      // For withdrawals that don't require approval, just update status
-      const updatedPayout = await this.databaseService.payoutTransaction.update({
-        where: { id: payoutTransactionId },
-        data: {
-          status: PayoutStatus.PROCESSING,
-        },
-      });
-
-      // Log admin action
-      await this.logAdminAction(adminId, 'WITHDRAWAL_APPROVED', 'PAYOUT_TRANSACTION', payoutTransactionId, {
-        amount: payoutTransaction.amount.toString(),
-        previousStatus: payoutTransaction.status,
-        newStatus: PayoutStatus.PROCESSING,
-      });
-
-      return updatedPayout;
-    }
+  async approveWithdrawal(_payoutTransactionId: string, _adminId: string) {
+    throw new GoneException(
+      'Admin withdrawal approval is disabled. Users must withdraw within their daily limit or use a smaller amount.',
+    );
   }
 
   /**
