@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
   ProviderCreateCustomerRequestDto,
   ProviderUpdateCustomerNameRequestDto,
@@ -35,7 +35,6 @@ config();
 export class ProviderService {
   private readonly logger = new Logger(ProviderService.name);
   private readonly baseUrl: string;
-  private readonly payoutBaseUrl: string;
   private readonly apiKey: string;
   private readonly organizationId: string;
   private readonly kycBaseUrl: string;
@@ -44,9 +43,12 @@ export class ProviderService {
   private dropdownCache: { data: AlatCountryModel; expiresAt: number } | null = null;
   private static readonly DROPDOWN_CACHE_TTL_MS = 60 * 60 * 1000;
 
+  /** Returned to API clients when the upstream partner returns 5xx or is unreachable (do not echo partner 500 as our 500). */
+  static readonly CLIENT_PARTNER_UNAVAILABLE_MESSAGE =
+    'Our partner service is temporarily unavailable. Please try again in a few minutes.';
+
   constructor() {
     this.baseUrl = process.env.PROVIDER_BASE_URL || '';
-    this.payoutBaseUrl = process.env.PROVIDER_PAYOUT_BASE_URL || '';
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     this.organizationId = process.env.PROVIDER_ORGANIZATION_ID || '';
     this.kycBaseUrl = process.env.PROVIDER_KYC_BASE_URL || 'https://apiplayground.alat.ng/create-account-face/api';
@@ -56,14 +58,165 @@ export class ProviderService {
       this.logger.warn('Provider configuration is incomplete. Some features may not work.');
     }
 
-    if (!this.payoutBaseUrl) {
+    const debitAccess = process.env.PROVIDER_DEBIT_WALLET_ACCESS_KEY || this.apiKey;
+    const debitApim = process.env.PROVIDER_DEBIT_WALLET_APIM_KEY || this.kycSubscriptionKey;
+    if (!debitAccess || !debitApim) {
       this.logger.warn(
-        'Payout base URL is not configured. Payout-related features (banks, transfers, etc.) may not work.',
+        'Debit-wallet payout features need PROVIDER_DEBIT_WALLET_ACCESS_KEY (or PROVIDER_API_KEY) and PROVIDER_DEBIT_WALLET_APIM_KEY (or PROVIDER_KYC_SUBSCRIPTION_KEY).',
       );
     }
 
     if (!this.kycSubscriptionKey) {
       this.logger.warn('PROVIDER_KYC_SUBSCRIPTION_KEY is not set. ALAT KYC endpoints may not work.');
+    }
+  }
+
+  /**
+   * Map upstream HTTP errors for client responses: partner 5xx → 503 + safe message (details only in logs).
+   */
+  private throwForUpstreamHttpError(
+    response: Response,
+    parsedBody: unknown,
+    logLabel: string,
+  ): void {
+    if (response.ok) {
+      return;
+    }
+    const status = response.status;
+    const detail =
+      typeof parsedBody === 'object' && parsedBody !== null
+        ? JSON.stringify(parsedBody)
+        : String(parsedBody ?? '');
+    if (status >= 500) {
+      this.logger.error(`${logLabel}: upstream HTTP ${status} ${detail}`);
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    const body = parsedBody as { message?: string; error?: string } | null;
+    const msg = body?.message || body?.error || `${logLabel} request failed`;
+    throw new HttpException(msg, status || HttpStatus.BAD_REQUEST);
+  }
+
+  private buildDebitWalletUrl(path: string): string {
+    const base = (
+      process.env.PROVIDER_DEBIT_WALLET_BASE_URL || 'https://apiplayground.alat.ng/debit-wallet/api'
+    ).replace(/\/$/, '');
+    const p = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${p}`;
+  }
+
+  private getDebitWalletAccessKey(): string {
+    return process.env.PROVIDER_DEBIT_WALLET_ACCESS_KEY || this.apiKey;
+  }
+
+  private getDebitWalletApimKey(): string {
+    return process.env.PROVIDER_DEBIT_WALLET_APIM_KEY || this.kycSubscriptionKey;
+  }
+
+  private debitWalletErrorMessage(parsed: unknown): string {
+    if (typeof parsed !== 'object' || parsed === null) {
+      return 'Debit-wallet request failed';
+    }
+    const o = parsed as { errorMessage?: string; errorMessages?: string[] };
+    if (typeof o.errorMessage === 'string' && o.errorMessage.trim()) {
+      return o.errorMessage;
+    }
+    const first = o.errorMessages?.find((m) => typeof m === 'string' && m.trim());
+    return first || 'Debit-wallet request failed';
+  }
+
+  private isRecord(v: unknown): v is Record<string, unknown> {
+    return typeof v === 'object' && v !== null;
+  }
+
+  /**
+   * ALAT debit-wallet API: `access` + `Ocp-Apim-Subscription-Key`, JSON envelope with `result` / `hasError`.
+   */
+  private async makeDebitWalletRequest<T>(
+    pathOrOptions: string | { absoluteUrl: string },
+    method: 'GET' | 'POST',
+    options?: {
+      body?: unknown;
+      /** Defaults to application/json-patch+json for POST when omitted */
+      contentType?: string;
+      logLabel?: string;
+    },
+  ): Promise<T> {
+    const url = typeof pathOrOptions === 'string' ? this.buildDebitWalletUrl(pathOrOptions) : pathOrOptions.absoluteUrl;
+    const logLabel = options?.logLabel ?? 'Debit-wallet API';
+    const access = this.getDebitWalletAccessKey();
+    const apim = this.getDebitWalletApimKey();
+    const headers: Record<string, string> = {
+      access,
+      'Cache-Control': 'no-cache',
+      'Ocp-Apim-Subscription-Key': apim,
+    };
+    if (method === 'POST') {
+      headers['Content-Type'] = options?.contentType ?? 'application/json-patch+json';
+    }
+
+    try {
+      this.logger.debug(`Making ${method} ${logLabel}: ${url}`);
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: method === 'POST' && options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+      });
+
+      const responseText = await response.text();
+      if (!responseText || responseText.trim().length === 0) {
+        this.logger.error(`${logLabel} empty response. HTTP ${response.status}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException(`${logLabel} returned an empty response`, response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      let data: unknown;
+      try {
+        data = JSON.parse(responseText) as unknown;
+      } catch {
+        this.logger.error(`${logLabel} invalid JSON: ${responseText.substring(0, 200)}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid response from payment partner', HttpStatus.BAD_REQUEST);
+      }
+
+      if (!response.ok) {
+        const detail = typeof data === 'string' ? data.substring(0, 500) : JSON.stringify(data);
+        if (response.status >= 500) {
+          this.logger.error(`${logLabel}: upstream HTTP ${response.status} ${detail}`);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        const msg =
+          this.isRecord(data) && ('errorMessage' in data || 'errorMessages' in data)
+            ? this.debitWalletErrorMessage(data)
+            : this.isRecord(data) && typeof data.message === 'string'
+              ? data.message
+              : this.isRecord(data) && typeof data.error === 'string'
+                ? data.error
+                : `${logLabel} request failed`;
+        throw new HttpException(msg, response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      if (this.isRecord(data) && data.hasError === true) {
+        const msg = this.debitWalletErrorMessage(data);
+        this.logger.error(`${logLabel} hasError: ${JSON.stringify(data)}`);
+        throw new BadRequestException(msg);
+      }
+
+      if (this.isRecord(data) && 'result' in data) {
+        return data.result as T;
+      }
+
+      this.logger.warn(`${logLabel}: response missing result envelope, returning parsed body`);
+      return data as T;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(`${logLabel} failed: ${(error as Error)?.message ?? String(error)}`);
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 
@@ -99,9 +252,12 @@ export class ProviderService {
       // Check if response is empty
       if (!responseText || responseText.trim().length === 0) {
         this.logger.error(`Provider API returned empty response. Status: ${response.status}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
         throw new HttpException(
           'Provider API returned empty response',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          response.status || HttpStatus.BAD_REQUEST,
         );
       }
 
@@ -111,16 +267,13 @@ export class ProviderService {
         data = JSON.parse(responseText);
       } catch (parseError) {
         this.logger.error(`Failed to parse JSON response.Response text: ${responseText.substring(0, 200)}`);
-        throw new HttpException('Invalid JSON response from provider API', HttpStatus.INTERNAL_SERVER_ERROR);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid JSON response from provider API', HttpStatus.BAD_REQUEST);
       }
 
-      if (!response.ok) {
-        this.logger.error(`Provider API error (${response.status}): ${JSON.stringify(data)}`);
-        throw new HttpException(
-          data.message || data.error || 'Provider API request failed',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
+      this.throwForUpstreamHttpError(response, data, 'Provider API');
 
       return data as T;
     } catch (error) {
@@ -129,79 +282,7 @@ export class ProviderService {
       }
       this.logger.error(`Provider API request failed: ${error.message}`);
       this.logger.error(`Stack trace: ${error.stack}`);
-      throw new HttpException(
-        `Failed to communicate with provider service: ${error.message}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
-    }
-  }
-
-  /**
-   * Generic method to make HTTP requests to the payout API
-   */
-  private async makePayoutRequest<T>(
-    endpoint: string,
-    method: 'GET' | 'POST' | 'PATCH' | 'PUT' = 'GET',
-    body?: any,
-  ): Promise<T> {
-    const url = `${this.payoutBaseUrl}${endpoint}`;
-    const headers: Record<string, string> = {
-      'x-api-key': this.apiKey,
-      'Content-Type': 'application/json',
-    };
-
-    try {
-      this.logger.debug(`Making ${method} request to payout API: ${url}`);
-      if (body) {
-        this.logger.debug(`Request body: ${JSON.stringify(body)}`);
-      }
-
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-
-      // Get response text first to check if it's empty
-      const responseText = await response.text();
-
-      // Check if response is empty
-      if (!responseText || responseText.trim().length === 0) {
-        this.logger.error(`Payout API returned empty response. Status: ${response.status}`);
-        throw new HttpException(
-          'Payout API returned empty response',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
-
-      // Try to parse JSON
-      let data: any;
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        this.logger.error(`Failed to parse JSON response. Response text: ${responseText.substring(0, 200)}`);
-        throw new HttpException('Invalid JSON response from payout API', HttpStatus.INTERNAL_SERVER_ERROR);
-      }
-
-      if (!response.ok) {
-        this.logger.error(`Payout API error (${response.status}): ${JSON.stringify(data)}`);
-        throw new HttpException(
-          data.message || data.error || 'Payout API request failed',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
-
-      return data as T;
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      this.logger.error(`Payout API request failed: ${error.message}`);
-      this.logger.error(`Stack trace: ${error.stack}`);
-      throw new HttpException(
-        `Failed to communicate with payout service: ${error.message}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 
@@ -233,7 +314,10 @@ export class ProviderService {
       const responseText = await response.text();
       if (!responseText || responseText.trim().length === 0) {
         this.logger.error(`KYC API returned empty response. Status: ${response.status}`);
-        throw new HttpException('KYC API returned empty response', response.status || HttpStatus.INTERNAL_SERVER_ERROR);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('KYC API returned empty response', response.status || HttpStatus.BAD_REQUEST);
       }
 
       let data: any;
@@ -241,7 +325,10 @@ export class ProviderService {
         data = JSON.parse(responseText);
       } catch {
         this.logger.error(`Invalid JSON from KYC API: ${responseText.substring(0, 200)}`);
-        throw new HttpException('Invalid JSON response from KYC API', HttpStatus.INTERNAL_SERVER_ERROR);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid JSON response from KYC API', HttpStatus.BAD_REQUEST);
       }
 
       const success =
@@ -254,6 +341,10 @@ export class ProviderService {
         const isDuplicate =
           typeof msg === 'string' &&
           (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
+        if (response.status >= 500) {
+          this.logger.error(`KYC API HTTP ${response.status}: ${JSON.stringify(data)}`);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
         throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : response.status || HttpStatus.BAD_REQUEST);
       }
 
@@ -261,10 +352,7 @@ export class ProviderService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
       this.logger.error(`KYC API request failed: ${error.message}`);
-      throw new HttpException(
-        `Failed to communicate with KYC service: ${error.message}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 
@@ -560,32 +648,33 @@ export class ProviderService {
     return res.data ?? null;
   }
 
-  // ==================== PAYOUT OPERATIONS (legacy HTTP; banks list + name enquiry) ====================
+  // ==================== DEBIT-WALLET (payouts: banks, enquiry, transfer) ====================
 
   /**
-   * Get banks available for payouts
+   * Get banks available for payouts (debit-wallet Shared API).
    */
   async getBanks(): Promise<Array<{ bankcode: string; bankname: string }>> {
-    const response = await this.makePayoutRequest<{
-      data: Array<{ bankCode: string; bankName: string }>;
-      statusCode: number;
-      message: string;
-      succeeded: boolean;
-    }>('/api/Payout/banks', 'GET');
-
-    // Map the response from camelCase (bankCode, bankName) to lowercase (bankcode, bankname)
-    if (!response.data || !Array.isArray(response.data)) {
-      return [];
+    const rows = await this.makeDebitWalletRequest<Array<{ bankName: string; bankCode: string; bankLogo?: string }>>(
+      '/Shared/GetAllBanks',
+      'GET',
+      { logLabel: 'Debit-wallet GetAllBanks' },
+    );
+    const list = Array.isArray(rows) ? rows : [];
+    const seen = new Set<string>();
+    const out: Array<{ bankcode: string; bankname: string }> = [];
+    for (const bank of list) {
+      const code = bank.bankCode?.trim();
+      if (!code || seen.has(code)) {
+        continue;
+      }
+      seen.add(code);
+      out.push({ bankcode: code, bankname: bank.bankName || code });
     }
-
-    return response.data.map((bank) => ({
-      bankcode: bank.bankCode,
-      bankname: bank.bankName,
-    }));
+    return out;
   }
 
   /**
-   * Bank account name enquiry
+   * Destination account name enquiry (bank code + account number).
    */
   async bankAccountNameEnquiry(
     bankCode: string,
@@ -595,38 +684,81 @@ export class ProviderService {
     accountNumber: string;
     accountName: string;
   }> {
-    const body = {
-      bankCode,
-      accountNumber,
+    const bc = encodeURIComponent(bankCode);
+    const an = encodeURIComponent(accountNumber);
+    const result = await this.makeDebitWalletRequest<{
+      bankCode: string;
+      accountName: string;
+      accountNumber: string;
+      currency?: string;
+    }>(`/Shared/AccountNameEnquiry/${bc}/${an}`, 'GET', { logLabel: 'Debit-wallet AccountNameEnquiry' });
+
+    return {
+      destinationBankCode: result.bankCode,
+      accountNumber: result.accountNumber,
+      accountName: result.accountName,
     };
-
-    const response = await this.makePayoutRequest<{
-      data: {
-        destinationBankCode: string;
-        accountNumber: string;
-        accountName: string;
-      };
-      statusCode: number;
-      code: string | null;
-      message: string;
-      succeeded: boolean;
-    }>('/api/Payout/name-enquiry', 'POST', body);
-
-    if (!response.succeeded) {
-      throw new HttpException(response.message || 'Name enquiry failed', HttpStatus.BAD_REQUEST);
-    }
-
-    return response.data;
   }
 
-  // ====================
-  // Debit-wallet transfer
-  // ====================
   /**
-   * ALAT Debit Wallet: ProcessClientTransfer (callback-based transfer initiation).
-   *
-   * Provider docs (testing) use:
-   * POST https://apiplayground.alat.ng/debit-wallet/api/Shared/ProcessClientTransfer
+   * Wallet (managed) account name enquiry — e.g. validate source wallet virtual account.
+   */
+  async walletAccountNameEnquiry(accountNumber: string): Promise<{
+    bankCode: string;
+    accountName: string;
+    accountNumber: string;
+    currency?: string;
+  }> {
+    const enc = encodeURIComponent(accountNumber);
+    return this.makeDebitWalletRequest(`/Shared/AccountNameEnquiry/Wallet/${enc}`, 'GET', {
+      logLabel: 'Debit-wallet AccountNameEnquiry Wallet',
+    });
+  }
+
+  /**
+   * NIP interbank charge bands + terms (for future fee UI).
+   */
+  async getNIPCharges(): Promise<{
+    chargeFees: Array<{
+      id: number;
+      chargeFeeName: string;
+      transactionType: number;
+      charge: number;
+      lower: number;
+      upper: number;
+    }>;
+    termsAndConditions?: string;
+    termsAndConditionsUrl?: string;
+  }> {
+    return this.makeDebitWalletRequest('/Shared/GetNIPCharges', 'GET', { logLabel: 'Debit-wallet GetNIPCharges' });
+  }
+
+  /**
+   * Poll transfer status by client transaction reference (reconciliation / support).
+   */
+  async confirmClientTransferStatus(clientTransactionReference: string): Promise<{
+    title?: string;
+    message?: string;
+    data?: {
+      status?: string;
+      message?: string;
+      narration?: string;
+      transactionReference?: string;
+      platformTransactionReference?: string;
+      transactionStan?: string;
+      orinalTxnTransactionDate?: string;
+    };
+    request?: number;
+  }> {
+    const ref = encodeURIComponent(clientTransactionReference);
+    return this.makeDebitWalletRequest(`/IntraBankTransfer/ConfirmClientTransferStatus/${ref}`, 'GET', {
+      logLabel: 'Debit-wallet ConfirmClientTransferStatus',
+    });
+  }
+
+  /**
+   * Debits source wallet account and credits destination (intra or inter). Callbacks drive final settlement.
+   * Returns `result` from the provider envelope (status, platformTransactionReference, etc.).
    */
   async processClientTransfer(request: {
     securityInfo: string;
@@ -639,49 +771,22 @@ export class ProviderService {
     narration: string;
     transactionReference: string;
     useCustomNarration: boolean;
-  }): Promise<any> {
-    const url =
+  }): Promise<{
+    status?: string;
+    message?: string;
+    narration?: string;
+    transactionReference?: string;
+    platformTransactionReference?: string;
+    transactionStan?: string;
+    orinalTxnTransactionDate?: string;
+  }> {
+    const absoluteUrl =
       process.env.PROVIDER_DEBIT_WALLET_PROCESS_CLIENT_TRANSFER_URL ||
-      'https://apiplayground.alat.ng/debit-wallet/api/Shared/ProcessClientTransfer';
+      this.buildDebitWalletUrl('/Shared/ProcessClientTransfer');
 
-    const headers: Record<string, string> = {
-      'x-api-key': this.apiKey,
-      'Content-Type': 'application/json',
-    };
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(request),
-      });
-
-      const responseText = await response.text();
-      if (!responseText || responseText.trim().length === 0) {
-        throw new HttpException('Provider API returned empty response', response.status || HttpStatus.INTERNAL_SERVER_ERROR);
-      }
-
-      let data: any;
-      try {
-        data = JSON.parse(responseText);
-      } catch {
-        throw new HttpException('Invalid JSON response from provider API', HttpStatus.INTERNAL_SERVER_ERROR);
-      }
-
-      if (!response.ok) {
-        throw new HttpException(
-          data.message || data.error || 'Provider API request failed',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
-
-      return data;
-    } catch (error) {
-      if (error instanceof HttpException) throw error;
-      throw new HttpException(
-        `Failed to communicate with provider debit-wallet service: ${(error as any)?.message ?? String(error)}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
-    }
+    return this.makeDebitWalletRequest({ absoluteUrl }, 'POST', {
+      body: request,
+      logLabel: 'Debit-wallet ProcessClientTransfer',
+    });
   }
 }

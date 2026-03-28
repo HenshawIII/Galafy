@@ -55,7 +55,8 @@ export class ProviderTxnCallbackService {
    * This is idempotent using provider `platformTransactionReference`.
    */
   async handleTransactionCallback(raw: any): Promise<{ received: true }> {
-    const data: TransactionCallbackDto['data'] | undefined = raw?.data;
+    // Support flat `data` (docs) or nested `result.data` (some provider payloads).
+    const data: TransactionCallbackDto['data'] | undefined = raw?.data ?? raw?.result?.data;
     const transactionReference = data?.transactionReference;
     const platformTransactionReference = data?.platformTransactionReference;
     const providerStatus = data?.status;
