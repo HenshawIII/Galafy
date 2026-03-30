@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNotEmpty, IsDecimal, Min, ValidateIf } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty, IsDecimal, ValidateIf } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, ApiHideProperty } from '@nestjs/swagger';
 
 export class CreateSprayDto {
@@ -34,14 +34,6 @@ export class CreateSprayDto {
   @IsOptional()
   @IsString()
   note?: string;
-
-  @ApiProperty({
-    description:
-      'Client-generated encrypted securityInfo for provider debit authorization (same model as wallet-to-wallet transfer). Required so funds move only via the payment partner.',
-  })
-  @IsString()
-  @IsNotEmpty()
-  securityInfo!: string;
 
   // Validation: At least one of receiverUserId or receiverParticipantId must be provided
   @ValidateIf((o) => !o.receiverUserId && !o.receiverParticipantId)

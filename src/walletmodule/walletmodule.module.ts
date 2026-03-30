@@ -12,9 +12,10 @@ import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { ConfigModule } from '../config/config.module.js';
 import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
+import { DebitMandateModule } from '../common/debit-mandate/debit-mandate.module.js';
 
 @Module({
-  imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule, ConfigModule],
+  imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule, ConfigModule, DebitMandateModule],
   controllers: [WalletmoduleController],
   providers: [
     WalletmoduleService,

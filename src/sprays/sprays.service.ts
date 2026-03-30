@@ -6,8 +6,10 @@ import { EventStatus, SprayStatus } from '../../generated/prisma/enums.js';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { LiveGateway } from '../live/live.gateway.js';
+import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
+import { normalizeToKobo } from '../common/utils/money.util.js';
 
 export interface SprayResult {
   spray: any | null;
@@ -31,6 +33,7 @@ export class SpraysService {
     private readonly databaseService: DatabaseService,
     private readonly providerService: ProviderService,
     private readonly liveGateway: LiveGateway,
+    private readonly debitWalletMandateService: DebitWalletMandateService,
   ) {}
 
   /**
@@ -295,9 +298,18 @@ export class SpraysService {
       [receiverCustomer?.firstName, receiverCustomer?.lastName].filter(Boolean).join(' ').trim() || 'Receiver';
 
     const groupReference = randomUUID();
-    const securityInfoHash = createHash('sha256').update(createSprayDto.securityInfo).digest('hex');
-    const narration =
-      createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`;
+    const amountKobo = normalizeToKobo(createSprayDto.amount);
+    const amountNormalized = amountKobo.toFixed(2);
+    const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generateEventSprayMandate({
+      transactionReference: idempotencyKey,
+      eventId,
+      sprayerWalletId: sprayerWallet.id,
+      receiverWalletId: receiverWallet.id,
+      amountNormalized,
+      receiverVirtualAccount: receiverWallet.virtualAccountNumber,
+      receiverBankCode: receiverWallet.virtualBankCode.trim(),
+    });
+    const narration = createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`;
 
     await this.databaseService.$transaction(
       async (tx: Prisma.TransactionClient) => {
@@ -321,7 +333,7 @@ export class SpraysService {
           throw new NotFoundException('Sprayer wallet not found');
         }
 
-        if (lockedSprayer.availableBalance.lt(amount)) {
+        if (lockedSprayer.availableBalance.lt(amountKobo)) {
           throw new BadRequestException('Insufficient balance');
         }
 
@@ -338,7 +350,7 @@ export class SpraysService {
             type: TransactionType.SPRAY,
             direction: TransactionDirection.DEBIT,
             status: TransactionStatus.PENDING,
-            amount,
+            amount: amountKobo,
             currencyId: lockedSprayer.currencyId,
             reference: idempotencyKey,
             groupReference,
@@ -369,7 +381,7 @@ export class SpraysService {
             receiverWalletId: receiverWallet.id,
             transactionId: createdTxn.id,
             transactionGroupReference: groupReference,
-            totalAmount: amount,
+            totalAmount: amountKobo,
             note: createSprayDto.note ?? null,
             status: SprayStatus.PENDING_PROVIDER,
             metadata: { pendingProvider: true },
@@ -416,8 +428,8 @@ export class SpraysService {
 
     try {
       await this.providerService.processClientTransfer({
-        securityInfo: createSprayDto.securityInfo,
-        amount: amount.toNumber(),
+        securityInfo,
+        amount: amountKobo.toNumber(),
         destinationBankCode: receiverWallet.virtualBankCode,
         destinationBankName: receiverWallet.virtualBankName?.trim() || 'Wallet',
         destinationAccountNumber: receiverWallet.virtualAccountNumber,
@@ -444,7 +456,7 @@ export class SpraysService {
     }
 
     this.logger.log(
-      `💰 SPRAY (provider): Amount=${amount.toString()}, EventId=${eventId}, Ref=${idempotencyKey} — pending callback`,
+      `💰 SPRAY (provider): Amount=${amountKobo.toString()}, EventId=${eventId}, Ref=${idempotencyKey} — pending callback`,
     );
 
     return {

@@ -32,10 +32,7 @@ import { WalletExportService } from './services/wallet-export.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { GetWalletHistoryDto } from './dto/wallet-query.dto.js';
 import { ExportWalletHistoryDto } from './dto/export-wallet-history.dto.js';
-import {
-  WalletToWalletTransferDto,
-  InitiateWalletToWalletTransferDto,
-} from './dto/wallet-transfer.dto.js';
+import { InitiateWalletToWalletTransferDto } from './dto/wallet-transfer.dto.js';
 import {
   SetPayoutPinDto,
   UpdatePayoutPinDto,
@@ -193,47 +190,39 @@ export class WalletmoduleController {
     res.send(buffer);
   }
 
-  @Put('transfer/wallet-to-wallet')
+  @Post('transfer/wallet-to-wallet')
   @ApiOperation({
-    summary: 'Transfer funds between wallets (removed)',
+    summary: 'Wallet-to-wallet transfer (single step)',
     description:
-      'Replaced by provider-backed flow: POST .../transfer/wallet-to-wallet/initiate then .../confirm (same as payout security).',
+      'Requires Bearer auth only. Server generates provider `securityInfo`. No OTP, PIN, or initiate/confirm flow.',
   })
-  @ApiResponse({ status: 410, description: 'Use initiate + confirm wallet-to-wallet endpoints' })
-  async walletToWalletTransfer(@Body(ValidationPipe) transferDto: WalletToWalletTransferDto) {
-    return this.walletmoduleService.walletToWalletTransfer(transferDto);
+  @ApiBody({ type: InitiateWalletToWalletTransferDto })
+  @ApiResponse({ status: 200, description: 'Transfer submitted to provider (pending callback)' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
+  async walletToWalletTransfer(@Request() req: any, @Body(ValidationPipe) dto: InitiateWalletToWalletTransferDto) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.walletmoduleService.walletToWalletTransfer(userId, dto);
   }
 
   @Post('transfer/wallet-to-wallet/initiate')
-  @ApiOperation({
-    summary: 'Initiate wallet-to-wallet transfer (step 1)',
-    description: 'Sends OTP. Uses the same provider ProcessClientTransfer path as payouts after confirm.',
-  })
-  @ApiBody({ type: InitiateWalletToWalletTransferDto })
-  @ApiResponse({ status: 200, description: 'OTP sent' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async initiateWalletToWalletTransfer(
-    @Request() req: any,
-    @Body(ValidationPipe) dto: InitiateWalletToWalletTransferDto,
-  ) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.walletmoduleService.initiateWalletToWalletTransfer(userId, dto);
+  @ApiOperation({ summary: 'Removed — use POST transfer/wallet-to-wallet' })
+  @ApiResponse({ status: 410, description: 'Endpoint removed' })
+  walletToWalletInitiateRemoved() {
+    throw new GoneException(
+      'Wallet-to-wallet initiate is removed. Use POST /wallets/transfer/wallet-to-wallet with Bearer authentication only.',
+    );
   }
 
   @Post('transfer/wallet-to-wallet/confirm')
-  @ApiOperation({ summary: 'Confirm wallet-to-wallet transfer (step 2 — OTP, PIN, provider debit)' })
-  @ApiBody({ type: ConfirmPayoutDto })
-  @ApiResponse({ status: 200, description: 'Transfer submitted to provider' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async confirmWalletToWalletTransfer(@Request() req: any, @Body(ValidationPipe) confirmDto: ConfirmPayoutDto) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.walletmoduleService.confirmWalletToWalletTransfer(userId, confirmDto.otp, confirmDto.pin);
+  @ApiOperation({ summary: 'Removed — use POST transfer/wallet-to-wallet' })
+  @ApiResponse({ status: 410, description: 'Endpoint removed' })
+  walletToWalletConfirmRemoved() {
+    throw new GoneException(
+      'Wallet-to-wallet confirm is removed. Use POST /wallets/transfer/wallet-to-wallet with Bearer authentication only.',
+    );
   }
 
   @Post('payout/set-pin')

@@ -2,7 +2,7 @@ import { IsString, IsNotEmpty, IsOptional, IsDecimal, MaxLength } from 'class-va
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-/** Step 1: same security model as payout (OTP email + confirm with PIN + securityInfo). */
+/** Body for POST transfer/wallet-to-wallet: Bearer auth only; server builds provider `securityInfo`. */
 export class InitiateWalletToWalletTransferDto {
   @ApiProperty({ example: '9710013297', description: 'Source wallet virtual account number' })
   @IsString()
@@ -36,13 +36,6 @@ export class InitiateWalletToWalletTransferDto {
   @IsString()
   currencyId?: string;
 
-  @ApiProperty({
-    description: 'Client-generated encrypted securityInfo for provider debit authorization (same as payout)',
-  })
-  @IsString()
-  @IsNotEmpty()
-  securityInfo: string;
-
   @ApiPropertyOptional({ description: 'Optional transaction reference (max 36 chars)' })
   @IsOptional()
   @IsString()
@@ -50,7 +43,7 @@ export class InitiateWalletToWalletTransferDto {
   transactionReference?: string;
 }
 
-/** @deprecated Use InitiateWalletToWalletTransferDto + confirm with OTP/PIN (provider-backed transfer). */
+/** @deprecated Use POST transfer/wallet-to-wallet with InitiateWalletToWalletTransferDto. */
 export class WalletToWalletTransferDto {
   @ApiProperty({ example: '9710013297', description: 'Source wallet account number' })
   @IsString({ message: 'From wallet account number must be a string' })

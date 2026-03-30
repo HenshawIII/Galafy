@@ -110,14 +110,6 @@ export class InitiatePayoutDto {
   @IsOptional()
   currencyId?: string;
 
-  @ApiProperty({
-    description: 'Client-generated encrypted securityInfo used by the bank to authorize debit',
-    example: 'encrypted-security-info',
-  })
-  @IsString()
-  @IsNotEmpty()
-  securityInfo: string;
-
   @ApiPropertyOptional({
     description: 'Optional custom transaction reference. If omitted, backend will generate one.',
     example: 'TXN-123456',

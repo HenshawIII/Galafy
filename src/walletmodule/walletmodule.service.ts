@@ -1,13 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, UnauthorizedException } from '@nestjs/common';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CacheService } from '../cache/cache.service.js';
-import {
-  WalletToWalletTransferDto,
-  InitiateWalletToWalletTransferDto,
-  UpdateBankAccountDto,
-} from './dto/index.js';
+import { InitiateWalletToWalletTransferDto, UpdateBankAccountDto } from './dto/index.js';
 import { InitiatePayoutDto } from './dto/payout-security.dto.js';
 import { PayoutSecurityService } from './services/payout-security.service.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
@@ -22,7 +18,8 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { EmailService } from '../users/email.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
-import { ForbiddenException, GoneException } from '@nestjs/common';
+import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
+import { ForbiddenException } from '@nestjs/common';
 
 @Injectable()
 export class WalletmoduleService {
@@ -39,6 +36,7 @@ export class WalletmoduleService {
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
     private readonly withdrawalLimitService: WithdrawalLimitService,
+    private readonly debitWalletMandateService: DebitWalletMandateService,
   ) {}
 
   /**
@@ -137,20 +135,9 @@ export class WalletmoduleService {
   }
 
   /**
-   * @deprecated Wallet-to-wallet transfers go through the provider (ProcessClientTransfer). Use
-   * `initiateWalletToWalletTransfer` + `confirmWalletToWalletTransfer` (OTP, PIN, callbacks).
+   * Wallet-to-wallet in one step: Bearer auth only (no OTP/PIN). Server generates `securityInfo` for ProcessClientTransfer.
    */
-  walletToWalletTransfer(_transferDto: WalletToWalletTransferDto): never {
-    throw new GoneException(
-      'Direct wallet-to-wallet transfer is disabled. Use POST /wallets/transfer/wallet-to-wallet/initiate ' +
-        'then POST /wallets/transfer/wallet-to-wallet/confirm (same provider flow as payouts).',
-    );
-  }
-
-  /**
-   * Wallet-to-wallet — step 1: validate, store pending payload, send OTP (same pattern as payout).
-   */
-  async initiateWalletToWalletTransfer(userId: string, dto: InitiateWalletToWalletTransferDto) {
+  async walletToWalletTransfer(userId: string, dto: InitiateWalletToWalletTransferDto) {
     const fromWallet = await this.databaseService.wallet.findFirst({
       where: { virtualAccountNumber: dto.fromWalletId },
       include: { customer: { include: { user: true } } },
@@ -207,102 +194,24 @@ export class WalletmoduleService {
       toWallet.name ||
       [toWallet.customer.firstName, toWallet.customer.lastName].filter(Boolean).join(' ').trim() ||
       'Unknown';
-
-    const pending = {
-      kind: 'walletToWallet' as const,
+    const destinationBankCode = toWallet.virtualBankCode.trim();
+    const destinationBankName = (toWallet.virtualBankName || 'Unknown').trim() || 'Unknown';
+    const mandateNonce = this.debitWalletMandateService.generateNonce();
+    const amountNormalized = amount.toFixed(2);
+    const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generateWalletToWalletMandate({
+      transactionReference,
       fromWalletId: dto.fromWalletId,
       toWalletId: dto.toWalletId,
-      amount: amount.toString(),
-      description: dto.description,
-      transactionReference,
-      securityInfo: dto.securityInfo,
-      currencyId: dto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
-      destinationBankCode: toWallet.virtualBankCode.trim(),
-      destinationBankName: (toWallet.virtualBankName || 'Unknown').trim() || 'Unknown',
-      destinationAccountName,
-      walletId: fromWallet.id,
-      toWalletInternalId: toWallet.id,
-    };
-
-    await this.payoutSecurityService.storePendingPayout(userId, pending);
-    await this.payoutSecurityService.generateAndSendOtp(userId);
-
-    return {
-      success: true,
-      message: 'OTP sent to your email. Confirm the transfer with the OTP and your PIN.',
-      expiresIn: '10 minutes',
-    };
-  }
-
-  /**
-   * Wallet-to-wallet — step 2: OTP + PIN, then ProcessClientTransfer (provider debits; callbacks settle balances).
-   */
-  async confirmWalletToWalletTransfer(userId: string, otp: string, pin: string) {
-    await this.payoutSecurityService.verifyOtp(userId, otp);
-
-    const isPinValid = await this.payoutSecurityService.verifyPayoutPin(userId, pin);
-    if (!isPinValid) {
-      throw new UnauthorizedException('Invalid PIN');
-    }
-
-    const peek = await this.payoutSecurityService.peekPendingPayout(userId);
-    if (!peek || peek.kind !== 'walletToWallet') {
-      throw new BadRequestException(
-        'No pending wallet-to-wallet transfer. Please initiate a wallet transfer first.',
-      );
-    }
-
-    const pending = await this.payoutSecurityService.getAndClearPendingPayout(userId);
-    if (!pending || pending.kind !== 'walletToWallet') {
-      throw new BadRequestException(
-        'No pending wallet-to-wallet transfer. Please initiate a wallet transfer first.',
-      );
-    }
-
-    if (typeof pending.securityInfo !== 'string' || pending.securityInfo.trim() === '') {
-      throw new BadRequestException(
-        'Transfer requires securityInfo from the client. Please initiate the transfer again from the current app version.',
-      );
-    }
-
-    const amount = normalizeToKobo(pending.amount as string | number);
-    const transactionReference: string = pending.transactionReference || `TXN-${randomUUID()}`;
-    const securityInfo = pending.securityInfo as string;
-    const securityInfoHash = createHash('sha256').update(securityInfo).digest('hex');
-    const narration =
-      (pending.description as string) || `Wallet transfer to ${pending.toWalletId as string}`;
-
-    const fromWallet = await this.databaseService.wallet.findFirst({
-      where: { virtualAccountNumber: pending.fromWalletId as string },
-      include: { customer: { include: { user: true } } },
+      amountNormalized,
+      mandateNonce,
     });
-    const toWallet = await this.databaseService.wallet.findFirst({
-      where: { virtualAccountNumber: pending.toWalletId as string },
-    });
-
-    if (!fromWallet || !toWallet) {
-      throw new NotFoundException('Source or destination wallet not found');
-    }
-    if (fromWallet.customer.userId !== userId) {
-      throw new UnauthorizedException('You do not have access to this wallet');
-    }
-    if (fromWallet.id === toWallet.id) {
-      throw new BadRequestException('Source and destination wallet must differ');
-    }
-    if (fromWallet.customer.isAmlRestricted) {
-      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-    }
-    if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
-      throw new ForbiddenException(
-        'Transfers are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-      );
-    }
+    const narration = dto.description || `Wallet transfer to ${dto.toWalletId}`;
 
     await this.walletRiskService.checkWalletFreezeStatus(fromWallet.id, false);
 
     const initiation = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
       const lockedFrom = await tx.wallet.findFirst({
-        where: { virtualAccountNumber: pending.fromWalletId as string },
+        where: { virtualAccountNumber: dto.fromWalletId },
         include: { customer: { select: { userId: true } } },
       });
       if (!lockedFrom || lockedFrom.customer.userId !== userId) {
@@ -352,12 +261,12 @@ export class WalletmoduleService {
           narration,
           securityInfoHash,
           destinationAccountNumber: toWallet.virtualAccountNumber,
-          destinationAccountName: pending.destinationAccountName as string,
+          destinationAccountName,
           metadata: {
-            destinationBankCode: pending.destinationBankCode,
-            destinationBankName: pending.destinationBankName,
+            destinationBankCode,
+            destinationBankName,
             destinationAccountNumber: toWallet.virtualAccountNumber,
-            destinationAccountName: pending.destinationAccountName,
+            destinationAccountName,
             walletToWalletSpray: true,
             receiverWalletId: toWallet.id,
           },
@@ -371,10 +280,10 @@ export class WalletmoduleService {
       await this.providerService.processClientTransfer({
         securityInfo,
         amount: amount.toNumber(),
-        destinationBankCode: pending.destinationBankCode as string,
-        destinationBankName: (pending.destinationBankName as string) || 'Unknown',
+        destinationBankCode,
+        destinationBankName,
         destinationAccountNumber: toWallet.virtualAccountNumber as string,
-        destinationAccountName: (pending.destinationAccountName as string) || 'Unknown',
+        destinationAccountName,
         sourceAccountNumber: initiation.sourceAccountNumber,
         narration,
         transactionReference,
@@ -389,7 +298,7 @@ export class WalletmoduleService {
     }
 
     this.logger.log(
-      `W2W submitted via provider: ref=${transactionReference}, from=${pending.fromWalletId}, to=${pending.toWalletId}, amount=${amount.toString()}`,
+      `W2W submitted via provider: ref=${transactionReference}, from=${dto.fromWalletId}, to=${dto.toWalletId}, amount=${amount.toString()}`,
     );
 
     return {
@@ -397,8 +306,8 @@ export class WalletmoduleService {
       message: 'Transfer submitted and pending provider authorization/processing',
       transactionRef: transactionReference,
       status: TransactionStatus.PENDING,
-      fromWalletId: pending.fromWalletId,
-      toWalletId: pending.toWalletId,
+      fromWalletId: dto.fromWalletId,
+      toWalletId: dto.toWalletId,
     };
   }
 
@@ -464,6 +373,7 @@ export class WalletmoduleService {
     }
 
     const transactionReference = initiateDto.transactionReference?.trim() || `TXN-${randomUUID()}`;
+    const mandateNonce = this.debitWalletMandateService.generateNonce();
 
     // Get source account name
     const customerName =
@@ -487,7 +397,7 @@ export class WalletmoduleService {
       recipientName: destinationAccountName,
       destinationBankName,
       transactionReference,
-      securityInfo: initiateDto.securityInfo,
+      mandateNonce,
       currencyId: initiateDto.currencyId || fromWallet.currencyId || 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
       sourceAccountName,
       walletId: fromWallet.id,
@@ -521,27 +431,21 @@ export class WalletmoduleService {
     if (!peek) {
       throw new BadRequestException('No pending payout found. Please initiate a payout first.');
     }
-    if (peek.kind === 'walletToWallet') {
-      throw new BadRequestException(
-        'You have a pending wallet-to-wallet transfer. Confirm it with POST /wallets/transfer/wallet-to-wallet/confirm instead.',
-      );
-    }
 
     const payoutData = await this.payoutSecurityService.getAndClearPendingPayout(userId);
     if (!payoutData) {
       throw new BadRequestException('No pending payout found. Please initiate a payout first.');
     }
 
-    if (typeof payoutData.securityInfo !== 'string' || payoutData.securityInfo.trim() === '') {
+    if (typeof payoutData.mandateNonce !== 'string' || payoutData.mandateNonce.trim() === '') {
       throw new BadRequestException(
-        'Payout confirmation requires securityInfo from the client. Please initiate payout again from the current app version.',
+        'This pending payout is missing a server mandate. Please initiate payout again.',
       );
     }
 
     const amount = normalizeToKobo(payoutData.amount as string | number);
     const transactionReference: string = payoutData.transactionReference || `TXN-${randomUUID()}`;
-    const securityInfo = payoutData.securityInfo as string;
-    const securityInfoHash = createHash('sha256').update(securityInfo).digest('hex');
+    const amountNormalized = amount.toFixed(2);
     const narration = (payoutData.description as string) || `Wallet payout to ${payoutData.toAccountNumber}`;
 
     const previewWallet = await this.databaseService.wallet.findFirst({
@@ -568,7 +472,16 @@ export class WalletmoduleService {
 
     await this.walletRiskService.checkWalletFreezeStatus(previewWallet.id, false);
 
-    const { fee, netAmount, feePercentage } = await calculatePayoutFee(amount, this.configService);
+    const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generatePayoutMandate({
+      transactionReference,
+      walletId: previewWallet.id,
+      amountNormalized,
+      bankCode: payoutData.bankCode as string,
+      toAccountNumber: payoutData.toAccountNumber as string,
+      mandateNonce: payoutData.mandateNonce as string,
+    });
+
+    await calculatePayoutFee(amount, this.configService);
 
     if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
       const limitCheck = await this.withdrawalLimitService.checkDailyLimit(previewWallet.customer.id, amount);

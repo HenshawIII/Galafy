@@ -77,7 +77,14 @@ export class ProviderTxnCallbackService {
     }
 
     const computed = this.computeSecurityInfoHash(securityInfo);
-    return { transactionReference, authorized: computed === txn.securityInfoHash };
+    if (computed !== txn.securityInfoHash) {
+      return { transactionReference, authorized: false };
+    }
+    // Idempotent: partner may retry auth with the same mandate; deny if debit already failed.
+    if (txn.status === TransactionStatus.FAILED || txn.status === TransactionStatus.REVERSED) {
+      return { transactionReference, authorized: false };
+    }
+    return { transactionReference, authorized: true };
   }
 
   async handleTransactionCallback(raw: any): Promise<{ received: true }> {
