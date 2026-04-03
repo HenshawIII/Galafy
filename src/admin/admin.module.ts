@@ -17,7 +17,7 @@ import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.
     AdminAuthModule,
     CacheModule,
     UsersModule, // Import UsersModule to access EmailService
-    WalletmoduleModule, // Import WalletmoduleModule to access WalletmoduleService, WithdrawalLimitService
+    WalletmoduleModule, // Exports OrganizationWalletService for AdminService
     ProviderModule, // Import ProviderModule to access ProviderService
     InternalLedgerModule,
   ],

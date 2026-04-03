@@ -52,14 +52,10 @@ import { Prisma } from '@prisma/client';
 import { ProviderService } from '../provider/provider.service.js';
 import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
-import { WithdrawalLimitService } from '../walletmodule/services/withdrawal-limit.service.js';
 
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
-  // 10 million Naira = 1,000,000,000,000 (based on divide by 100000 conversion)
-  private readonly APPROVED_TIER_2_LIMIT = new Decimal(1000000000000); // 10M Naira
-
   private readonly CACHE_KEY = 'admin:analytics:transaction-summary';
   private readonly CACHE_TTL = 300; // 5 minutes in seconds
 
@@ -71,7 +67,6 @@ export class AdminService {
     private readonly providerService: ProviderService,
     private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
-    private readonly withdrawalLimitService: WithdrawalLimitService,
   ) {}
 
   /**
@@ -956,54 +951,6 @@ export class AdminService {
   }
 
   /**
-   * Get pending utility bill submissions
-   */
-  async getPendingUtilityBills(filters: GetKycRequestsDto) {
-    const page = filters.page || 1;
-    const limit = filters.limit || 20;
-    const skip = (page - 1) * limit;
-
-    const where: any = {
-      status: UtilityBillStatus.PENDING,
-    };
-
-    const [submissions, total] = await Promise.all([
-      this.databaseService.utilityBillSubmission.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          customer: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  email: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-              withdrawalLimit: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.databaseService.utilityBillSubmission.count({ where }),
-    ]);
-
-    return {
-      submissions,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  /**
    * Approve KYC request
    */
   async approveKycRequest(requestId: string, adminId: string, dto: ApproveKycDto) {
@@ -1119,113 +1066,6 @@ export class AdminService {
     );
 
     return updated;
-  }
-
-  /**
-   * Approve utility bill
-   */
-  async approveUtilityBill(submissionId: string, adminId: string, dto: ApproveKycDto) {
-    const submission = await this.databaseService.utilityBillSubmission.findUnique({
-      where: { id: submissionId },
-      include: { customer: true },
-    });
-
-    if (!submission) {
-      throw new NotFoundException('Utility bill submission not found');
-    }
-
-    if (submission.status !== UtilityBillStatus.PENDING) {
-      throw new BadRequestException('Utility bill submission is not pending');
-    }
-
-    // Update submission status
-    const updatedSubmission = await this.databaseService.utilityBillSubmission.update({
-      where: { id: submissionId },
-      data: {
-        status: UtilityBillStatus.APPROVED,
-        adminId,
-        reviewedAt: new Date(),
-        reason: dto.notes,
-      },
-    });
-
-    // Get or create withdrawal limit
-    let withdrawalLimit = await this.databaseService.withdrawalLimit.findUnique({
-      where: { customerId: submission.customerId },
-    });
-
-    if (!withdrawalLimit) {
-      withdrawalLimit = await this.databaseService.withdrawalLimit.create({
-        data: {
-          customerId: submission.customerId,
-          dailyLimit: new Decimal(100000000000), // 1M Naira default
-          approvedDailyLimit: this.APPROVED_TIER_2_LIMIT,
-          isLimitIncreased: true,
-          dailyWithdrawn: new Decimal(0),
-          lastResetDate: new Date(),
-        },
-      });
-    } else {
-      withdrawalLimit = await this.databaseService.withdrawalLimit.update({
-        where: { id: withdrawalLimit.id },
-        data: {
-          approvedDailyLimit: this.APPROVED_TIER_2_LIMIT,
-          isLimitIncreased: true,
-        },
-      });
-    }
-
-    await this.logAdminAction(
-      adminId,
-      'UTILITY_BILL_APPROVED',
-      'UTILITY_BILL',
-      submissionId,
-      { customerId: submission.customerId, notes: dto.notes },
-      dto.notes,
-    );
-
-    return {
-      submission: updatedSubmission,
-      withdrawalLimit,
-    };
-  }
-
-  /**
-   * Reject utility bill
-   */
-  async rejectUtilityBill(submissionId: string, adminId: string, dto: RejectKycDto) {
-    const submission = await this.databaseService.utilityBillSubmission.findUnique({
-      where: { id: submissionId },
-    });
-
-    if (!submission) {
-      throw new NotFoundException('Utility bill submission not found');
-    }
-
-    if (submission.status !== UtilityBillStatus.PENDING) {
-      throw new BadRequestException('Utility bill submission is not pending');
-    }
-
-    const updatedSubmission = await this.databaseService.utilityBillSubmission.update({
-      where: { id: submissionId },
-      data: {
-        status: UtilityBillStatus.REJECTED,
-        adminId,
-        reviewedAt: new Date(),
-        reason: dto.reason,
-      },
-    });
-
-    await this.logAdminAction(
-      adminId,
-      'UTILITY_BILL_REJECTED',
-      'UTILITY_BILL',
-      submissionId,
-      { reason: dto.reason },
-      dto.reason,
-    );
-
-    return updatedSubmission;
   }
 
   /**
@@ -1412,7 +1252,7 @@ export class AdminService {
 
   /**
    * Get dashboard overview metrics
-   * Returns: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count (utility bill submissions)
+   * Returns: Total Users, Verified Users, Total Events, Active Events, Revenue, pending KYC requests count
    * Includes growth percentages comparing last 7 days vs previous 7 days
    */
   async getDashboardMetrics() {
@@ -1452,10 +1292,10 @@ export class AdminService {
           status: 'LIVE',
         },
       }),
-      // Pending KYC Requests - count pending utility bill submissions
-      this.databaseService.utilityBillSubmission.count({
+      // Pending KYC requests (KycRequest table)
+      this.databaseService.kycRequest.count({
         where: {
-          status: UtilityBillStatus.PENDING,
+          status: KycRequestStatus.PENDING,
         },
       }),
       // All-time Revenue from AdminFee (status = COLLECTED)

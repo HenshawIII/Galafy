@@ -6,10 +6,9 @@ import { CacheService } from '../cache/cache.service.js';
 import { InitiateWalletToWalletTransferDto, UpdateBankAccountDto } from './dto/index.js';
 import { InitiatePayoutDto } from './dto/payout-security.dto.js';
 import { PayoutSecurityService } from './services/payout-security.service.js';
-import { KycTier } from '../users/dto/create-user-dto.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
-import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
+import { KycTier, TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import { normalizeToKobo, toDisplayAmount } from '../common/utils/money.util.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
@@ -348,6 +347,22 @@ export class WalletmoduleService {
       throw new BadRequestException('Insufficient balance');
     }
 
+    if (fromWallet.customer.isAmlRestricted) {
+      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
+    }
+    if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
+      throw new ForbiddenException(
+        'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
+      );
+    }
+    if (fromWallet.customer.tier === KycTier.Tier_2 || fromWallet.customer.tier === KycTier.Tier_3) {
+      await this.withdrawalLimitService.validatePayoutForTier(
+        fromWallet.customer.tier,
+        fromWallet.customer.id,
+        amount,
+      );
+    }
+
     // Get destination account name if not provided (via name enquiry)
     let destinationAccountName = initiateDto.recipientName;
     if (!destinationAccountName) {
@@ -484,18 +499,11 @@ export class WalletmoduleService {
     await calculatePayoutFee(amount, this.configService);
 
     if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
-      const limitCheck = await this.withdrawalLimitService.checkDailyLimit(previewWallet.customer.id, amount);
-      if (!limitCheck.allowed) {
-        throw new BadRequestException({
-          message:
-            'This withdrawal exceeds your remaining daily limit. Reduce the amount or try again after your limit resets.',
-          dailyLimit: {
-            limit: limitCheck.currentLimit.toString(),
-            used: limitCheck.used.toString(),
-            remaining: limitCheck.remaining.toString(),
-          },
-        });
-      }
+      await this.withdrawalLimitService.validatePayoutForTier(
+        previewWallet.customer.tier,
+        previewWallet.customer.id,
+        amount,
+      );
     }
 
     const initiation = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {

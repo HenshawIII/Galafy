@@ -467,17 +467,6 @@ export class AdminController {
     return this.adminService.getPendingKycRequests(filters);
   }
 
-  @Get('kyc/utility-bills/pending')
-  @RequirePermission(PERMISSIONS.VIEW_KYC_REQUESTS)
-  @ApiOperation({
-    summary: 'Get pending utility bill submissions',
-    description: 'Get paginated list of pending utility bill submissions',
-  })
-  @ApiResponse({ status: 200, description: 'Pending utility bill submissions retrieved successfully' })
-  async getPendingUtilityBills(@Query(ValidationPipe) filters: GetKycRequestsDto) {
-    return this.adminService.getPendingUtilityBills(filters);
-  }
-
   @Post('kyc/requests/:requestId/approve')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
   @RequirePermission(PERMISSIONS.APPROVE_KYC)
@@ -534,45 +523,6 @@ export class AdminController {
   ) {
     const adminId = req.admin?.id;
     return this.adminService.promoteCustomerToTier3(customerId, adminId, dto);
-  }
-
-  @Post('kyc/utility-bills/:submissionId/approve')
-  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
-  @RequirePermission(PERMISSIONS.APPROVE_UTILITY_BILL)
-  @ApiOperation({
-    summary: 'Approve utility bill',
-    description: 'Approve a pending utility bill submission and increase withdrawal limit',
-  })
-  @ApiParam({ name: 'submissionId', description: 'Utility bill submission ID' })
-  @ApiBody({ type: ApproveKycDto })
-  @ApiResponse({ status: 200, description: 'Utility bill approved successfully' })
-  @ApiResponse({ status: 404, description: 'Utility bill submission not found' })
-  @ApiResponse({ status: 400, description: 'Utility bill submission is not pending' })
-  async approveUtilityBill(
-    @Param('submissionId') submissionId: string,
-    @Body(ValidationPipe) dto: ApproveKycDto,
-    @Request() req: any,
-  ) {
-    const adminId = req.admin?.id;
-    return this.adminService.approveUtilityBill(submissionId, adminId, dto);
-  }
-
-  @Post('kyc/utility-bills/:submissionId/reject')
-  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
-  @RequirePermission(PERMISSIONS.REJECT_UTILITY_BILL)
-  @ApiOperation({ summary: 'Reject utility bill', description: 'Reject a pending utility bill submission' })
-  @ApiParam({ name: 'submissionId', description: 'Utility bill submission ID' })
-  @ApiBody({ type: RejectKycDto })
-  @ApiResponse({ status: 200, description: 'Utility bill rejected successfully' })
-  @ApiResponse({ status: 404, description: 'Utility bill submission not found' })
-  @ApiResponse({ status: 400, description: 'Utility bill submission is not pending' })
-  async rejectUtilityBill(
-    @Param('submissionId') submissionId: string,
-    @Body(ValidationPipe) dto: RejectKycDto,
-    @Request() req: any,
-  ) {
-    const adminId = req.admin?.id;
-    return this.adminService.rejectUtilityBill(submissionId, adminId, dto);
   }
 
   // =====================

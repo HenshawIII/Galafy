@@ -1,15 +1,16 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { getCurrentWATAsUTC } from '../../common/utils/timezone.util.js';
+import { KycTier } from '../../../generated/prisma/enums.js';
 
 @Injectable()
 export class WithdrawalLimitService {
   private readonly logger = new Logger(WithdrawalLimitService.name);
   // 1 million Naira = 100,000,000,000 (based on divide by 100000 conversion in error messages)
   private readonly DEFAULT_TIER_2_LIMIT = new Decimal(100000000000); // 1M Naira
-  // 10 million Naira = 1,000,000,000,000
-  private readonly APPROVED_TIER_2_LIMIT = new Decimal(1000000000000); // 10M Naira
+  /** Tier 3: max per single withdrawal (10M NGN); no daily aggregate cap. Units match Wallet/Transaction amounts (÷100000 for Naira). */
+  private readonly TIER_3_MAX_SINGLE_WITHDRAWAL = new Decimal(1000000000000);
 
   constructor(private readonly databaseService: DatabaseService) {}
 
@@ -60,6 +61,38 @@ export class WithdrawalLimitService {
         },
       });
       this.logger.log(`Reset daily withdrawal limit for customer ${customerId}`);
+    }
+  }
+
+  /**
+   * Tier 2: enforces daily withdrawal total from WithdrawalLimit.
+   * Tier 3: enforces max 10M NGN per transaction only (multiple withdrawals per day allowed).
+   */
+  async validatePayoutForTier(tier: KycTier, customerId: string, amount: Decimal): Promise<void> {
+    if (tier === KycTier.Tier_3) {
+      if (amount.gt(this.TIER_3_MAX_SINGLE_WITHDRAWAL)) {
+        throw new BadRequestException({
+          message:
+            'Tier 3 withdrawals are limited to 10,000,000 NGN per transaction. You may submit multiple withdrawals per day.',
+          maxSingleWithdrawal: this.TIER_3_MAX_SINGLE_WITHDRAWAL.toString(),
+        });
+      }
+      return;
+    }
+
+    if (tier === KycTier.Tier_2) {
+      const limitCheck = await this.checkDailyLimit(customerId, amount);
+      if (!limitCheck.allowed) {
+        throw new BadRequestException({
+          message:
+            'This withdrawal exceeds your remaining daily limit. Reduce the amount or try again after your limit resets.',
+          dailyLimit: {
+            limit: limitCheck.currentLimit.toString(),
+            used: limitCheck.used.toString(),
+            remaining: limitCheck.remaining.toString(),
+          },
+        });
+      }
     }
   }
 
