@@ -1,3 +1,5 @@
+-- CreateTable: AdminFee (must run after Customer/Wallet/Transaction exist — see walletupgrade + databaseinit).
+-- Renamed from 20250129000000_add_admin_fee_table. Existing DBs: run prisma/sql/update_admin_fee_migration_name.sql once if the old migration_name row is present.
 -- CreateTable: AdminFee table for tracking admin fees separately from user transactions
 CREATE TABLE "AdminFee" (
     "id" TEXT NOT NULL,
