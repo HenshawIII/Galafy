@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ProviderService } from './provider.service.js';
-import { ProviderController } from './provider.controller.js';
 import { ProviderCallbackController } from './provider-callback.controller.js';
 import { ProviderCallbackService } from './provider-callback.service.js';
 import { ProviderTxnCallbackController } from './provider-txn-callback.controller.js';
@@ -21,7 +20,7 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
     forwardRef(() => UsersModule),
     NotificationsModule,
   ],
-  controllers: [ProviderController, ProviderCallbackController, ProviderTxnCallbackController],
+  controllers: [ProviderCallbackController, ProviderTxnCallbackController],
   providers: [
     ProviderService,
     ProviderCallbackService,

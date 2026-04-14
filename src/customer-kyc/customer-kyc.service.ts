@@ -1,22 +1,9 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-  ConflictException,
-  Logger,
-  HttpException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
-import { UpdateCustomerDto, UpdateCustomerNameDto, UpdateCustomerContactsDto } from './dto/update-customer.dto.js';
-import { GetCustomerByIdDto, GetCustomerKycStatusDto, GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
-import {
-  CreateNinVerificationDto,
-  CreateBvnVerificationDto,
-  CreateAddressVerificationDto,
-} from './dto/kyc-verification.dto.js';
-import { CreateCustomerWithBvnDto, UpgradeWithNinAndAddressDto, NinAndUtilityBillDto } from './dto/kyc-utility.dto.js';
+import { UpdateCustomerNameDto, UpdateCustomerContactsDto } from './dto/update-customer.dto.js';
+import { GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 import { Tier1FaceStatus, UtilityBillStatus } from '../../generated/prisma/enums.js';
@@ -566,37 +553,6 @@ export class CustomerKycService {
       throw new NotFoundException('Customer not found');
     }
 
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    // Update with provider
-    try {
-      const providerUpdateData: any = {
-        customerId: customer.providerCustomerId,
-        firstName: updateDto.firstName || customer.firstName,
-        lastName: updateDto.lastName || customer.lastName,
-      };
-
-      if (updateDto.middleName !== undefined) {
-        providerUpdateData.middleName = updateDto.middleName;
-      }
-
-      if (updateDto.dob !== undefined) {
-        providerUpdateData.dob = updateDto.dob;
-      }
-
-      await this.providerService.updateCustomerName(customer.providerCustomerId, providerUpdateData);
-    } catch (error) {
-      this.logger.error(`Failed to update customer name with provider: ${error.message}`);
-      // Pass through the actual error message from provider
-      if (error instanceof HttpException) {
-        throw new BadRequestException(error.message || 'Failed to update customer name with provider service');
-      }
-      throw new BadRequestException(error.message || 'Failed to update customer name with provider service');
-    }
-
-    // Update in our database
     const updateData: any = {};
     if (updateDto.firstName !== undefined) {
       updateData.firstName = updateDto.firstName;
@@ -631,27 +587,6 @@ export class CustomerKycService {
       throw new NotFoundException('Customer not found');
     }
 
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    // Update with provider
-    try {
-      await this.providerService.updateCustomerContacts(customer.providerCustomerId, {
-        customerId: customer.providerCustomerId,
-        mobileNumber: updateDto.mobileNumber,
-        emailAddress: updateDto.emailAddress,
-      });
-    } catch (error) {
-      this.logger.error(`Failed to update customer contacts with provider: ${error.message}`);
-      // Pass through the actual error message from provider
-      if (error instanceof HttpException) {
-        throw new BadRequestException(error.message || 'Failed to update customer contacts with provider service');
-      }
-      throw new BadRequestException(error.message || 'Failed to update customer contacts with provider service');
-    }
-
-    // Update in our database
     const updatedCustomer = await this.databaseService.customer.update({
       where: { id: customerId },
       data: {
@@ -668,13 +603,13 @@ export class CustomerKycService {
    */
   async getCustomerKycStatusByUserId(userId: string) {
     const customerId = await this.getCustomerIdByUserId(userId);
-    return this.getCustomerKycStatus(customerId, userId);
+    return this.getCustomerKycStatus(customerId);
   }
 
   /**
    * Get customer KYC status (local + optional ALAT account details)
    */
-  async getCustomerKycStatus(customerId: string, userId?: string) {
+  async getCustomerKycStatus(customerId: string) {
     const customer = await this.databaseService.customer.findUnique({
       where: { id: customerId },
       include: {
@@ -704,13 +639,13 @@ export class CustomerKycService {
       hasAddressVerification: !!customer.addressVerification,
     };
 
-    if (!customer.providerCustomerId) {
+    const phone = customer.mobileNumber || customer.user?.phone;
+    if (!phone) {
       return base;
     }
 
     try {
-      const phone = customer.mobileNumber || customer.user?.phone;
-      const accountDetails = await this.providerService.getPartnershipAccountDetails(phone ?? undefined);
+      const accountDetails = await this.providerService.getPartnershipAccountDetails(phone);
       return {
         ...base,
         accountNumber: accountDetails?.accountNumber,
@@ -725,430 +660,9 @@ export class CustomerKycService {
           : undefined,
       };
     } catch (error) {
-      this.logger.debug(`Could not fetch partnership account details: ${error.message}`);
+      this.logger.debug(`Could not fetch partnership account details: ${(error as Error).message}`);
       return base;
     }
-  }
-
-  /**
-   * Upgrade customer with NIN by userId (old provider).
-   * @deprecated Use startTier2 for ALAT Tier 2 (NIN + address + face)
-   */
-  async upgradeWithNinByUserId(userId: string, ninDto: CreateNinVerificationDto) {
-    const customerId = await this.getCustomerIdByUserId(userId);
-    return this.upgradeWithNin(customerId, ninDto);
-  }
-
-  async upgradeWithNin(customerId: string, ninDto: CreateNinVerificationDto) {
-    const customer = await this.databaseService.customer.findUnique({
-      where: { id: customerId },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    // Call provider API
-    const providerResponse = await this.providerService.upgradeCustomerWithNin({
-      customerId: customer.providerCustomerId,
-      nin: ninDto.nin,
-      firstname: customer.firstName ?? '',
-      lastname: customer.lastName ?? '',
-      dob: customer.dob ? customer.dob.toISOString().split('T')[0] : '',
-      verify: 1, // Default to 1 as per API requirements
-    });
-
-    if (!providerResponse.data) {
-      throw new BadRequestException('NIN verification failed');
-    }
-
-    const ninData = providerResponse.data.nin;
-    const summary = providerResponse.data.summary?.nin_check;
-
-    // Store verification in database (slim schema: provider ref + timestamps only)
-    const ninVerification = await this.databaseService.ninVerification.upsert({
-      where: { customerId },
-      create: {
-        customerId,
-        providerCheckId: providerResponse.data.id,
-      },
-      update: {
-        providerCheckId: providerResponse.data.id,
-      },
-    });
-
-    // Update customer tier if verification successful
-    if (providerResponse.data.status?.status === 'verified') {
-      // Check if customer already has BVN verification
-      const existingBvnVerification = await this.databaseService.bvnVerification.findUnique({
-        where: { customerId },
-      });
-
-      // If both NIN and BVN are verified, upgrade to Tier_2, otherwise Tier_1
-      const newTier = existingBvnVerification ? KycTier.Tier_2 : KycTier.Tier_1;
-      const newProviderTierCode = existingBvnVerification ? 2 : 1;
-
-      await this.databaseService.customer.update({
-        where: { id: customerId },
-        data: {
-          tier: newTier,
-          providerTierCode: newProviderTierCode,
-        },
-      });
-    }
-
-    return ninVerification;
-  }
-
-  /**
-   * Upgrade customer with BVN by userId (old provider).
-   * @deprecated Use startTier1 + face callback for ALAT Tier 1
-   */
-  async upgradeWithBvnByUserId(userId: string, bvnDto: CreateBvnVerificationDto) {
-    const customerId = await this.getCustomerIdByUserId(userId);
-    return this.upgradeWithBvn(customerId, bvnDto);
-  }
-
-  async upgradeWithBvn(customerId: string, bvnDto: CreateBvnVerificationDto) {
-    const customer = await this.databaseService.customer.findUnique({
-      where: { id: customerId },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    // Call provider API
-    const providerResponse = await this.providerService.upgradeCustomerWithBvn({
-      customerId: customer.providerCustomerId,
-      bvn: bvnDto.bvn,
-    });
-
-    if (!providerResponse.data?.response) {
-      throw new BadRequestException('BVN verification failed');
-    }
-
-    const responseData = providerResponse.data.response;
-    const bvnData = responseData.bvn;
-    const summary = responseData.summary?.bvn_check;
-
-    // Store verification in database (slim schema: provider ref + timestamps only)
-    const bvnVerification = await this.databaseService.bvnVerification.upsert({
-      where: { customerId },
-      create: {
-        customerId,
-        providerCheckId: responseData.id,
-      },
-      update: {
-        providerCheckId: responseData.id,
-      },
-    });
-
-    // Update customer tier if verification successful
-    if (responseData.status?.status === 'verified') {
-      // Check if customer already has NIN verification
-      const existingNinVerification = await this.databaseService.ninVerification.findUnique({
-        where: { customerId },
-      });
-
-      // If both NIN and BVN are verified, upgrade to Tier_2, otherwise Tier_1
-      const newTier = existingNinVerification ? KycTier.Tier_2 : KycTier.Tier_1;
-      const newProviderTierCode = existingNinVerification ? 2 : 1;
-
-      await this.databaseService.customer.update({
-        where: { id: customerId },
-        data: {
-          tier: newTier,
-          providerTierCode: newProviderTierCode,
-        },
-      });
-    }
-
-    return bvnVerification;
-  }
-
-  /**
-   * Verify customer address (Tier 3)
-   */
-  /**
-   * Verify customer address by userId (old provider).
-   * @deprecated Use startTier2 for ALAT (address in Tier 2 payload)
-   */
-  async verifyAddressByUserId(userId: string, addressDto: CreateAddressVerificationDto) {
-    const customerId = await this.getCustomerIdByUserId(userId);
-    return this.verifyAddress(customerId, addressDto);
-  }
-
-  async verifyAddress(customerId: string, addressDto: CreateAddressVerificationDto) {
-    const customer = await this.databaseService.customer.findUnique({
-      where: { id: customerId },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    if (customer.tier !== KycTier.Tier_2) {
-      throw new BadRequestException('Customer must be at least Tier 2 to verify address');
-    }
-
-    // Call provider API
-    const providerResponse = await this.providerService.verifyCustomerAddress({
-      customerId: customer.providerCustomerId,
-      houseAddress: addressDto.houseAddress,
-      meterNumber: addressDto.meterNumber,
-      discoCode: addressDto.discoCode,
-    });
-
-    if (!providerResponse.data?.data) {
-      throw new BadRequestException('Address verification failed');
-    }
-
-    const verificationData = providerResponse.data.data;
-
-    // Store verification in database (slim schema)
-    const addressVerification = await this.databaseService.addressVerification.upsert({
-      where: { customerId },
-      create: {
-        customerId,
-        verified: verificationData.verified || false,
-        providerStatus: providerResponse.data.status,
-        providerMessage: providerResponse.data.message,
-      },
-      update: {
-        verified: verificationData.verified || false,
-        providerStatus: providerResponse.data.status,
-        providerMessage: providerResponse.data.message,
-      },
-    });
-
-    // Update customer tier if verification successful
-    if (verificationData.verified) {
-      await this.databaseService.customer.update({
-        where: { id: customerId },
-        data: {
-          tier: KycTier.Tier_3,
-          providerTierCode: 3,
-        },
-      });
-    }
-
-    return addressVerification;
-  }
-
-  /**
-   * Utility method: Create customer and upgrade with BVN in one request (old provider).
-   * @deprecated Use startTier1 + face callback for ALAT Tier 1 flow
-   */
-  async createCustomerWithBvn(userId: string, dto: CreateCustomerWithBvnDto) {
-    // Check if customer already exists for this user
-    let customer = await this.databaseService.customer.findUnique({
-      where: { userId },
-      include: {
-        bvnVerification: true,
-      },
-    });
-
-    // If customer doesn't exist, create it
-    if (!customer) {
-      const createCustomerDto: CreateCustomerDto = {
-        userId,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        middleName: dto.middleName,
-        dob: dto.dob,
-        city: dto.city,
-        address: dto.address,
-        mobileNumber: dto.mobileNumber,
-        emailAddress: dto.emailAddress,
-      };
-
-      await this.createCustomer(userId, createCustomerDto);
-
-      // Fetch the newly created customer with BVN verification relation
-      customer = await this.databaseService.customer.findUnique({
-        where: { userId },
-        include: {
-          bvnVerification: true,
-        },
-      });
-
-      if (!customer) {
-        throw new BadRequestException('Failed to create customer');
-      }
-    }
-
-    // Check if BVN verification already exists
-    if (customer.bvnVerification) {
-      throw new ConflictException('BVN verification already exists for this customer');
-    }
-
-    // Upgrade with BVN
-    const bvnDto: CreateBvnVerificationDto = {
-      bvn: dto.bvn,
-    };
-
-    const bvnVerification = await this.upgradeWithBvn(customer.id, bvnDto);
-
-    return {
-      customer,
-      bvnVerification,
-      message: 'Customer created and BVN verification completed successfully',
-    };
-  }
-
-  /**
-   * Utility method: Upgrade customer with NIN and Address verification, plus bank account name enquiry
-   * Includes duplicate checks - skips already verified steps and continues with remaining steps
-   */
-  /**
-   * Upgrade customer with NIN and Address by userId
-   */
-  async upgradeWithNinAndAddressByUserId(userId: string, dto: UpgradeWithNinAndAddressDto) {
-    const customerId = await this.getCustomerIdByUserId(userId);
-    return this.upgradeWithNinAndAddress(customerId, dto);
-  }
-
-  async upgradeWithNinAndAddress(customerId: string, dto: UpgradeWithNinAndAddressDto) {
-    // Verify customer exists
-    const customer = await this.databaseService.customer.findUnique({
-      where: { id: customerId },
-      include: {
-        ninVerification: true,
-        addressVerification: true,
-      },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    const results: any = {
-      ninVerification: null,
-      addressVerification: null,
-      bankAccount: null,
-      message: '',
-    };
-
-    // Step 1: NIN Verification (skip if already verified)
-    if (customer.ninVerification) {
-      this.logger.log(`NIN verification already exists for customer ${customerId}, skipping NIN verification`);
-      results.ninVerification = customer.ninVerification;
-      results.message += 'NIN already verified. ';
-    } else {
-      // Check customer tier - must be at least Tier 1 (should have BVN already)
-      if (customer.tier === KycTier.Tier_0) {
-        throw new BadRequestException(
-          'Customer must complete BVN verification first before proceeding with NIN verification.',
-        );
-      }
-
-      try {
-        const ninDto: CreateNinVerificationDto = {
-          nin: dto.nin,
-        };
-        results.ninVerification = await this.upgradeWithNin(customerId, ninDto);
-        results.message += 'NIN verification completed. ';
-      } catch (error: any) {
-        throw new BadRequestException(`NIN verification failed: ${error.message}`);
-      }
-    }
-
-    // Refresh customer to get updated tier after NIN verification
-    const updatedCustomer = await this.databaseService.customer.findUnique({
-      where: { id: customerId },
-    });
-
-    if (!updatedCustomer) {
-      throw new NotFoundException('Customer not found after NIN verification');
-    }
-
-    // Step 2: Address Verification (skip if already verified)
-    if (customer.addressVerification) {
-      this.logger.log(`Address verification already exists for customer ${customerId}, skipping address verification`);
-      results.addressVerification = customer.addressVerification;
-      results.message += 'Address already verified. ';
-    } else {
-      // Check customer tier - must be Tier 2 for address verification
-      if (updatedCustomer.tier !== KycTier.Tier_2) {
-        throw new BadRequestException(
-          `Customer must be Tier 2 before address verification. Current tier: ${updatedCustomer.tier}`,
-        );
-      }
-
-      try {
-        const addressDto: CreateAddressVerificationDto = {
-          houseAddress: dto.houseAddress,
-          meterNumber: dto.meterNumber,
-          discoCode: dto.discoCode,
-        };
-        results.addressVerification = await this.verifyAddress(customerId, addressDto);
-        results.message += 'Address verification completed. ';
-      } catch (error: any) {
-        throw new BadRequestException(`Address verification failed: ${error.message}`);
-      }
-    }
-
-    // Step 3: Save Bank Account to database
-    try {
-      // Check if bank account already exists for this customer with same account number
-      const existingBankAccount = await this.databaseService.bankAccount.findFirst({
-        where: {
-          customerId,
-          accountNumber: dto.accountNumber,
-          bankCode: dto.bankCode,
-        },
-      });
-
-      if (existingBankAccount) {
-        this.logger.log(`Bank account already exists for customer ${customerId}, updating...`);
-        results.bankAccount = await this.databaseService.bankAccount.update({
-          where: { id: existingBankAccount.id },
-          data: {
-            accountName: dto.accountName,
-            accountNumber: dto.accountNumber,
-            bankCode: dto.bankCode,
-          },
-        });
-        results.message += 'Bank account updated.';
-      } else {
-        // Check if customer has any bank accounts to determine if this should be default
-        const existingAccounts = await this.databaseService.bankAccount.findMany({
-          where: { customerId },
-        });
-
-        results.bankAccount = await this.databaseService.bankAccount.create({
-          data: {
-            customerId,
-            accountName: dto.accountName,
-            accountNumber: dto.accountNumber,
-            bankCode: dto.bankCode,
-            isDefault: existingAccounts.length === 0, // Set as default if this is the first account
-          },
-        });
-        results.message += 'Bank account saved.';
-      }
-    } catch (error: any) {
-      throw new BadRequestException(`Failed to save bank account: ${error.message}`);
-    }
-
-    return results;
   }
 
   /**
@@ -1191,102 +705,5 @@ export class CustomerKycService {
 
     this.logger.log(`Utility bill submitted for customer ${customer.id} by user ${userId}`);
     return submission;
-  }
-
-  /**
-   * Verify NIN and submit utility bill in one request
-   * - First verifies NIN (skips if already verified)
-   * - Then submits utility bill if customer is Tier 2 after NIN verification
-   */
-  async verifyNinAndSubmitUtilityBill(userId: string, dto: NinAndUtilityBillDto) {
-    const customer = await this.databaseService.customer.findUnique({
-      where: { userId },
-      include: {
-        ninVerification: true,
-        bvnVerification: true,
-        utilityBillSubmissions: {
-          where: {
-            status: UtilityBillStatus.PENDING,
-          },
-        },
-      },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
-    if (!customer.providerCustomerId) {
-      throw new BadRequestException('Customer does not have a provider customer ID');
-    }
-
-    const results: any = {
-      ninVerification: null,
-      utilityBillSubmission: null,
-      message: '',
-    };
-
-    // Step 1: NIN Verification (skip if already verified)
-    if (customer.ninVerification) {
-      this.logger.log(`NIN verification already exists for customer ${customer.id}, skipping NIN verification`);
-      results.ninVerification = customer.ninVerification;
-      results.message += 'NIN already verified. ';
-    } else {
-      try {
-        // Verify NIN
-        const ninDto: CreateNinVerificationDto = {
-          nin: dto.nin,
-        };
-        results.ninVerification = await this.upgradeWithNin(customer.id, ninDto);
-        results.message += 'NIN verification completed. ';
-      } catch (error: any) {
-        throw new BadRequestException(`NIN verification failed: ${error.message}`);
-      }
-    }
-
-    // Refresh customer to get updated tier after NIN verification
-    const updatedCustomer = await this.databaseService.customer.findUnique({
-      where: { id: customer.id },
-      include: {
-        utilityBillSubmissions: {
-          where: {
-            status: UtilityBillStatus.PENDING,
-          },
-        },
-      },
-    });
-
-    if (!updatedCustomer) {
-      throw new NotFoundException('Customer not found after NIN verification');
-    }
-
-    // Step 2: Submit Utility Bill (only if customer is Tier 2)
-    if (updatedCustomer.tier !== KycTier.Tier_2) {
-      throw new BadRequestException(
-        `Customer must be Tier 2 to submit utility bill. Current tier: ${updatedCustomer.tier}. Please complete BVN verification first.`,
-      );
-    }
-
-    // Check if there's already a pending submission
-    if (updatedCustomer.utilityBillSubmissions.length > 0) {
-      throw new ConflictException('You already have a pending utility bill submission. Please wait for review.');
-    }
-
-    // Create utility bill submission
-    try {
-      results.utilityBillSubmission = await this.databaseService.utilityBillSubmission.create({
-        data: {
-          customerId: updatedCustomer.id,
-          utilityBillUrl: dto.utilityBillUrl,
-          status: UtilityBillStatus.PENDING,
-        },
-      });
-      results.message += 'Utility bill submitted successfully.';
-      this.logger.log(`NIN verified and utility bill submitted for customer ${updatedCustomer.id} by user ${userId}`);
-    } catch (error: any) {
-      throw new BadRequestException(`Failed to submit utility bill: ${error.message}`);
-    }
-
-    return results;
   }
 }

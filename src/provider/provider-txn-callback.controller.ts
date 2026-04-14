@@ -1,7 +1,9 @@
 import { Body, Controller, Logger, Post } from '@nestjs/common';
+import { ApiExcludeController } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator.js';
 import { ProviderTxnCallbackService } from './provider-txn-callback.service.js';
 
+@ApiExcludeController()
 @Controller('provider')
 export class ProviderTxnCallbackController {
   private readonly logger = new Logger(ProviderTxnCallbackController.name);

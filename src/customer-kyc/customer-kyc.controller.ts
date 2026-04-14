@@ -15,7 +15,6 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
-  ApiParam,
   ApiQuery,
   ApiBody,
   ApiBearerAuth,
@@ -27,18 +26,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
 import { UpdateCustomerNameDto, UpdateCustomerContactsDto } from './dto/update-customer.dto.js';
 import { GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
-import {
-  CreateNinVerificationDto,
-  CreateBvnVerificationDto,
-  CreateAddressVerificationDto,
-} from './dto/kyc-verification.dto.js';
-import {
-  CreateCustomerWithBvnDto,
-  UpgradeWithNinAndAddressDto,
-  NinAndUtilityBillDto,
-  StartTier1Dto,
-  StartTier2Dto,
-} from './dto/kyc-utility.dto.js';
+import { StartTier1Dto, StartTier2Dto } from './dto/kyc-utility.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 
 @ApiTags('customers')
@@ -59,7 +47,7 @@ export class CustomerKycController {
       example: {
         id: 'customer-uuid',
         userId: 'user-uuid',
-        providerCustomerId: 'provider-customer-id',
+        providerCustomerId: null,
         firstName: 'John',
         lastName: 'Doe',
         tier: 'Tier_0',
@@ -124,7 +112,7 @@ export class CustomerKycController {
       example: {
         id: 'customer-uuid',
         userId: 'user-uuid',
-        providerCustomerId: 'provider-customer-id',
+        providerCustomerId: null,
         firstName: 'John',
         lastName: 'Doe',
         middleName: 'Michael',
@@ -133,10 +121,7 @@ export class CustomerKycController {
       },
     },
   })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - Customer does not have a provider customer ID or provider update failed',
-  })
+  @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async updateCustomerName(@Request() req: any, @Body(ValidationPipe) updateDto: UpdateCustomerNameDto) {
@@ -252,102 +237,6 @@ export class CustomerKycController {
     });
   }
 
-  @Post('kyc/nin')
-  @ApiExcludeEndpoint()
-  @ApiOperation({ summary: 'Upgrade customer KYC with NIN (Tier 1 or Tier 2)' })
-  @ApiBody({ type: CreateNinVerificationDto })
-  @ApiResponse({ status: 200, description: 'NIN verification successful' })
-  @ApiResponse({ status: 400, description: 'NIN verification failed' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async upgradeWithNin(@Request() req: any, @Body(ValidationPipe) ninDto: CreateNinVerificationDto) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.customerKycService.upgradeWithNinByUserId(userId, ninDto);
-  }
-
-  @Post('kyc/bvn')
-  @ApiExcludeEndpoint()
-  @ApiOperation({ summary: 'Upgrade customer KYC with BVN (Tier 1 or Tier 2)' })
-  @ApiBody({ type: CreateBvnVerificationDto })
-  @ApiResponse({ status: 200, description: 'BVN verification successful' })
-  @ApiResponse({ status: 400, description: 'BVN verification failed' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async upgradeWithBvn(@Request() req: any, @Body(ValidationPipe) bvnDto: CreateBvnVerificationDto) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.customerKycService.upgradeWithBvnByUserId(userId, bvnDto);
-  }
-
-  @Post('kyc/address')
-  @ApiExcludeEndpoint()
-  @ApiOperation({ summary: 'Verify customer address' })
-  @ApiBody({ type: CreateAddressVerificationDto })
-  @ApiResponse({ status: 200, description: 'Address verification successful' })
-  @ApiResponse({ status: 400, description: 'Address verification failed' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async verifyAddress(@Request() req: any, @Body(ValidationPipe) addressDto: CreateAddressVerificationDto) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.customerKycService.verifyAddressByUserId(userId, addressDto);
-  }
-
-  // ==================== KYC UTILITY ROUTES ====================
-
-  @Post('utility/create-with-bvn')
-  @ApiExcludeEndpoint()
-  @ApiOperation({ summary: 'Create customer and upgrade with BVN in one request (Tier 1)' })
-  @ApiBody({ type: CreateCustomerWithBvnDto })
-  @ApiResponse({ status: 201, description: 'Customer created and BVN verification completed successfully' })
-  @ApiResponse({ status: 400, description: 'Bad request or verification failed' })
-  @ApiResponse({ status: 409, description: 'Customer or BVN verification already exists' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async createCustomerWithBvn(@Request() req: any, @Body(ValidationPipe) dto: CreateCustomerWithBvnDto) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.customerKycService.createCustomerWithBvn(userId, dto);
-  }
-
-  @Post('utility/upgrade-nin-address')
-  @ApiExcludeEndpoint()
-  @ApiOperation({
-    summary:
-      'Upgrade customer with NIN, Address verification, and bank account name enquiry. Skips already verified steps.',
-  })
-  @ApiBody({ type: UpgradeWithNinAndAddressDto })
-  @ApiResponse({
-    status: 200,
-    description: 'NIN, Address verification, and bank name enquiry completed successfully',
-    schema: {
-      example: {
-        ninVerification: { id: 1, status: 'verified' },
-        addressVerification: { id: 1, verified: true },
-        bankNameEnquiry: { destinationBankCode: '058', accountNumber: '1234567890', accountName: 'John Doe' },
-        message: 'NIN verification completed. Address verification completed. Bank account name enquiry completed.',
-      },
-    },
-  })
-  @ApiResponse({ status: 400, description: 'Bad request or verification failed' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
-  async upgradeWithNinAndAddress(@Request() req: any, @Body(ValidationPipe) dto: UpgradeWithNinAndAddressDto) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.customerKycService.upgradeWithNinAndAddressByUserId(userId, dto);
-  }
-
   @Post('utility-bill')
   @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Submit utility bill for Tier 2 withdrawal limit increase' })
@@ -373,50 +262,5 @@ export class CustomerKycController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.customerKycService.submitUtilityBill(userId, dto);
-  }
-
-  @Post('utility/nin-and-bill')
-  @ApiExcludeEndpoint()
-  @ApiOperation({
-    summary: 'Verify NIN and submit utility bill in one request',
-    description:
-      'This endpoint verifies NIN first (skips if already verified), then submits utility bill if customer is Tier 2. Customer must have BVN verification to become Tier 2.',
-  })
-  @ApiBody({ type: NinAndUtilityBillDto })
-  @ApiResponse({
-    status: 200,
-    description: 'NIN verified and utility bill submitted successfully',
-    schema: {
-      example: {
-        ninVerification: {
-          id: 1,
-          customerId: 'customer-uuid',
-          nin: '12345678901',
-          status: 'verified',
-          ninCheckStatus: 'verified',
-        },
-        utilityBillSubmission: {
-          id: 'submission-uuid',
-          customerId: 'customer-uuid',
-          utilityBillUrl: 'https://example.com/utility-bill.jpg',
-          status: 'PENDING',
-          createdAt: '2025-02-08T12:00:00.000Z',
-        },
-        message: 'NIN verification completed. Utility bill submitted successfully.',
-      },
-    },
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'NIN verification failed, customer is not Tier 2, or submission already exists',
-  })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
-  @ApiResponse({ status: 409, description: 'Utility bill submission already pending' })
-  async verifyNinAndSubmitUtilityBill(@Request() req: any, @Body(ValidationPipe) dto: NinAndUtilityBillDto) {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.customerKycService.verifyNinAndSubmitUtilityBill(userId, dto);
   }
 }

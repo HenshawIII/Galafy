@@ -49,7 +49,6 @@ import { EmailService } from '../users/email.service.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { Prisma } from '@prisma/client';
-import { ProviderService } from '../provider/provider.service.js';
 import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 
@@ -64,7 +63,6 @@ export class AdminService {
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
-    private readonly providerService: ProviderService,
     private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
   ) {}

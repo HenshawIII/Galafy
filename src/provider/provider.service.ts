@@ -1,19 +1,4 @@
 import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
-import {
-  ProviderCreateCustomerRequestDto,
-  ProviderUpdateCustomerNameRequestDto,
-  ProviderUpdateCustomerContactsRequestDto,
-  ProviderCustomerResponseDto,
-  ProviderCustomerKycStatusResponseDto,
-} from './dto/provider-customer.dto.js';
-import {
-  ProviderNinVerificationRequestDto,
-  ProviderBvnVerificationRequestDto,
-  ProviderAddressVerificationRequestDto,
-  ProviderNinVerificationResponseDto,
-  ProviderBvnVerificationResponseDto,
-  ProviderAddressVerificationResponseDto,
-} from './dto/provider-kyc.dto.js';
 import type {
   AlatTier1Request,
   AlatTier1Response,
@@ -31,12 +16,13 @@ import type {
 import { config } from 'dotenv';
 config();
 
+const DEFAULT_KYC_BASE_URL = 'https://lagos-alat-blueapi.azure-api.net/create-account-face/api';
+const DEFAULT_DEBIT_WALLET_BASE_URL = 'https://lagos-alat-blueapi.azure-api.net/debit-wallet/api';
+
 @Injectable()
 export class ProviderService {
   private readonly logger = new Logger(ProviderService.name);
-  private readonly baseUrl: string;
   private readonly apiKey: string;
-  private readonly organizationId: string;
   private readonly kycBaseUrl: string;
   private readonly kycSubscriptionKey: string;
   /** Cache for Alat GetDropDownList (countryModel). TTL 1 hour. */
@@ -48,14 +34,12 @@ export class ProviderService {
     'Our partner service is temporarily unavailable. Please try again in a few minutes.';
 
   constructor() {
-    this.baseUrl = process.env.PROVIDER_BASE_URL || '';
     this.apiKey = process.env.PROVIDER_API_KEY || '';
-    this.organizationId = process.env.PROVIDER_ORGANIZATION_ID || '';
-    this.kycBaseUrl = process.env.PROVIDER_KYC_BASE_URL || 'https://apiplayground.alat.ng/create-account-face/api';
+    this.kycBaseUrl = (process.env.PROVIDER_KYC_BASE_URL || DEFAULT_KYC_BASE_URL).replace(/\/$/, '');
     this.kycSubscriptionKey = process.env.PROVIDER_KYC_SUBSCRIPTION_KEY || '';
 
-    if (!this.baseUrl || !this.apiKey || !this.organizationId) {
-      this.logger.warn('Provider configuration is incomplete. Some features may not work.');
+    if (!this.apiKey) {
+      this.logger.warn('PROVIDER_API_KEY is not set. ALAT KYC and webhook verification may not work.');
     }
 
     const debitAccess = process.env.PROVIDER_DEBIT_WALLET_ACCESS_KEY || this.apiKey;
@@ -71,35 +55,8 @@ export class ProviderService {
     }
   }
 
-  /**
-   * Map upstream HTTP errors for client responses: partner 5xx → 503 + safe message (details only in logs).
-   */
-  private throwForUpstreamHttpError(
-    response: Response,
-    parsedBody: unknown,
-    logLabel: string,
-  ): void {
-    if (response.ok) {
-      return;
-    }
-    const status = response.status;
-    const detail =
-      typeof parsedBody === 'object' && parsedBody !== null
-        ? JSON.stringify(parsedBody)
-        : String(parsedBody ?? '');
-    if (status >= 500) {
-      this.logger.error(`${logLabel}: upstream HTTP ${status} ${detail}`);
-      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
-    }
-    const body = parsedBody as { message?: string; error?: string } | null;
-    const msg = body?.message || body?.error || `${logLabel} request failed`;
-    throw new HttpException(msg, status || HttpStatus.BAD_REQUEST);
-  }
-
   private buildDebitWalletUrl(path: string): string {
-    const base = (
-      process.env.PROVIDER_DEBIT_WALLET_BASE_URL || 'https://apiplayground.alat.ng/debit-wallet/api'
-    ).replace(/\/$/, '');
+    const base = (process.env.PROVIDER_DEBIT_WALLET_BASE_URL || DEFAULT_DEBIT_WALLET_BASE_URL).replace(/\/$/, '');
     const p = path.startsWith('/') ? path : `/${path}`;
     return `${base}${p}`;
   }
@@ -221,72 +178,6 @@ export class ProviderService {
   }
 
   /**
-   * Generic method to make HTTP requests to the provider API
-   */
-  private async makeRequest<T>(
-    endpoint: string,
-    method: 'GET' | 'POST' | 'PATCH' | 'PUT' = 'GET',
-    body?: any,
-  ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const headers: Record<string, string> = {
-      'x-api-key': this.apiKey,
-      'Content-Type': 'application/json',
-    };
-
-    try {
-      this.logger.debug(`Making ${method} request to: ${url}`);
-      if (body) {
-        this.logger.debug(`Request body: ${JSON.stringify(body)}`);
-      }
-
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-
-      // Get response text first to check if it's empty
-      const responseText = await response.text();
-
-      // Check if response is empty
-      if (!responseText || responseText.trim().length === 0) {
-        this.logger.error(`Provider API returned empty response. Status: ${response.status}`);
-        if (response.status >= 500) {
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
-        }
-        throw new HttpException(
-          'Provider API returned empty response',
-          response.status || HttpStatus.BAD_REQUEST,
-        );
-      }
-
-      // Try to parse JSON
-      let data: any;
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        this.logger.error(`Failed to parse JSON response.Response text: ${responseText.substring(0, 200)}`);
-        if (response.status >= 500) {
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
-        }
-        throw new HttpException('Invalid JSON response from provider API', HttpStatus.BAD_REQUEST);
-      }
-
-      this.throwForUpstreamHttpError(response, data, 'Provider API');
-
-      return data as T;
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      this.logger.error(`Provider API request failed: ${error.message}`);
-      this.logger.error(`Stack trace: ${error.stack}`);
-      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
-    }
-  }
-
-  /**
    * ALAT KYC API: HTTP request with Ocp-Apim-Subscription-Key
    * Normalizes status/code/errors and throws on failure (409 for duplicate).
    */
@@ -351,217 +242,9 @@ export class ProviderService {
       return data as T;
     } catch (error) {
       if (error instanceof HttpException) throw error;
-      this.logger.error(`KYC API request failed: ${error.message}`);
+      this.logger.error(`KYC API request failed: ${(error as Error).message}`);
       throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
-  }
-
-  // ==================== CUSTOMER OPERATIONS ====================
-
-  /**
-   * Create a new customer in the provider system
-   * @deprecated Use ALAT flow: create customer locally (Tier 0), then startTier1 + face callback
-   */
-  async createCustomer(requestDto: ProviderCreateCustomerRequestDto): Promise<{ customerId: string }> {
-    const body = {
-      organizationId: this.organizationId,
-      ...requestDto,
-    };
-
-    const response = await this.makeRequest<{
-      statuscode?: string;
-      statusCode?: string;
-      code?: string;
-      success?: boolean;
-      message: string;
-      data?: {
-        id?: string;
-        customerId?: string;
-        [key: string]: any;
-      };
-      customerId?: string;
-      errors?: any[];
-    }>('/api/v1/customers/add', 'POST', body);
-
-    // Check various possible status code formats
-    const statusCode = response.statuscode || response.statusCode || response.code;
-    const statusCodeStr = statusCode ? String(statusCode) : '';
-    const isSuccess =
-      statusCodeStr === '00' ||
-      statusCodeStr === '200' ||
-      (typeof statusCode === 'number' && statusCode === 200) ||
-      response.success === true ||
-      response.message?.toLowerCase().includes('success');
-
-    // Extract customerId from various possible locations (id is the primary field)
-    const customerId = response.data?.id || response.data?.customerId || response.customerId;
-
-    if (!isSuccess || !customerId) {
-      this.logger.error(`Failed to create customer. Response: ${JSON.stringify(response)}`);
-      throw new HttpException(response.message || 'Failed to create customer', HttpStatus.BAD_REQUEST);
-    }
-
-    return { customerId };
-  }
-
-  /**
-   * Get customer by ID from provider
-   */
-  async getCustomerById(customerId: string): Promise<ProviderCustomerResponseDto> {
-    const response = await this.makeRequest<{ data: ProviderCustomerResponseDto }>(
-      `/api/v1/customers/get/id/${customerId}`,
-      'GET',
-    );
-
-    return response.data;
-  }
-
-  /**
-   * Get all customers from provider
-   */
-  async getAllCustomers(): Promise<ProviderCustomerResponseDto[]> {
-    const response = await this.makeRequest<{ data: ProviderCustomerResponseDto[] }>(
-      '/api/v1/customers/get/all',
-      'GET',
-    );
-
-    return response.data || [];
-  }
-
-  /**
-   * Update customer name
-   */
-  async updateCustomerName(
-    customerId: string,
-    requestDto: ProviderUpdateCustomerNameRequestDto,
-  ): Promise<{ success: boolean; message: string }> {
-    const body = {
-      organizationId: this.organizationId,
-      ...requestDto,
-    };
-
-    const response = await this.makeRequest<{
-      statuscode?: string;
-      code?: string;
-      message: string;
-      success?: boolean;
-    }>(`/api/v1/customers/customer/${customerId}/updatename`, 'PATCH', body);
-
-    return {
-      success: response.statuscode === '00' || response.code === '00' || response.success === true,
-      message: response.message,
-    };
-  }
-
-  /**
-   * Update customer contacts
-   */
-  async updateCustomerContacts(
-    customerId: string,
-    requestDto: ProviderUpdateCustomerContactsRequestDto,
-  ): Promise<{ success: boolean; message: string }> {
-    const body = {
-      organizationId: this.organizationId,
-      ...requestDto,
-    };
-
-    const response = await this.makeRequest<{
-      statuscode?: string;
-      code?: string;
-      message: string;
-      success?: boolean;
-    }>(`/api/v1/customers/customer/${customerId}/updatecontact`, 'PATCH', body);
-
-    return {
-      success: response.statuscode === '00' || response.code === '00' || response.success === true,
-      message: response.message,
-    };
-  }
-
-  /**
-   * Get customer KYC status
-   */
-  async getCustomerKycStatus(customerId: string): Promise<ProviderCustomerKycStatusResponseDto> {
-    const response = await this.makeRequest<{
-      data: ProviderCustomerKycStatusResponseDto;
-      status: number;
-      message: string;
-    }>(`/api/v1/customers/customer-verification-properties/${customerId}`, 'GET');
-
-    return response.data;
-  }
-
-  // ==================== KYC OPERATIONS ====================
-
-  /**
-   * Upgrade customer KYC with NIN (Tier 1)
-   * @deprecated Use ALAT tier2PartnershipWithoutOtpV2 for Tier 2 (NIN + address + face)
-   */
-  async upgradeCustomerWithNin(
-    requestDto: ProviderNinVerificationRequestDto,
-  ): Promise<ProviderNinVerificationResponseDto> {
-    // Build URL with query parameters
-    const queryParams = new URLSearchParams();
-    queryParams.append('nin', requestDto.nin);
-    queryParams.append('customerId', requestDto.customerId);
-    queryParams.append('verify', String(requestDto.verify ?? 1));
-
-    const endpoint = `/api/v1/customers/kyc/customer/nin?${queryParams.toString()}`;
-
-    // Body contains firstname, lastname, dob
-    const body = {
-      firstname: requestDto.firstname,
-      lastname: requestDto.lastname,
-      dob: requestDto.dob,
-    };
-
-    const response = await this.makeRequest<ProviderNinVerificationResponseDto>(endpoint, 'POST', body);
-
-    return response;
-  }
-
-  /**
-   * Upgrade customer KYC with BVN (Tier 2)
-   * @deprecated Use ALAT tier1BvnWithoutOtpV2 + face callback for Tier 1
-   */
-  async upgradeCustomerWithBvn(
-    requestDto: ProviderBvnVerificationRequestDto,
-  ): Promise<ProviderBvnVerificationResponseDto> {
-    const body = {
-      customerId: requestDto.customerId,
-      bvn: requestDto.bvn,
-    };
-
-    const response = await this.makeRequest<ProviderBvnVerificationResponseDto>(
-      '/api/v1/customers/kyc/premium-kyc',
-      'POST',
-      body,
-    );
-
-    return response;
-  }
-
-  /**
-   * Verify customer address (Tier 3)
-   * @deprecated Use ALAT Tier 2 flow (residential address in tier2PartnershipWithoutOtpV2)
-   */
-  async verifyCustomerAddress(
-    requestDto: ProviderAddressVerificationRequestDto,
-  ): Promise<ProviderAddressVerificationResponseDto> {
-    const body = {
-      customerId: requestDto.customerId,
-      houseAddress: requestDto.houseAddress,
-      meterNumber: requestDto.meterNumber,
-      discoCode: requestDto.discoCode,
-    };
-
-    const response = await this.makeRequest<ProviderAddressVerificationResponseDto>(
-      '/api/v1/customers/kyc/address-verification',
-      'POST',
-      body,
-    );
-
-    return response;
   }
 
   // ==================== ALAT KYC (create-account-face) ====================
