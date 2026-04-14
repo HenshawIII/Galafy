@@ -25,7 +25,7 @@ export class GetActionLogsDto {
   @ApiProperty({
     required: false,
     example: 'KYC_APPROVED',
-    description: 'Filter by action type (e.g., KYC_APPROVED, KYC_REJECTED, USER_RESTRICTED, UTILITY_BILL_APPROVED)',
+    description: 'Filter by action type (e.g., KYC_APPROVED, KYC_REJECTED, USER_RESTRICTED)',
   })
   @IsOptional()
   @IsString()
@@ -34,7 +34,7 @@ export class GetActionLogsDto {
   @ApiProperty({
     required: false,
     example: 'CUSTOMER',
-    description: 'Filter by target entity type (e.g., CUSTOMER, KYC_REQUEST, UTILITY_BILL, USER)',
+    description: 'Filter by target entity type (e.g., CUSTOMER, KYC_REQUEST, USER)',
   })
   @IsOptional()
   @IsString()
@@ -63,4 +63,3 @@ export class GetActionLogsDto {
   @IsDateString({}, { message: 'End date must be a valid ISO 8601 date string' })
   endDate?: string;
 }
-

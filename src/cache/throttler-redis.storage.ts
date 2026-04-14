@@ -27,29 +27,29 @@ export class ThrottlerRedisStorage implements ThrottlerStorage {
     throttlerName: string,
   ): Promise<ThrottlerStorageRecord> {
     const now = Date.now();
-    
+
     // Get existing records
     const cached = await this.cacheManager.get<number[]>(key);
     const records = cached || [];
-    
+
     // Filter out expired records
     const validRecords = records.filter((timestamp) => timestamp > now - ttl);
-    
+
     // Check if blocked (exceeded limit)
     const isBlocked = validRecords.length >= limit;
-    
+
     // Add current timestamp if not blocked
     if (!isBlocked) {
       validRecords.push(now);
     }
-    
+
     // Calculate time to expire (in seconds)
     const oldestRecord = validRecords.length > 0 ? Math.min(...validRecords) : now;
     const timeToExpire = Math.max(0, Math.ceil((oldestRecord + ttl - now) / 1000));
-    
+
     // Store with TTL (convert milliseconds to seconds)
     await this.cacheManager.set(key, validRecords, Math.ceil(ttl / 1000));
-    
+
     // Return storage record
     return {
       totalHits: validRecords.length,

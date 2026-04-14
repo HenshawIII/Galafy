@@ -8,6 +8,7 @@ import { CacheModule } from '../cache/cache.module.js';
 import { UsersModule } from '../users/users.module.js';
 import { WalletmoduleModule } from '../walletmodule/walletmodule.module.js';
 import { ProviderModule } from '../provider/provider.module.js';
+import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.module.js';
 
 @Module({
   imports: [
@@ -16,8 +17,9 @@ import { ProviderModule } from '../provider/provider.module.js';
     AdminAuthModule,
     CacheModule,
     UsersModule, // Import UsersModule to access EmailService
-    WalletmoduleModule, // Import WalletmoduleModule to access WalletmoduleService, WithdrawalLimitService
+    WalletmoduleModule, // Exports OrganizationWalletService for AdminService
     ProviderModule, // Import ProviderModule to access ProviderService
+    InternalLedgerModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

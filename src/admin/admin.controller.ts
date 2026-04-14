@@ -40,7 +40,13 @@ import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-manage
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
-import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
+import {
+  InviteAdminDto,
+  AcceptInviteDto,
+  GetAdminsDto,
+  UpdateAdminDto,
+  AssignRoleDto,
+} from './dto/admin-management.dto.js';
 import { GetRolesDto } from './dto/role-management.dto.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
@@ -63,9 +69,15 @@ export class AdminController {
   @AdminPublic()
   @ApiOperation({
     summary: 'Get all configurations',
-    description: 'Retrieves all system configurations with optional filtering by category and active status. Public endpoint accessible from mobile app.',
+    description:
+      'Retrieves all system configurations with optional filtering by category and active status. Public endpoint accessible from mobile app.',
   })
-  @ApiQuery({ name: 'category', required: false, description: 'Filter by category (e.g., FEES, RISK, DEVICE_ABUSE)', example: 'FEES' })
+  @ApiQuery({
+    name: 'category',
+    required: false,
+    description: 'Filter by category (e.g., FEES, RISK, DEVICE_ABUSE)',
+    example: 'FEES',
+  })
   @ApiQuery({ name: 'isActive', required: false, description: 'Filter by active status', example: true, type: Boolean })
   @ApiResponse({
     status: 200,
@@ -134,7 +146,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_CONFIG)
   @ApiOperation({
     summary: 'Get configurations by category',
-    description: 'Retrieves all configurations in a specific category. Read access available to all authenticated admins.',
+    description:
+      'Retrieves all configurations in a specific category. Read access available to all authenticated admins.',
   })
   @ApiParam({ name: 'category', description: 'Configuration category', example: 'FEES' })
   @ApiResponse({
@@ -190,11 +203,7 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Configuration not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid value type' })
-  async updateConfig(
-    @Param('key') key: string,
-    @Body(ValidationPipe) data: UpdateConfigDto,
-    @Request() req: any,
-  ) {
+  async updateConfig(@Param('key') key: string, @Body(ValidationPipe) data: UpdateConfigDto, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.updateConfig(key, data, adminId);
   }
@@ -206,7 +215,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.MANAGE_CONFIG)
   @ApiOperation({
     summary: 'Create new configuration',
-    description: 'Creates a new configuration entry. Only admins with MANAGE_CONFIG permission can create configurations.',
+    description:
+      'Creates a new configuration entry. Only admins with MANAGE_CONFIG permission can create configurations.',
   })
   @ApiBody({ type: CreateConfigDto })
   @ApiResponse({
@@ -229,10 +239,7 @@ export class AdminController {
   })
   @ApiResponse({ status: 400, description: 'Bad request - Key already exists or invalid data' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
-  async createConfig(
-    @Body(ValidationPipe) data: CreateConfigDto,
-    @Request() req: any,
-  ) {
+  async createConfig(@Body(ValidationPipe) data: CreateConfigDto, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.createConfig(data, adminId);
   }
@@ -244,7 +251,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.MANAGE_CONFIG)
   @ApiOperation({
     summary: 'Delete configuration',
-    description: 'Soft deletes (deactivates) a configuration by setting isActive to false. Only admins with MANAGE_CONFIG permission can delete configurations.',
+    description:
+      'Soft deletes (deactivates) a configuration by setting isActive to false. Only admins with MANAGE_CONFIG permission can delete configurations.',
   })
   @ApiParam({ name: 'key', description: 'Configuration key', example: 'ADMIN_PAYOUT_FEE' })
   @ApiResponse({
@@ -267,10 +275,7 @@ export class AdminController {
   })
   @ApiResponse({ status: 404, description: 'Configuration not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
-  async deleteConfig(
-    @Param('key') key: string,
-    @Request() req: any,
-  ) {
+  async deleteConfig(@Param('key') key: string, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.deleteConfig(key, adminId);
   }
@@ -291,11 +296,22 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_USERS)
   @ApiOperation({
     summary: 'Export users to CSV',
-    description: 'Exports all users matching the provided filters to CSV format. Uses the same filter parameters as GET /admin/users. Maximum 100,000 records.',
+    description:
+      'Exports all users matching the provided filters to CSV format. Uses the same filter parameters as GET /admin/users. Maximum 100,000 records.',
   })
   @ApiQuery({ name: 'search', required: false, type: String, description: 'Search by email or name' })
-  @ApiQuery({ name: 'tier', required: false, enum: ['Tier_0', 'Tier_1', 'Tier_2', 'Tier_3'], description: 'Filter by KYC tier' })
-  @ApiQuery({ name: 'isAmlRestricted', required: false, type: Boolean, description: 'Filter by AML restriction status' })
+  @ApiQuery({
+    name: 'tier',
+    required: false,
+    enum: ['Tier_0', 'Tier_1', 'Tier_2', 'Tier_3'],
+    description: 'Filter by KYC tier',
+  })
+  @ApiQuery({
+    name: 'isAmlRestricted',
+    required: false,
+    type: Boolean,
+    description: 'Filter by AML restriction status',
+  })
   @ApiResponse({
     status: 200,
     description: 'Users exported successfully',
@@ -308,10 +324,7 @@ export class AdminController {
       },
     },
   })
-  async exportUsersCSV(
-    @Query(ValidationPipe) filters: GetUsersDto,
-    @Res() res: Response,
-  ) {
+  async exportUsersCSV(@Query(ValidationPipe) filters: GetUsersDto, @Res() res: Response) {
     const { buffer, filename } = await this.adminService.exportUsersCSV(filters);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -322,7 +335,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_USERS)
   @ApiOperation({
     summary: 'Search users',
-    description: 'Search for users by email, phone, or username. Auto-detects search type: email (exact match), phone (exact match), or username (partial match). Returns array with single user for email/phone, multiple users for username.',
+    description:
+      'Search for users by email, phone, or username. Auto-detects search type: email (exact match), phone (exact match), or username (partial match). Returns array with single user for email/phone, multiple users for username.',
   })
   @ApiQuery({
     name: 'q',
@@ -383,13 +397,14 @@ export class AdminController {
   @Post('users/:userId/send-kyc-reminder')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE, AdminRole.SUPPORT)
   @RequirePermission(PERMISSIONS.SEND_KYC_REMINDERS)
-  @ApiOperation({ 
-    summary: 'Send KYC reminder email', 
-    description: 'Send a KYC reminder email to a user to encourage them to complete their KYC verification. The email will only be sent to users with verified email addresses.' 
+  @ApiOperation({
+    summary: 'Send KYC reminder email',
+    description:
+      'Send a KYC reminder email to a user to encourage them to complete their KYC verification. The email will only be sent to users with verified email addresses.',
   })
   @ApiParam({ name: 'userId', description: 'User ID' })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'KYC reminder email sent successfully',
     schema: {
       type: 'object',
@@ -403,10 +418,7 @@ export class AdminController {
   })
   @ApiResponse({ status: 404, description: 'User not found' })
   @ApiResponse({ status: 400, description: 'User email is not verified or email sending failed' })
-  async sendKycReminder(
-    @Param('userId') userId: string,
-    @Request() req: any,
-  ) {
+  async sendKycReminder(@Param('userId') userId: string, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.sendKycReminder(userId, adminId);
   }
@@ -414,19 +426,19 @@ export class AdminController {
   @Post('users/:userId/restrict')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
   @RequirePermission(PERMISSIONS.RESTRICT_USERS)
-  @ApiOperation({ 
-    summary: 'Restrict user (AML flagging)', 
-    description: 'Restrict a user due to AML compliance issues. An email notification will be automatically sent to the user (if their email is verified) informing them of the restriction and the reason.' 
+  @ApiOperation({
+    summary: 'Restrict user (AML flagging)',
+    description:
+      'Restrict a user due to AML compliance issues. An email notification will be automatically sent to the user (if their email is verified) informing them of the restriction and the reason.',
   })
   @ApiParam({ name: 'userId', description: 'User ID' })
   @ApiBody({ type: RestrictUserDto })
-  @ApiResponse({ status: 200, description: 'User restricted successfully. Email notification sent if user email is verified.' })
+  @ApiResponse({
+    status: 200,
+    description: 'User restricted successfully. Email notification sent if user email is verified.',
+  })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async restrictUser(
-    @Param('userId') userId: string,
-    @Body(ValidationPipe) dto: RestrictUserDto,
-    @Request() req: any,
-  ) {
+  async restrictUser(@Param('userId') userId: string, @Body(ValidationPipe) dto: RestrictUserDto, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.restrictUser(userId, adminId, dto);
   }
@@ -453,14 +465,6 @@ export class AdminController {
   @ApiResponse({ status: 200, description: 'Pending KYC requests retrieved successfully' })
   async getPendingKycRequests(@Query(ValidationPipe) filters: GetKycRequestsDto) {
     return this.adminService.getPendingKycRequests(filters);
-  }
-
-  @Get('kyc/utility-bills/pending')
-  @RequirePermission(PERMISSIONS.VIEW_KYC_REQUESTS)
-  @ApiOperation({ summary: 'Get pending utility bill submissions', description: 'Get paginated list of pending utility bill submissions' })
-  @ApiResponse({ status: 200, description: 'Pending utility bill submissions retrieved successfully' })
-  async getPendingUtilityBills(@Query(ValidationPipe) filters: GetKycRequestsDto) {
-    return this.adminService.getPendingUtilityBills(filters);
   }
 
   @Post('kyc/requests/:requestId/approve')
@@ -499,40 +503,26 @@ export class AdminController {
     return this.adminService.rejectKycRequest(requestId, adminId, dto);
   }
 
-  @Post('kyc/utility-bills/:submissionId/approve')
+  @Patch('customers/:customerId/promote-tier-3')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
-  @RequirePermission(PERMISSIONS.APPROVE_UTILITY_BILL)
-  @ApiOperation({ summary: 'Approve utility bill', description: 'Approve a pending utility bill submission and increase withdrawal limit' })
-  @ApiParam({ name: 'submissionId', description: 'Utility bill submission ID' })
-  @ApiBody({ type: ApproveKycDto })
-  @ApiResponse({ status: 200, description: 'Utility bill approved successfully' })
-  @ApiResponse({ status: 404, description: 'Utility bill submission not found' })
-  @ApiResponse({ status: 400, description: 'Utility bill submission is not pending' })
-  async approveUtilityBill(
-    @Param('submissionId') submissionId: string,
-    @Body(ValidationPipe) dto: ApproveKycDto,
+  @RequirePermission(PERMISSIONS.APPROVE_KYC)
+  @ApiOperation({
+    summary: 'Promote customer to Tier 3',
+    description:
+      'Sets customer from Tier 2 to Tier 3 after manual verification (e.g. bank address). Rejects if tier is not Tier 2.',
+  })
+  @ApiParam({ name: 'customerId', description: 'Customer ID' })
+  @ApiBody({ type: ApproveKycDto, required: false })
+  @ApiResponse({ status: 200, description: 'Customer promoted to Tier 3' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiResponse({ status: 400, description: 'Customer is not Tier 2' })
+  async promoteCustomerToTier3(
+    @Param('customerId') customerId: string,
+    @Body(new ValidationPipe({ skipMissingProperties: true })) dto: ApproveKycDto,
     @Request() req: any,
   ) {
     const adminId = req.admin?.id;
-    return this.adminService.approveUtilityBill(submissionId, adminId, dto);
-  }
-
-  @Post('kyc/utility-bills/:submissionId/reject')
-  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
-  @RequirePermission(PERMISSIONS.REJECT_UTILITY_BILL)
-  @ApiOperation({ summary: 'Reject utility bill', description: 'Reject a pending utility bill submission' })
-  @ApiParam({ name: 'submissionId', description: 'Utility bill submission ID' })
-  @ApiBody({ type: RejectKycDto })
-  @ApiResponse({ status: 200, description: 'Utility bill rejected successfully' })
-  @ApiResponse({ status: 404, description: 'Utility bill submission not found' })
-  @ApiResponse({ status: 400, description: 'Utility bill submission is not pending' })
-  async rejectUtilityBill(
-    @Param('submissionId') submissionId: string,
-    @Body(ValidationPipe) dto: RejectKycDto,
-    @Request() req: any,
-  ) {
-    const adminId = req.admin?.id;
-    return this.adminService.rejectUtilityBill(submissionId, adminId, dto);
+    return this.adminService.promoteCustomerToTier3(customerId, adminId, dto);
   }
 
   // =====================
@@ -543,7 +533,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_FINANCIAL_REPORTS)
   @ApiOperation({
     summary: 'Get transaction analytics summary',
-    description: 'Returns aggregated metrics: total wallet balance, total withdrawn, and total received. Supports optional date range filtering. Results are cached for 5 minutes (all-time queries only).',
+    description:
+      'Returns aggregated metrics: total wallet balance, total withdrawn, and total received. Supports optional date range filtering. Results are cached for 5 minutes (all-time queries only).',
   })
   @ApiQuery({
     name: 'startDate',
@@ -605,7 +596,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_DASHBOARD)
   @ApiOperation({
     summary: 'Get dashboard overview metrics',
-    description: 'Returns dashboard metrics: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count. Includes growth percentages comparing last 7 days vs previous 7 days.',
+    description:
+      'Returns dashboard metrics: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count. Includes growth percentages comparing last 7 days vs previous 7 days.',
   })
   @ApiResponse({
     status: 200,
@@ -650,7 +642,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_EVENTS)
   @ApiOperation({
     summary: 'Get event metrics with growth percentages',
-    description: 'Returns aggregated event metrics (totalEvents, activeEvents, totalAttendees, totalSprayed) with 7-day growth percentages. Calculates metrics for ALL events in the system.',
+    description:
+      'Returns aggregated event metrics (totalEvents, activeEvents, totalAttendees, totalSprayed) with 7-day growth percentages. Calculates metrics for ALL events in the system.',
   })
   @ApiResponse({
     status: 200,
@@ -676,14 +669,36 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_EVENTS)
   @ApiOperation({
     summary: 'Export events to CSV',
-    description: 'Exports all events matching the provided filters to CSV format. Uses the same filter parameters as GET /admin/events. Maximum 100,000 records.',
+    description:
+      'Exports all events matching the provided filters to CSV format. Uses the same filter parameters as GET /admin/events. Maximum 100,000 records.',
   })
-  @ApiQuery({ name: 'status', required: false, enum: ['DRAFT', 'SCHEDULED', 'LIVE', 'ENDED', 'CANCELLED'], description: 'Filter by event status. UI values: "Upcoming" → SCHEDULED, "Live" → LIVE, "Completed" → ENDED' })
-  @ApiQuery({ name: 'categories', required: false, type: [String], description: 'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate' })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['DRAFT', 'SCHEDULED', 'LIVE', 'ENDED', 'CANCELLED'],
+    description: 'Filter by event status. UI values: "Upcoming" → SCHEDULED, "Live" → LIVE, "Completed" → ENDED',
+  })
+  @ApiQuery({
+    name: 'categories',
+    required: false,
+    type: [String],
+    description: 'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate',
+  })
   @ApiQuery({ name: 'search', required: false, type: String, description: 'Search by event title or host name' })
   @ApiQuery({ name: 'hostUserId', required: false, type: String, description: 'Filter by host user ID' })
-  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Filter events starting from this date (ISO 8601). Quick options (Today, This Week, This Month, Last 90 days) are calculated on frontend.' })
-  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter events starting before this date (ISO 8601)' })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    type: String,
+    description:
+      'Filter events starting from this date (ISO 8601). Quick options (Today, This Week, This Month, Last 90 days) are calculated on frontend.',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    type: String,
+    description: 'Filter events starting before this date (ISO 8601)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Events exported successfully',
@@ -696,10 +711,7 @@ export class AdminController {
       },
     },
   })
-  async exportEventsCSV(
-    @Query(NormalizeArrayQueryPipe, ValidationPipe) filters: GetEventsDto,
-    @Res() res: Response,
-  ) {
+  async exportEventsCSV(@Query(NormalizeArrayQueryPipe, ValidationPipe) filters: GetEventsDto, @Res() res: Response) {
     const { buffer, filename } = await this.adminService.exportEventsCSV(filters);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -710,7 +722,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.VIEW_EVENTS)
   @ApiOperation({
     summary: 'Get top 5 events by sprayers',
-    description: 'Get ranked list of top 5 events based on number of unique sprayers. Ties are broken by earliest start date.',
+    description:
+      'Get ranked list of top 5 events based on number of unique sprayers. Ties are broken by earliest start date.',
   })
   @ApiResponse({
     status: 200,
@@ -771,10 +784,7 @@ export class AdminController {
   @ApiParam({ name: 'id', description: 'Event ID' })
   @ApiResponse({ status: 200, description: 'Spray activity retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Event not found' })
-  async getEventSprayActivity(
-    @Param('id') eventId: string,
-    @Query(ValidationPipe) filters: GetSprayActivityDto,
-  ) {
+  async getEventSprayActivity(@Param('id') eventId: string, @Query(ValidationPipe) filters: GetSprayActivityDto) {
     return this.adminService.getEventSprayActivity(eventId, filters);
   }
 
@@ -787,10 +797,7 @@ export class AdminController {
   @ApiParam({ name: 'id', description: 'Event ID' })
   @ApiResponse({ status: 200, description: 'Top sprayers retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Event not found' })
-  async getEventTopSprayers(
-    @Param('id') eventId: string,
-    @Query(ValidationPipe) filters: GetTopSprayersDto,
-  ) {
+  async getEventTopSprayers(@Param('id') eventId: string, @Query(ValidationPipe) filters: GetTopSprayersDto) {
     return this.adminService.getEventTopSprayers(eventId, filters);
   }
 
@@ -1008,98 +1015,119 @@ export class AdminController {
     @Body(ValidationPipe) dto: UpdateAlertStatusDto,
     @Request() req: any,
   ) {
-      const adminId = req.admin?.id;
-      return this.adminService.updateAlertStatus(alertId, adminId, dto);
-    }
+    const adminId = req.admin?.id;
+    return this.adminService.updateAlertStatus(alertId, adminId, dto);
+  }
 
-    // =====================
-    // AUDIT LOGS
-    // =====================
+  // =====================
+  // AUDIT LOGS
+  // =====================
 
-    @Get('logs')
-    @RequirePermission(PERMISSIONS.VIEW_AUDIT_LOGS)
-    @ApiOperation({
-      summary: 'Get admin action logs',
-      description: 'Get paginated list of admin action logs with filtering options',
-    })
-    @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-    @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-    @ApiQuery({ name: 'adminId', required: false, type: String, example: 'admin-uuid' })
-    @ApiQuery({ name: 'actionType', required: false, type: String, example: 'KYC_APPROVED' })
-    @ApiQuery({ name: 'targetType', required: false, type: String, example: 'CUSTOMER' })
-    @ApiQuery({ name: 'targetId', required: false, type: String, example: 'customer-uuid' })
-    @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Start date for logs (ISO 8601 format)', example: '2025-01-01T00:00:00.000Z' })
-    @ApiQuery({ name: 'endDate', required: false, type: String, description: 'End date for logs (ISO 8601 format)', example: '2025-02-08T23:59:59.999Z' })
-    @ApiResponse({
-      status: 200,
-      description: 'Action logs retrieved successfully',
-      schema: {
-        example: {
-          logs: [
-            {
-              id: 'log-uuid',
-              adminId: 'admin-uuid',
-              actionType: 'KYC_APPROVED',
-              targetType: 'KYC_REQUEST',
-              targetId: 'request-uuid',
-              reason: null,
-              details: { tier: 'TIER_2' },
-              createdAt: '2025-02-08T10:00:00.000Z',
-              admin: {
-                id: 'admin-uuid',
-                email: 'admin@example.com',
-                role: 'COMPLIANCE',
-              },
+  @Get('logs')
+  @RequirePermission(PERMISSIONS.VIEW_AUDIT_LOGS)
+  @ApiOperation({
+    summary: 'Get admin action logs',
+    description: 'Get paginated list of admin action logs with filtering options',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'adminId', required: false, type: String, example: 'admin-uuid' })
+  @ApiQuery({ name: 'actionType', required: false, type: String, example: 'KYC_APPROVED' })
+  @ApiQuery({ name: 'targetType', required: false, type: String, example: 'CUSTOMER' })
+  @ApiQuery({ name: 'targetId', required: false, type: String, example: 'customer-uuid' })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    type: String,
+    description: 'Start date for logs (ISO 8601 format)',
+    example: '2025-01-01T00:00:00.000Z',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    type: String,
+    description: 'End date for logs (ISO 8601 format)',
+    example: '2025-02-08T23:59:59.999Z',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Action logs retrieved successfully',
+    schema: {
+      example: {
+        logs: [
+          {
+            id: 'log-uuid',
+            adminId: 'admin-uuid',
+            actionType: 'KYC_APPROVED',
+            targetType: 'KYC_REQUEST',
+            targetId: 'request-uuid',
+            reason: null,
+            details: { tier: 'TIER_2' },
+            createdAt: '2025-02-08T10:00:00.000Z',
+            admin: {
+              id: 'admin-uuid',
+              email: 'admin@example.com',
+              role: 'COMPLIANCE',
             },
-          ],
-          pagination: {
-            page: 1,
-            limit: 20,
-            total: 150,
-            totalPages: 8,
           },
+        ],
+        pagination: {
+          page: 1,
+          limit: 20,
+          total: 150,
+          totalPages: 8,
         },
       },
-    })
-    @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
-    async getActionLogs(@Query(ValidationPipe) filters: GetActionLogsDto) {
-      return this.adminService.getActionLogs(filters);
-    }
+    },
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  async getActionLogs(@Query(ValidationPipe) filters: GetActionLogsDto) {
+    return this.adminService.getActionLogs(filters);
+  }
 
-    @Get('logs/export')
-    @RequirePermission(PERMISSIONS.VIEW_AUDIT_LOGS)
-    @ApiOperation({
-      summary: 'Export admin action logs as CSV',
-      description: 'Export all matching admin action logs as a CSV file for download',
-    })
-    @ApiQuery({ name: 'adminId', required: false, type: String, example: 'admin-uuid' })
-    @ApiQuery({ name: 'actionType', required: false, type: String, example: 'KYC_APPROVED' })
-    @ApiQuery({ name: 'targetType', required: false, type: String, example: 'CUSTOMER' })
-    @ApiQuery({ name: 'targetId', required: false, type: String, example: 'customer-uuid' })
-    @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Start date for logs (ISO 8601 format)', example: '2025-01-01T00:00:00.000Z' })
-    @ApiQuery({ name: 'endDate', required: false, type: String, description: 'End date for logs (ISO 8601 format)', example: '2025-02-08T23:59:59.999Z' })
-    @ApiResponse({
-      status: 200,
-      description: 'CSV file exported successfully',
-      content: {
-        'text/csv': {
-          schema: {
-            type: 'string',
-            format: 'binary',
-          },
+  @Get('logs/export')
+  @RequirePermission(PERMISSIONS.VIEW_AUDIT_LOGS)
+  @ApiOperation({
+    summary: 'Export admin action logs as CSV',
+    description: 'Export all matching admin action logs as a CSV file for download',
+  })
+  @ApiQuery({ name: 'adminId', required: false, type: String, example: 'admin-uuid' })
+  @ApiQuery({ name: 'actionType', required: false, type: String, example: 'KYC_APPROVED' })
+  @ApiQuery({ name: 'targetType', required: false, type: String, example: 'CUSTOMER' })
+  @ApiQuery({ name: 'targetId', required: false, type: String, example: 'customer-uuid' })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    type: String,
+    description: 'Start date for logs (ISO 8601 format)',
+    example: '2025-01-01T00:00:00.000Z',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    type: String,
+    description: 'End date for logs (ISO 8601 format)',
+    example: '2025-02-08T23:59:59.999Z',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'CSV file exported successfully',
+    content: {
+      'text/csv': {
+        schema: {
+          type: 'string',
+          format: 'binary',
         },
       },
-    })
-    @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
-    async exportActionLogsCSV(
-      @Query(ValidationPipe) filters: GetActionLogsDto,
-      @Res() res: Response,
-    ) {
-      const { buffer, filename } = await this.adminService.exportActionLogsCSV(filters);
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(buffer);
-    }
+    },
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  async exportActionLogsCSV(@Query(ValidationPipe) filters: GetActionLogsDto, @Res() res: Response) {
+    const { buffer, filename } = await this.adminService.exportActionLogsCSV(filters);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
 
   // =====================
   // ADMIN MANAGEMENT
@@ -1135,7 +1163,8 @@ export class AdminController {
   @AdminPublic()
   @ApiOperation({
     summary: 'Accept admin invite and create account',
-    description: 'Accept an admin invitation using the token from the invite email and set a password. This endpoint is public and does not require authentication.',
+    description:
+      'Accept an admin invitation using the token from the invite email and set a password. This endpoint is public and does not require authentication.',
   })
   @ApiBody({ type: AcceptInviteDto })
   @ApiResponse({
@@ -1191,11 +1220,7 @@ export class AdminController {
   @ApiResponse({ status: 200, description: 'Admin updated successfully' })
   @ApiResponse({ status: 404, description: 'Admin not found' })
   @ApiResponse({ status: 400, description: 'Cannot deactivate own account' })
-  async updateAdmin(
-    @Param('adminId') adminId: string,
-    @Body(ValidationPipe) dto: UpdateAdminDto,
-    @Request() req: any,
-  ) {
+  async updateAdmin(@Param('adminId') adminId: string, @Body(ValidationPipe) dto: UpdateAdminDto, @Request() req: any) {
     const updaterId = req.admin?.id;
     return this.adminService.updateAdmin(adminId, dto, updaterId);
   }
@@ -1252,10 +1277,7 @@ export class AdminController {
   @ApiQuery({ name: 'page', required: false, example: 1 })
   @ApiQuery({ name: 'limit', required: false, example: 20 })
   @ApiResponse({ status: 200, description: 'Role details retrieved successfully' })
-  async getRoleDetails(
-    @Param('roleName') roleName: AdminRole,
-    @Query(ValidationPipe) filters: GetRolesDto,
-  ) {
+  async getRoleDetails(@Param('roleName') roleName: AdminRole, @Query(ValidationPipe) filters: GetRolesDto) {
     return this.adminService.getRoleDetails(roleName, filters);
   }
 
@@ -1302,10 +1324,12 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.MANAGE_WITHDRAWALS)
   @ApiOperation({
     summary: 'Approve withdrawal',
-    description: 'Approve a pending withdrawal. For withdrawals that require approval (exceed daily limit), this will process the payout (debit wallet, call provider). For other withdrawals, this updates status to PROCESSING. Status will be updated to SUCCESS by webhook when provider confirms.',
+    description:
+      'Approve a pending withdrawal. For withdrawals that require approval (exceed daily limit), this will process the payout (debit wallet, call provider). For other withdrawals, this updates status to PROCESSING. Status will be updated to SUCCESS by webhook when provider confirms.',
   })
   @ApiParam({ name: 'id', description: 'Payout Transaction ID' })
   @ApiResponse({ status: 200, description: 'Withdrawal approved successfully' })
+  @ApiResponse({ status: 410, description: 'Admin approval workflow disabled' })
   @ApiResponse({ status: 404, description: 'Withdrawal not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async approveWithdrawal(@Param('id') payoutTransactionId: string, @Request() req: any) {
@@ -1317,7 +1341,8 @@ export class AdminController {
   @RequirePermission(PERMISSIONS.MANAGE_WITHDRAWALS)
   @ApiOperation({
     summary: 'Reject withdrawal',
-    description: 'Reject a pending withdrawal with a reason. For withdrawals that require approval, this will delete the placeholder transaction and mark as REJECTED without debiting the wallet. For processed withdrawals, this updates status to REJECTED.',
+    description:
+      'Reject a pending withdrawal with a reason. For withdrawals that require approval, this will delete the placeholder transaction and mark as REJECTED without debiting the wallet. For processed withdrawals, this updates status to REJECTED.',
   })
   @ApiParam({ name: 'id', description: 'Payout Transaction ID' })
   @ApiBody({ type: RejectWithdrawalDto })
@@ -1352,10 +1377,7 @@ export class AdminController {
   @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter to date (ISO 8601)' })
   @ApiResponse({ status: 200, description: 'Notifications retrieved successfully' })
   @ApiResponse({ status: 400, description: 'Admin does not have a linked user account' })
-  async getNotifications(
-    @Query(ValidationPipe) filters: GetNotificationsDto,
-    @Request() req: any,
-  ) {
+  async getNotifications(@Query(ValidationPipe) filters: GetNotificationsDto, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.getAdminNotifications(adminId, filters);
   }

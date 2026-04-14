@@ -1,4 +1,14 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsBoolean, IsInt, IsNumber, IsEnum } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsDateString,
+  IsBoolean,
+  IsInt,
+  IsNumber,
+  IsEnum,
+  Allow,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DiscoCode } from './disco-code.enum.js';
 
@@ -174,10 +184,10 @@ export class CreateAddressVerificationDto {
   @IsNotEmpty({ message: 'Meter number is required' })
   meterNumber: string;
 
-  @ApiProperty({ 
+  @ApiProperty({
     enum: DiscoCode,
     description: 'Electricity Distribution Company (DISCO) code',
-    example: DiscoCode.IKEJA 
+    example: DiscoCode.IKEJA,
   })
   @IsEnum(DiscoCode, { message: 'DiscoCode must be a valid DISCO code' })
   @IsNotEmpty({ message: 'DiscoCode is required' })
@@ -218,3 +228,28 @@ export class AddressVerificationResponseDto {
   providerTimestamp?: string;
 }
 
+// Face biometric callback (cb_uri) from ALAT face webapp
+export class FaceCallbackDto {
+  @ApiProperty({ description: 'Whether face verification succeeded' })
+  @IsBoolean()
+  success: boolean;
+
+  @ApiProperty({ description: 'Correlation ID (c_id) - matches tier1CorrelationId' })
+  @IsString()
+  @IsNotEmpty()
+  c_id: string;
+
+  @ApiProperty({ description: 'BVN or NIN value used' })
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @ApiProperty({ enum: ['bvn', 'nin'], description: 'Type of id' })
+  @IsEnum(['bvn', 'nin'])
+  id_type: 'bvn' | 'nin';
+
+  @ApiPropertyOptional({ description: 'Device/location metadata from ALAT face webapp (ignored)' })
+  @Allow()
+  @IsOptional()
+  metadata?: Record<string, unknown>;
+}

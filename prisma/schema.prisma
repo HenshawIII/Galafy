@@ -97,6 +97,12 @@ enum EventRole {
   CELEBRANT
 }
 
+enum SprayStatus {
+  PENDING_PROVIDER
+  CONFIRMED
+  FAILED
+}
+
 enum AdminRole {
   SUPER_ADMIN
   OPERATIONS
@@ -133,6 +139,12 @@ enum ConfigType {
   JSON
 }
 
+enum Tier1FaceStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 // =====================
 // CORE USER / AUTH
 // =====================
@@ -151,6 +163,8 @@ model User {
   passwordResetOtp      String?
   refreshToken          String?   @unique
   refreshTokenExpiresAt DateTime?
+  // Incremented on every successful login to invalidate previously issued access tokens.
+  authSessionVersion   Int       @default(0)
 
   // Payout security
   payoutPin             String?   // Hashed PIN for payout verification
@@ -249,17 +263,31 @@ model Customer {
 
   // Provider-side identifiers
   providerCustomerId String? @unique
-  organizationId     String?
-  customerTypeId     String?
-  countryId          String?
 
   // Tier management
   tier             KycTier @default(Tier_0)
   providerTierCode Int     @default(0)
 
+  // Tier 1 (BVN + face) flow
+  tier1CorrelationId       String?         @unique
+  tier1PendingBvn          String?         @unique
+  tier1TrackingId          String?
+  tier1FaceStatus          Tier1FaceStatus?
+  tier1CompletedAt         DateTime?
+
+  // Tier 1 account creation callback (wallet account / nuban)
+  tier1AccountStatus      String?
+  tier1Nuban               String?
+  tier1NubanName           String?
+  tier1AccountCompletedAt DateTime?
+
+  // Tier 2 flow
+  tier2TrackingId           String?
+  tier2AddressVerificationStatus String?
+
   // Personal data
-  firstName           String
-  lastName            String
+  firstName           String?
+  lastName            String?
   middleName          String?
   dob                 DateTime?
   city                String?
@@ -312,21 +340,6 @@ model NinVerification {
 
   providerCheckId Int?
 
-  state  String?
-  status String?
-
-  ninCheckStatus String?
-  firstnameMatch Boolean?
-  lastnameMatch  Boolean?
-
-  ninBirthdate     DateTime?
-  ninGender        String?
-  ninPhone         String?
-  lgaOfResidence   String?
-  stateOfResidence String?
-
-  vNin String?
-
   verifiedAt DateTime @default(now())
   createdAt  DateTime @default(now())
 }
@@ -340,30 +353,7 @@ model BvnVerification {
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id])
 
-  kycCompleted    Boolean?
   providerCheckId Int?
-
-  state  String?
-  status String?
-
-  bvnCheckStatus String?
-  firstnameMatch Boolean?
-  lastnameMatch  Boolean?
-
-  birthdate          DateTime?
-  gender             String?
-  phone              String?
-  email              String?
-  firstname          String?
-  lastname           String?
-  middlename         String?
-  lgaOfResidence     String?
-  maritalStatus      String?
-  nationality        String?
-  residentialAddress String?
-  stateOfResidence   String?
-  enrollmentBank     String?
-  watchListed        String?
 
   verifiedAt DateTime @default(now())
   createdAt  DateTime @default(now())
@@ -378,15 +368,12 @@ model AddressVerification {
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id])
 
-  verified        Boolean
-  houseAddress    String?
-  houseOwner      String?
-  confidenceLevel Int?
-  discoCode       String?
+  verified Boolean
 
-  providerStatus    String?
-  providerMessage   String?
-  providerTimestamp DateTime?
+  providerStatus  String?
+  providerMessage String?
+
+  residentialAddressJson Json?
 
   verifiedAt DateTime @default(now())
   createdAt  DateTime @default(now())
@@ -462,6 +449,23 @@ model Transaction {
 
   narration String?
   metadata  Json?
+
+  // ============================
+  // New provider callback fields
+  // ============================
+  securityInfoHash String?
+
+  // Idempotency + audit for provider callbacks (strongly identifies callback events)
+  providerPlatformTransactionReference String? @unique
+  providerTransactionStan              String?
+  providerOriginalTransactionDate      DateTime?
+
+  providerStatus              String?
+  providerCallbackReceivedAt DateTime?
+
+  // Destination context needed to credit internal destination wallets (if applicable)
+  destinationAccountNumber String?
+  destinationAccountName   String?
 
   // One-to-one links to domain-specific transactions
   fundingTransaction FundingTransaction? @relation("FundingTransactionOnTransaction")
@@ -566,6 +570,8 @@ model Spray {
   totalAmount Decimal @db.Decimal(19, 2)
   note        String?
   metadata    Json?
+
+  status SprayStatus @default(CONFIRMED)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

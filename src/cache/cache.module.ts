@@ -12,7 +12,7 @@ config();
       useFactory: async () => {
         // Support both Redis URL (for Render/production) and host/port (for local)
         let store;
-        
+
         if (process.env.REDIS_URL) {
           // Parse Redis URL (format: redis://[:password@]host[:port][/database])
           const redisUrl = new URL(process.env.REDIS_URL);
@@ -35,7 +35,7 @@ config();
             database: parseInt(process.env.REDIS_DB || '0'),
           });
         }
-        
+
         return {
           store: () => store,
           ttl: parseInt(process.env.REDIS_TTL || '3600'), // Default 1 hour

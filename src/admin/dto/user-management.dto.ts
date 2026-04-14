@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsBoolean, IsInt, Min , IsNotEmpty } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsBoolean, IsInt, Min, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { KycTier } from '../../users/dto/create-user-dto.js';
@@ -39,19 +39,20 @@ export class GetUsersDto {
   @IsString()
   search?: string;
 
-  @ApiProperty({ 
-    required: false, 
-    enum: UserTierFilter, 
-    description: 'Filter by KYC tier. Use "NoTier" to filter users without customer records (no KYC).' 
+  @ApiProperty({
+    required: false,
+    enum: UserTierFilter,
+    description: 'Filter by KYC tier. Use "NoTier" to filter users without customer records (no KYC).',
   })
   @IsOptional()
   @IsEnum(UserTierFilter)
   tier?: UserTierFilter;
 
-  @ApiProperty({ 
-    required: false, 
-    enum: UtilityBillStatusFilter, 
-    description: 'Filter by utility bill submission status. Use "noBill" to filter users with no utility bill submissions.' 
+  @ApiProperty({
+    required: false,
+    enum: UtilityBillStatusFilter,
+    description:
+      'Filter by utility bill submission status. Use "noBill" to filter users with no utility bill submissions.',
   })
   @IsOptional()
   @IsEnum(UtilityBillStatusFilter)
@@ -73,7 +74,8 @@ export class RestrictUserDto {
 export class SearchUsersDto {
   @ApiProperty({
     example: 'john@example.com',
-    description: 'Search query - can be email, phone, or username. Email and phone use exact match, username uses partial match.',
+    description:
+      'Search query - can be email, phone, or username. Email and phone use exact match, username uses partial match.',
   })
   @IsString({ message: 'Search query must be a string' })
   @IsNotEmpty({ message: 'Search query is required' })
@@ -81,13 +83,12 @@ export class SearchUsersDto {
 }
 
 export class SendKycReminderDto {
-  @ApiProperty({ 
-    required: false, 
-    example: 'Custom reminder message (optional)', 
-    description: 'Optional custom message to include in the KYC reminder email' 
+  @ApiProperty({
+    required: false,
+    example: 'Custom reminder message (optional)',
+    description: 'Optional custom message to include in the KYC reminder email',
   })
   @IsOptional()
   @IsString()
   customMessage?: string;
 }
-

@@ -38,7 +38,10 @@ export class InflowWebhookDataDto {
   @IsNotEmpty()
   dateOfTransaction: string;
 
-  @ApiPropertyOptional({ example: 'TRF 9710128903 PAYREF: OneBank Transfer...', description: 'Transaction description' })
+  @ApiPropertyOptional({
+    example: 'TRF 9710128903 PAYREF: OneBank Transfer...',
+    description: 'Transaction description',
+  })
   @IsOptional()
   @IsString()
   description?: string;
@@ -125,4 +128,3 @@ export class PayoutWebhookDto {
   @IsNotEmpty()
   data: PayoutWebhookDataDto;
 }
-

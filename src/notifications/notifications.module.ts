@@ -9,12 +9,7 @@ import { RejoinNotificationsTask } from './tasks/rejoin-notifications.task.js';
 @Module({
   imports: [DatabaseModule],
   controllers: [NotificationsController],
-  providers: [
-    NotificationsService,
-    FirebaseAdminProvider,
-    EventRemindersTask,
-    RejoinNotificationsTask,
-  ],
+  providers: [NotificationsService, FirebaseAdminProvider, EventRemindersTask, RejoinNotificationsTask],
   exports: [NotificationsService],
 })
 export class NotificationsModule {}

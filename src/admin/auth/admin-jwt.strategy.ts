@@ -11,17 +11,14 @@ export class AdminJwtStrategy extends PassportStrategy(Strategy, 'admin-jwt') {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey:
-        process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || 'your-secret-key',
+      secretOrKey: process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || 'your-secret-key',
     });
   }
 
   async validate(payload: any) {
     // Ensure this is an admin access token
     if (payload.type && payload.type !== 'admin_access') {
-      throw new UnauthorizedException(
-        'Invalid token type. Admin access token required.',
-      );
+      throw new UnauthorizedException('Invalid token type. Admin access token required.');
     }
 
     // Payload contains: sub (admin id), email, role
@@ -45,4 +42,3 @@ export class AdminJwtStrategy extends PassportStrategy(Strategy, 'admin-jwt') {
     };
   }
 }
-

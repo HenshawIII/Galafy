@@ -52,4 +52,3 @@ export class CreateConfigDto {
   @IsOptional()
   description?: string;
 }
-

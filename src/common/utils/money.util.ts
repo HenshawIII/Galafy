@@ -6,10 +6,8 @@ import { Decimal } from '@prisma/client/runtime/library';
  * This ensures all amounts conform to Naira/kobo precision (1 Naira = 100 Kobo)
  */
 export function normalizeToKobo(amount: Decimal | string | number): Decimal {
-  const decimal = typeof amount === 'string' || typeof amount === 'number' 
-    ? new Decimal(amount) 
-    : amount;
-  
+  const decimal = typeof amount === 'string' || typeof amount === 'number' ? new Decimal(amount) : amount;
+
   // Round to 2 decimal places using banker's rounding (round half to even)
   // This is the standard rounding method for financial calculations
   return decimal.toDecimalPlaces(2, Decimal.ROUND_HALF_EVEN);
@@ -21,10 +19,8 @@ export function normalizeToKobo(amount: Decimal | string | number): Decimal {
  */
 export function isValidKoboAmount(amount: Decimal | string | number): boolean {
   try {
-    const decimal = typeof amount === 'string' || typeof amount === 'number'
-      ? new Decimal(amount)
-      : amount;
-    
+    const decimal = typeof amount === 'string' || typeof amount === 'number' ? new Decimal(amount) : amount;
+
     // Check if decimal places <= 2
     const decimalPlaces = decimal.decimalPlaces();
     return decimalPlaces <= 2;
@@ -49,4 +45,3 @@ export function toDisplayAmount(amount: Decimal): number {
 export function toFormattedAmount(amount: Decimal): string {
   return normalizeToKobo(amount).toFixed(2);
 }
-

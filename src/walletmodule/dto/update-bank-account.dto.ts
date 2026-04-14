@@ -12,7 +12,10 @@ export class UpdateBankAccountDto {
   @IsNotEmpty({ message: 'Bank code is required' })
   bankCode: string;
 
-  @ApiPropertyOptional({ example: 'John Doe', description: 'Bank account name (will be fetched via name enquiry if not provided)' })
+  @ApiPropertyOptional({
+    example: 'John Doe',
+    description: 'Bank account name (will be fetched via name enquiry if not provided)',
+  })
   @IsOptional()
   @IsString({ message: 'Account name must be a string' })
   accountName?: string;
@@ -21,4 +24,3 @@ export class UpdateBankAccountDto {
   @IsOptional()
   isDefault?: boolean;
 }
-

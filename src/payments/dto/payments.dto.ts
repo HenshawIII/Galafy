@@ -119,7 +119,7 @@ export class InterBankTransferDto {
   @IsNotEmpty({ message: 'Remarks is required' })
   remarks: string;
 
-  @ApiProperty({ example: 1000.50, description: 'Transfer amount', minimum: 0.01 })
+  @ApiProperty({ example: 1000.5, description: 'Transfer amount', minimum: 0.01 })
   @IsNumber({}, { message: 'Amount must be a number' })
   @Type(() => Number)
   @Min(0.01, { message: 'Amount must be greater than 0' })
@@ -130,12 +130,18 @@ export class InterBankTransferDto {
   @IsNotEmpty({ message: 'Currency ID is required' })
   currencyId: string;
 
-  @ApiPropertyOptional({ example: 'TXN-20250125-001', description: 'Unique transaction reference (auto-generated if not provided)' })
+  @ApiPropertyOptional({
+    example: 'TXN-20250125-001',
+    description: 'Unique transaction reference (auto-generated if not provided)',
+  })
   @IsOptional()
   @IsString({ message: 'Customer transaction reference must be a string' })
   customerTransactionReference?: string;
 
-  @ApiPropertyOptional({ example: 'https://your-app.com/webhooks/payout', description: 'Webhook URL for status updates' })
+  @ApiPropertyOptional({
+    example: 'https://your-app.com/webhooks/payout',
+    description: 'Webhook URL for status updates',
+  })
   @IsOptional()
   @IsString({ message: 'Webhook URL must be a string' })
   webhookUrl?: string;
@@ -147,4 +153,3 @@ export class TransactionStatusRequeryDto {
   @IsNotEmpty({ message: 'Transaction reference is required' })
   transactionRef: string;
 }
-

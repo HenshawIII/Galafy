@@ -18,18 +18,20 @@ export class GetEventsDto {
   @Min(1)
   limit?: number;
 
-  @ApiPropertyOptional({ 
-    enum: EventStatus, 
-    description: 'Filter by event status. UI values map as: "Upcoming" → SCHEDULED, "Live" → LIVE, "Completed" → ENDED, "All" → omit parameter' 
+  @ApiPropertyOptional({
+    enum: EventStatus,
+    description:
+      'Filter by event status. UI values map as: "Upcoming" → SCHEDULED, "Live" → LIVE, "Completed" → ENDED, "All" → omit parameter',
   })
   @IsOptional()
   @IsEnum(EventStatus)
   status?: EventStatus;
 
-  @ApiPropertyOptional({ 
-    example: ['Birthday', 'Wedding'], 
-    description: 'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate. Accepts: categories=value1&categories=value2 or categories[]=value1&categories[]=value2',
-    type: [String]
+  @ApiPropertyOptional({
+    example: ['Birthday', 'Wedding'],
+    description:
+      'Filter by event categories (multi-select). Common values: Birthday, Wedding, Housewarming, Corporate. Accepts: categories=value1&categories=value2 or categories[]=value1&categories[]=value2',
+    type: [String],
   })
   @IsOptional()
   @Transform(({ value }) => {
@@ -57,7 +59,11 @@ export class GetEventsDto {
   @IsString()
   hostUserId?: string;
 
-  @ApiPropertyOptional({ example: '2025-01-01T00:00:00.000Z', description: 'Filter events starting from this date. Quick options (Today, This Week, This Month, Last 90 days) are calculated on frontend and sent as startDate/endDate' })
+  @ApiPropertyOptional({
+    example: '2025-01-01T00:00:00.000Z',
+    description:
+      'Filter events starting from this date. Quick options (Today, This Week, This Month, Last 90 days) are calculated on frontend and sent as startDate/endDate',
+  })
   @IsOptional()
   @IsDateString()
   startDate?: string;
@@ -123,4 +129,3 @@ export class GetTopSprayersDto {
   @IsBoolean()
   includeAnonymous?: boolean;
 }
-

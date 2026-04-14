@@ -8,4 +8,3 @@ import { DatabaseModule } from '../database/database.module.js';
   exports: [ConfigService],
 })
 export class ConfigModule {}
-

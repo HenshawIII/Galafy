@@ -43,12 +43,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
             throw new UnauthorizedException('Authentication failed. Please log in again.');
         }
       }
-      
+
       // If there's an error but no info, it might be a different type of error
       if (err) {
         throw err;
       }
-      
+
       // Default case: no user and no specific error info
       throw new UnauthorizedException('Authentication required. Please provide a valid authentication token.');
     }
@@ -56,4 +56,3 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     return user;
   }
 }
-

@@ -154,4 +154,3 @@ export class ProviderWalletHistoryResponseDto {
   page?: number;
   limit?: number;
 }
-

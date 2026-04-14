@@ -36,4 +36,3 @@ export class RejectKycDto {
   @IsString()
   reason: string;
 }
-

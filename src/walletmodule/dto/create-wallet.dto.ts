@@ -3,7 +3,10 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateWalletDto {
-  @ApiProperty({ example: '45852f0c-84fa-410c-b66c-1ffec56e5cd8', description: 'Currency ID (defaults to NGN if not provided)' })
+  @ApiProperty({
+    example: 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9',
+    description: 'Currency ID (defaults to NGN if not provided)',
+  })
   @IsString({ message: 'Currency ID must be a string' })
   @IsOptional()
   currencyId?: string;
@@ -85,4 +88,3 @@ export class CreateWalletDto {
   @IsString({ message: 'Browser must be a string' })
   browser?: string;
 }
-

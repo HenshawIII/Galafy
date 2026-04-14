@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsDateString, IsEmail, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsDateString, IsEmail } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { KycTier } from '../../users/dto/create-user-dto.js';
 
@@ -8,15 +8,15 @@ export class CreateCustomerDto {
   @IsNotEmpty({ message: 'User ID is required' })
   userId: string;
 
-  @ApiProperty({ example: 'John', description: 'First name' })
+  @ApiPropertyOptional({ example: 'John', description: 'First name' })
+  @IsOptional()
   @IsString({ message: 'First name must be a string' })
-  @IsNotEmpty({ message: 'First name is required' })
-  firstName: string;
+  firstName?: string;
 
-  @ApiProperty({ example: 'Doe', description: 'Last name' })
+  @ApiPropertyOptional({ example: 'Doe', description: 'Last name' })
+  @IsOptional()
   @IsString({ message: 'Last name must be a string' })
-  @IsNotEmpty({ message: 'Last name is required' })
-  lastName: string;
+  lastName?: string;
 
   @ApiPropertyOptional({ example: 'Middle', description: 'Middle name' })
   @IsOptional()
@@ -48,21 +48,6 @@ export class CreateCustomerDto {
   @IsEmail({}, { message: 'Invalid email format' })
   emailAddress?: string;
 
-  @ApiPropertyOptional({ example: 'org-uuid-here', description: 'Organization ID' })
-  @IsOptional()
-  @IsString({ message: 'Organization ID must be a string' })
-  organizationId?: string;
-
-  @ApiPropertyOptional({ example: 'c92d5158-a4c5-4418-83f7-a813d3989a85', description: 'Customer type ID' })
-  @IsOptional()
-  @IsString({ message: 'Customer type ID must be a string' })
-  customerTypeId?: string;
-
-  @ApiPropertyOptional({ example: '4aa9d59e-04e7-4984-9794-85a55489d433', description: 'Country ID' })
-  @IsOptional()
-  @IsString({ message: 'Country ID must be a string' })
-  countryId?: string;
-
   @ApiPropertyOptional({ enum: KycTier, example: KycTier.Tier_0, description: 'KYC Tier', default: KycTier.Tier_0 })
   @IsOptional()
   @IsEnum(KycTier, {
@@ -70,4 +55,3 @@ export class CreateCustomerDto {
   })
   tier?: KycTier;
 }
-

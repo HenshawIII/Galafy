@@ -1,5 +1,4 @@
-import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
   ProviderCreateCustomerRequestDto,
   ProviderUpdateCustomerNameRequestDto,
@@ -8,12 +7,6 @@ import {
   ProviderCustomerKycStatusResponseDto,
 } from './dto/provider-customer.dto.js';
 import {
-  ProviderCreateWalletRequestDto,
-  ProviderWalletToWalletTransferRequestDto,
-  ProviderWalletResponseDto,
-  ProviderWalletHistoryResponseDto,
-} from './dto/provider-wallet.dto.js';
-import {
   ProviderNinVerificationRequestDto,
   ProviderBvnVerificationRequestDto,
   ProviderAddressVerificationRequestDto,
@@ -21,6 +14,20 @@ import {
   ProviderBvnVerificationResponseDto,
   ProviderAddressVerificationResponseDto,
 } from './dto/provider-kyc.dto.js';
+import type {
+  AlatTier1Request,
+  AlatTier1Response,
+  AlatTier2Request,
+  AlatTier2Response,
+  AlatCountryModel,
+  AlatCountryItem,
+  AlatStateItem,
+  AlatLgaItem,
+  AlatCityItem,
+  AlatGetDropDownListResponse,
+  AlatPartnershipAccountDetails,
+  AlatGetPartnershipAccountDetailsResponse,
+} from './dto/provider-alat.dto.js';
 import { config } from 'dotenv';
 config();
 
@@ -28,22 +35,188 @@ config();
 export class ProviderService {
   private readonly logger = new Logger(ProviderService.name);
   private readonly baseUrl: string;
-  private readonly payoutBaseUrl: string;
   private readonly apiKey: string;
   private readonly organizationId: string;
+  private readonly kycBaseUrl: string;
+  private readonly kycSubscriptionKey: string;
+  /** Cache for Alat GetDropDownList (countryModel). TTL 1 hour. */
+  private dropdownCache: { data: AlatCountryModel; expiresAt: number } | null = null;
+  private static readonly DROPDOWN_CACHE_TTL_MS = 60 * 60 * 1000;
+
+  /** Returned to API clients when the upstream partner returns 5xx or is unreachable (do not echo partner 500 as our 500). */
+  static readonly CLIENT_PARTNER_UNAVAILABLE_MESSAGE =
+    'Our partner service is temporarily unavailable. Please try again in a few minutes.';
 
   constructor() {
     this.baseUrl = process.env.PROVIDER_BASE_URL || '';
-    this.payoutBaseUrl = process.env.PROVIDER_PAYOUT_BASE_URL || '';
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     this.organizationId = process.env.PROVIDER_ORGANIZATION_ID || '';
+    this.kycBaseUrl = process.env.PROVIDER_KYC_BASE_URL || 'https://apiplayground.alat.ng/create-account-face/api';
+    this.kycSubscriptionKey = process.env.PROVIDER_KYC_SUBSCRIPTION_KEY || '';
 
     if (!this.baseUrl || !this.apiKey || !this.organizationId) {
       this.logger.warn('Provider configuration is incomplete. Some features may not work.');
     }
 
-    if (!this.payoutBaseUrl) {
-      this.logger.warn('Payout base URL is not configured. Payout-related features (banks, transfers, etc.) may not work.');
+    const debitAccess = process.env.PROVIDER_DEBIT_WALLET_ACCESS_KEY || this.apiKey;
+    const debitApim = process.env.PROVIDER_DEBIT_WALLET_APIM_KEY || this.kycSubscriptionKey;
+    if (!debitAccess || !debitApim) {
+      this.logger.warn(
+        'Debit-wallet payout features need PROVIDER_DEBIT_WALLET_ACCESS_KEY (or PROVIDER_API_KEY) and PROVIDER_DEBIT_WALLET_APIM_KEY (or PROVIDER_KYC_SUBSCRIPTION_KEY).',
+      );
+    }
+
+    if (!this.kycSubscriptionKey) {
+      this.logger.warn('PROVIDER_KYC_SUBSCRIPTION_KEY is not set. ALAT KYC endpoints may not work.');
+    }
+  }
+
+  /**
+   * Map upstream HTTP errors for client responses: partner 5xx → 503 + safe message (details only in logs).
+   */
+  private throwForUpstreamHttpError(
+    response: Response,
+    parsedBody: unknown,
+    logLabel: string,
+  ): void {
+    if (response.ok) {
+      return;
+    }
+    const status = response.status;
+    const detail =
+      typeof parsedBody === 'object' && parsedBody !== null
+        ? JSON.stringify(parsedBody)
+        : String(parsedBody ?? '');
+    if (status >= 500) {
+      this.logger.error(`${logLabel}: upstream HTTP ${status} ${detail}`);
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    const body = parsedBody as { message?: string; error?: string } | null;
+    const msg = body?.message || body?.error || `${logLabel} request failed`;
+    throw new HttpException(msg, status || HttpStatus.BAD_REQUEST);
+  }
+
+  private buildDebitWalletUrl(path: string): string {
+    const base = (
+      process.env.PROVIDER_DEBIT_WALLET_BASE_URL || 'https://apiplayground.alat.ng/debit-wallet/api'
+    ).replace(/\/$/, '');
+    const p = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${p}`;
+  }
+
+  private getDebitWalletAccessKey(): string {
+    return process.env.PROVIDER_DEBIT_WALLET_ACCESS_KEY || this.apiKey;
+  }
+
+  private getDebitWalletApimKey(): string {
+    return process.env.PROVIDER_DEBIT_WALLET_APIM_KEY || this.kycSubscriptionKey;
+  }
+
+  private debitWalletErrorMessage(parsed: unknown): string {
+    if (typeof parsed !== 'object' || parsed === null) {
+      return 'Debit-wallet request failed';
+    }
+    const o = parsed as { errorMessage?: string; errorMessages?: string[] };
+    if (typeof o.errorMessage === 'string' && o.errorMessage.trim()) {
+      return o.errorMessage;
+    }
+    const first = o.errorMessages?.find((m) => typeof m === 'string' && m.trim());
+    return first || 'Debit-wallet request failed';
+  }
+
+  private isRecord(v: unknown): v is Record<string, unknown> {
+    return typeof v === 'object' && v !== null;
+  }
+
+  /**
+   * ALAT debit-wallet API: `access` + `Ocp-Apim-Subscription-Key`, JSON envelope with `result` / `hasError`.
+   */
+  private async makeDebitWalletRequest<T>(
+    pathOrOptions: string | { absoluteUrl: string },
+    method: 'GET' | 'POST',
+    options?: {
+      body?: unknown;
+      /** Defaults to application/json-patch+json for POST when omitted */
+      contentType?: string;
+      logLabel?: string;
+    },
+  ): Promise<T> {
+    const url = typeof pathOrOptions === 'string' ? this.buildDebitWalletUrl(pathOrOptions) : pathOrOptions.absoluteUrl;
+    const logLabel = options?.logLabel ?? 'Debit-wallet API';
+    const access = this.getDebitWalletAccessKey();
+    const apim = this.getDebitWalletApimKey();
+    const headers: Record<string, string> = {
+      access,
+      'Cache-Control': 'no-cache',
+      'Ocp-Apim-Subscription-Key': apim,
+    };
+    if (method === 'POST') {
+      headers['Content-Type'] = options?.contentType ?? 'application/json-patch+json';
+    }
+
+    try {
+      this.logger.debug(`Making ${method} ${logLabel}: ${url}`);
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: method === 'POST' && options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+      });
+
+      const responseText = await response.text();
+      if (!responseText || responseText.trim().length === 0) {
+        this.logger.error(`${logLabel} empty response. HTTP ${response.status}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException(`${logLabel} returned an empty response`, response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      let data: unknown;
+      try {
+        data = JSON.parse(responseText) as unknown;
+      } catch {
+        this.logger.error(`${logLabel} invalid JSON: ${responseText.substring(0, 200)}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid response from payment partner', HttpStatus.BAD_REQUEST);
+      }
+
+      if (!response.ok) {
+        const detail = typeof data === 'string' ? data.substring(0, 500) : JSON.stringify(data);
+        if (response.status >= 500) {
+          this.logger.error(`${logLabel}: upstream HTTP ${response.status} ${detail}`);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        const msg =
+          this.isRecord(data) && ('errorMessage' in data || 'errorMessages' in data)
+            ? this.debitWalletErrorMessage(data)
+            : this.isRecord(data) && typeof data.message === 'string'
+              ? data.message
+              : this.isRecord(data) && typeof data.error === 'string'
+                ? data.error
+                : `${logLabel} request failed`;
+        throw new HttpException(msg, response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      if (this.isRecord(data) && data.hasError === true) {
+        const msg = this.debitWalletErrorMessage(data);
+        this.logger.error(`${logLabel} hasError: ${JSON.stringify(data)}`);
+        throw new BadRequestException(msg);
+      }
+
+      if (this.isRecord(data) && 'result' in data) {
+        return data.result as T;
+      }
+
+      this.logger.warn(`${logLabel}: response missing result envelope, returning parsed body`);
+      return data as T;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(`${logLabel} failed: ${(error as Error)?.message ?? String(error)}`);
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 
@@ -75,13 +248,16 @@ export class ProviderService {
 
       // Get response text first to check if it's empty
       const responseText = await response.text();
-      
+
       // Check if response is empty
       if (!responseText || responseText.trim().length === 0) {
         this.logger.error(`Provider API returned empty response. Status: ${response.status}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
         throw new HttpException(
           'Provider API returned empty response',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          response.status || HttpStatus.BAD_REQUEST,
         );
       }
 
@@ -91,19 +267,13 @@ export class ProviderService {
         data = JSON.parse(responseText);
       } catch (parseError) {
         this.logger.error(`Failed to parse JSON response.Response text: ${responseText.substring(0, 200)}`);
-        throw new HttpException(
-          'Invalid JSON response from provider API',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid JSON response from provider API', HttpStatus.BAD_REQUEST);
       }
 
-      if (!response.ok) {
-        this.logger.error(`Provider API error (${response.status}): ${JSON.stringify(data)}`);
-        throw new HttpException(
-          data.message || data.error || 'Provider API request failed',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
+      this.throwForUpstreamHttpError(response, data, 'Provider API');
 
       return data as T;
     } catch (error) {
@@ -112,31 +282,27 @@ export class ProviderService {
       }
       this.logger.error(`Provider API request failed: ${error.message}`);
       this.logger.error(`Stack trace: ${error.stack}`);
-      throw new HttpException(
-        `Failed to communicate with provider service: ${error.message}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 
   /**
-   * Generic method to make HTTP requests to the payout API
+   * ALAT KYC API: HTTP request with Ocp-Apim-Subscription-Key
+   * Normalizes status/code/errors and throws on failure (409 for duplicate).
    */
-  private async makePayoutRequest<T>(
-    endpoint: string,
-    method: 'GET' | 'POST' | 'PATCH' | 'PUT' = 'GET',
-    body?: any,
-  ): Promise<T> {
-    const url = `${this.payoutBaseUrl}${endpoint}`;
+  private async makeKycRequest<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', body?: any): Promise<T> {
+    const url = endpoint.startsWith('http') ? endpoint : `${this.kycBaseUrl}${endpoint}`;
     const headers: Record<string, string> = {
       'x-api-key': this.apiKey,
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Ocp-Apim-Subscription-Key': this.kycSubscriptionKey,
     };
 
     try {
-      this.logger.debug(`Making ${method} request to payout API: ${url}`);
+      this.logger.debug(`Making ${method} request to KYC API: ${url}`);
       if (body) {
-        this.logger.debug(`Request body: ${JSON.stringify(body)}`);
+        this.logger.debug(`Request body: ${JSON.stringify(body).substring(0, 200)}...`);
       }
 
       const response = await fetch(url, {
@@ -145,49 +311,48 @@ export class ProviderService {
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      // Get response text first to check if it's empty
       const responseText = await response.text();
-      
-      // Check if response is empty
       if (!responseText || responseText.trim().length === 0) {
-        this.logger.error(`Payout API returned empty response. Status: ${response.status}`);
-        throw new HttpException(
-          'Payout API returned empty response',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+        this.logger.error(`KYC API returned empty response. Status: ${response.status}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('KYC API returned empty response', response.status || HttpStatus.BAD_REQUEST);
       }
 
-      // Try to parse JSON
       let data: any;
       try {
         data = JSON.parse(responseText);
-      } catch (parseError) {
-        this.logger.error(`Failed to parse JSON response. Response text: ${responseText.substring(0, 200)}`);
-        throw new HttpException(
-          'Invalid JSON response from payout API',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+      } catch {
+        this.logger.error(`Invalid JSON from KYC API: ${responseText.substring(0, 200)}`);
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid JSON response from KYC API', HttpStatus.BAD_REQUEST);
       }
 
-      if (!response.ok) {
-        this.logger.error(`Payout API error (${response.status}): ${JSON.stringify(data)}`);
-        throw new HttpException(
-          data.message || data.error || 'Payout API request failed',
-          response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+      const success =
+        data.status === true ||
+        data.statusCode === 100 ||
+        data.statusCode === 200 ||
+        (typeof data.countryModel !== 'undefined' && data.countryModel != null);
+      if (!success) {
+        const msg = data.message || data.errors?.[0] || 'KYC API request failed';
+        const isDuplicate =
+          typeof msg === 'string' &&
+          (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
+        if (response.status >= 500) {
+          this.logger.error(`KYC API HTTP ${response.status}: ${JSON.stringify(data)}`);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : response.status || HttpStatus.BAD_REQUEST);
       }
 
       return data as T;
     } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      this.logger.error(`Payout API request failed: ${error.message}`);
-      this.logger.error(`Stack trace: ${error.stack}`);
-      throw new HttpException(
-        `Failed to communicate with payout service: ${error.message}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`KYC API request failed: ${error.message}`);
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 
@@ -195,10 +360,9 @@ export class ProviderService {
 
   /**
    * Create a new customer in the provider system
+   * @deprecated Use ALAT flow: create customer locally (Tier 0), then startTier1 + face callback
    */
-  async createCustomer(
-    requestDto: ProviderCreateCustomerRequestDto,
-  ): Promise<{ customerId: string }> {
+  async createCustomer(requestDto: ProviderCreateCustomerRequestDto): Promise<{ customerId: string }> {
     const body = {
       organizationId: this.organizationId,
       ...requestDto,
@@ -210,7 +374,7 @@ export class ProviderService {
       code?: string;
       success?: boolean;
       message: string;
-      data?: { 
+      data?: {
         id?: string;
         customerId?: string;
         [key: string]: any;
@@ -222,9 +386,9 @@ export class ProviderService {
     // Check various possible status code formats
     const statusCode = response.statuscode || response.statusCode || response.code;
     const statusCodeStr = statusCode ? String(statusCode) : '';
-    const isSuccess = 
-      statusCodeStr === '00' || 
-      statusCodeStr === '200' || 
+    const isSuccess =
+      statusCodeStr === '00' ||
+      statusCodeStr === '200' ||
       (typeof statusCode === 'number' && statusCode === 200) ||
       response.success === true ||
       response.message?.toLowerCase().includes('success');
@@ -234,10 +398,7 @@ export class ProviderService {
 
     if (!isSuccess || !customerId) {
       this.logger.error(`Failed to create customer. Response: ${JSON.stringify(response)}`);
-      throw new HttpException(
-        response.message || 'Failed to create customer',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException(response.message || 'Failed to create customer', HttpStatus.BAD_REQUEST);
     }
 
     return { customerId };
@@ -334,6 +495,7 @@ export class ProviderService {
 
   /**
    * Upgrade customer KYC with NIN (Tier 1)
+   * @deprecated Use ALAT tier2PartnershipWithoutOtpV2 for Tier 2 (NIN + address + face)
    */
   async upgradeCustomerWithNin(
     requestDto: ProviderNinVerificationRequestDto,
@@ -353,17 +515,14 @@ export class ProviderService {
       dob: requestDto.dob,
     };
 
-    const response = await this.makeRequest<ProviderNinVerificationResponseDto>(
-      endpoint,
-      'POST',
-      body,
-    );
+    const response = await this.makeRequest<ProviderNinVerificationResponseDto>(endpoint, 'POST', body);
 
     return response;
   }
 
   /**
    * Upgrade customer KYC with BVN (Tier 2)
+   * @deprecated Use ALAT tier1BvnWithoutOtpV2 + face callback for Tier 1
    */
   async upgradeCustomerWithBvn(
     requestDto: ProviderBvnVerificationRequestDto,
@@ -384,6 +543,7 @@ export class ProviderService {
 
   /**
    * Verify customer address (Tier 3)
+   * @deprecated Use ALAT Tier 2 flow (residential address in tier2PartnershipWithoutOtpV2)
    */
   async verifyCustomerAddress(
     requestDto: ProviderAddressVerificationRequestDto,
@@ -404,540 +564,229 @@ export class ProviderService {
     return response;
   }
 
-  // ==================== UTILITY OPERATIONS ====================
+  // ==================== ALAT KYC (create-account-face) ====================
 
   /**
-   * Get all countries
+   * Tier 1: Generate customer with BVN (no OTP). Face verification completes via callback.
    */
-  async getCountries(): Promise<Array<{ id: string; name: string; countryCodeTwo: string; countryCodeThree: string }>> {
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data: Array<{ id: string; name: string; countryCodeTwo: string; countryCodeThree: string }>;
-    }>('/api/v1/utilities/countries/get', 'GET');
-
-    return response.data || [];
+  async tier1BvnWithoutOtpV2(body: AlatTier1Request): Promise<AlatTier1Response> {
+    return this.makeKycRequest<AlatTier1Response>('/partnership/tier1-bvn-withoutOtp-v2', 'POST', body);
   }
 
   /**
-   * Get all customer types
+   * Tier 2: Partnership account with NIN + address + live face image.
    */
-  async getCustomerTypes(): Promise<Array<{ id: string; name: string }>> {
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data: Array<{ id: string; name: string }>;
-    }>('/api/v1/customers/types/all', 'GET');
-
-    return response.data || [];
-  }
-
-  // ==================== WALLET OPERATIONS ====================
-
-  /**
-   * Create a new wallet
-   */
-  async createWallet(requestDto: ProviderCreateWalletRequestDto): Promise<ProviderWalletResponseDto> {
-    const body = {
-      ...requestDto,
-      customerId: requestDto.customerId, // This should be the provider customer ID
-    };
-
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data: {
-        id: string;
-        walletGroupId: string | null;
-        customerId: string;
-        availableBalance: number;
-        ledgerBalance: number;
-        walletRestrictionId: string | null;
-        walletClassificationId: string;
-        currencyId: string;
-        isInternal: boolean;
-        isDefault: boolean;
-        name: string;
-        overdraft: number | null;
-        virtualAccount: {
-          accountNumber: string;
-          bankCode: string;
-          bankName: string;
-        };
-        mobNum: string | null;
-        customerTypeId: string;
-      };
-    }>('/api/v1/wallets/add', 'POST', body);
-
-    // console.log('Wallet creation response:', response);
-
-    return {
-      walletId: response.data.id,
-      virtualAccount: response.data.virtualAccount,
-      mobNum: response.data.mobNum || undefined,
-      walletClassificationId: response.data.walletClassificationId,
-    };
+  async tier2PartnershipWithoutOtpV2(body: AlatTier2Request): Promise<AlatTier2Response> {
+    return this.makeKycRequest<AlatTier2Response>('/partnership/tier2-partnershipaccount-withoutOtp-v2', 'POST', body);
   }
 
   /**
-   * Get wallet by account number
+   * Get dropdown reference data: countries, states, LGAs, LCDAs, cities, housing types.
    */
-  async getWalletByAccountNumber(accountNumber: string): Promise<{
-    accountNumber: string;
-    walletId: string;
-    availableBalance: number;
-    ledgerBalance: number;
-    currency: string;
-    status: string;
-  }> {
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data: {
-        accountNumber: string;
-        walletId: string;
-        availableBalance: number;
-        ledgerBalance: number;
-        currency: string;
-        status: string;
-      };
-    }>(`/api/v1/wallets/get/wallet/account/${accountNumber}`, 'GET');
+  async getDropDownList(): Promise<AlatCountryModel> {
+    const res = await this.makeKycRequest<AlatGetDropDownListResponse>('/CustomerInfo/GetDropDownList', 'GET');
+    if (!res.countryModel) {
+      throw new HttpException('GetDropDownList returned no countryModel', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    return res.countryModel;
+  }
 
-    return response.data;
+  /** Get cached country model (fetches and caches with 1h TTL). Used by KYC reference methods. */
+  private async getCachedCountryModel(): Promise<AlatCountryModel> {
+    const now = Date.now();
+    if (this.dropdownCache && this.dropdownCache.expiresAt > now) {
+      return this.dropdownCache.data;
+    }
+    const data = await this.getDropDownList();
+    this.dropdownCache = { data, expiresAt: now + ProviderService.DROPDOWN_CACHE_TTL_MS };
+    return data;
   }
 
   /**
-   * Wallet to wallet transfer
+   * Get countries from KYC dropdown (for Tier 2 address). Uses cached GetDropDownList.
    */
-  async walletToWalletTransfer(
-    requestDto: ProviderWalletToWalletTransferRequestDto,
-  ): Promise<{ success: boolean; message: string; data?: any }> {
-    const body = {
-      fromAccount: requestDto.fromWalletId,
-      toAccount: requestDto.toWalletId,
-      amount: requestDto.amount,
-      transactionReference: requestDto.reference || `TXN-${randomUUID()}`,
-      remarks: requestDto.description || '',
-      transactionTypeId: 1, // Default transaction type, adjust as needed
-    };
-
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data?: any;
-    }>('/api/v1/wallets/wallet/transaction/v2/wallet-to-wallet', 'PUT', body);
-
-    // console.log('Wallet to wallet transfer response:', response);
-
-    return {
-      success: response.success || response.code === '200',
-      message: response.message,
-      data: response.data,
-    };
+  async getKycCountries(): Promise<AlatCountryItem[]> {
+    const model = await this.getCachedCountryModel();
+    return model.countryList ?? [];
   }
 
   /**
-   * Get wallet transaction history by account number
+   * Get states from KYC dropdown (mostly Nigeria). Uses cached GetDropDownList.
    */
-  async getWalletHistoryByAccountNumber(
-    accountNumber: string,
-    fromDate: string,
-    toDate: string,
-    pageNumber?: number,
-    pageSize?: number,
-  ): Promise<ProviderWalletHistoryResponseDto> {
-    const queryParams = new URLSearchParams();
-    queryParams.append('AccountNumber', accountNumber);
-    queryParams.append('From', fromDate);
-    queryParams.append('To', toDate);
-    if (pageNumber) queryParams.append('PageNumber', pageNumber.toString());
-    if (pageSize) queryParams.append('PageSize', pageSize.toString());
-
-    const queryString = queryParams.toString();
-    const endpoint = `/api/v1/wallets/account-number/history${queryString ? `?${queryString}` : ''}`;
-
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data: {
-        walletHistories: Array<{
-          id: string;
-          walletId: string;
-          productId: string;
-          remarks: string;
-          amount: number;
-          debitCreditIndicator: string;
-          balance: number;
-          transactionReference: string;
-          transactionId: string;
-          isActive: boolean;
-          dateCreated: string;
-          mobileNumber: string;
-          accountNumber: string;
-          name: string | null;
-        }>;
-        totalCount: number;
-        totalPages: number;
-        currentPage: number;
-        pageSize: number;
-      };
-    }>(endpoint, 'GET');
-
-    return {
-      transactions: response.data.walletHistories.map((tx) => ({
-        id: tx.id,
-        type: tx.debitCreditIndicator,
-        amount: tx.amount,
-        balance: tx.balance,
-        description: tx.remarks,
-        reference: tx.transactionReference,
-        timestamp: tx.dateCreated,
-      })),
-      total: response.data.totalCount,
-      page: response.data.currentPage,
-      limit: response.data.pageSize,
-    };
+  async getKycStates(): Promise<AlatStateItem[]> {
+    const model = await this.getCachedCountryModel();
+    return model.stateList ?? [];
   }
 
   /**
-   * Get wallet by ID
+   * Get LGAs by state (stateId from stateList). Uses cached GetDropDownList.
    */
-  async getWalletById(walletId: string): Promise<{
-    id: string;
-    walletGroupId: string;
-    customerId: string;
-    availableBalance: number;
-    ledgerBalance: number;
-    walletRestrictionId: string | null;
-    walletClassificationId: string;
-    currencyId: string;
-    isInternal: boolean;
-    isDefault: boolean;
-    name: string;
-    overdraft: number | null;
-    virtualAccount: {
-      accountNumber: string;
-      bankCode: string;
-      bankName: string;
-    };
-    mobNum: string | null;
-    customerTypeId: string;
-  }> {
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data: {
-        id: string;
-        walletGroupId: string;
-        customerId: string;
-        availableBalance: number;
-        ledgerBalance: number;
-        walletRestrictionId: string | null;
-        walletClassificationId: string;
-        currencyId: string;
-        isInternal: boolean;
-        isDefault: boolean;
-        name: string;
-        overdraft: number | null;
-        virtualAccount: {
-          accountNumber: string;
-          bankCode: string;
-          bankName: string;
-        };
-        mobNum: string | null;
-        customerTypeId: string;
-      };
-    }>(`/api/v1/wallets/get/wallet/${walletId}`, 'GET');
-
-    return response.data;
+  async getKycLgaByState(stateId: number): Promise<AlatLgaItem[]> {
+    const model = await this.getCachedCountryModel();
+    const list = model.lgaList ?? [];
+    return list.filter((l) => l.stateId === stateId);
   }
 
   /**
-   * Get organization wallet transactions
+   * Get cities by state (stateId from stateList). Uses cached GetDropDownList.
    */
-  async getOrganizationWalletTransactions(page?: number, pageSize?: number): Promise<{
-    walletHistories: Array<{
-      id: string;
-      walletId: string;
-      productId: string;
-      remarks: string;
-      amount: number;
-      debitCreditIndicator: string;
-      balance: number;
-      transactionReference: string;
-      transactionId: string;
-      isActive: boolean;
-      dateCreated: string;
-      mobileNumber: string;
-      accountNumber: string;
-      name: string;
-    }>;
-    totalCount: number;
-    totalPages: number;
-    currentPage: number;
-    pageSize: number;
-  }> {
-    const queryParams = new URLSearchParams();
-    if (page) queryParams.append('page', page.toString());
-    if (pageSize) queryParams.append('pageSize', pageSize.toString());
-
-    const queryString = queryParams.toString();
-    const endpoint = `/api/v1/wallets/history/organization/transactions${queryString ? `?${queryString}` : ''}`;
-
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data: {
-        walletHistories: Array<{
-          id: string;
-          walletId: string;
-          productId: string;
-          remarks: string;
-          amount: number;
-          debitCreditIndicator: string;
-          balance: number;
-          transactionReference: string;
-          transactionId: string;
-          isActive: boolean;
-          dateCreated: string;
-          mobileNumber: string;
-          accountNumber: string;
-          name: string;
-        }>;
-        totalCount: number;
-        totalPages: number;
-        currentPage: number;
-        pageSize: number;
-      };
-    }>(endpoint, 'GET');
-
-    return response.data;
+  async getKycCityByState(stateId: number): Promise<AlatCityItem[]> {
+    const model = await this.getCachedCountryModel();
+    const list = model.cityList ?? [];
+    return list.filter((c) => c.stateId === stateId);
   }
 
   /**
-   * Wallet to wallet requery
+   * Get partnership account details (optional phoneNumber query).
+   * Throws on API error; returns data or null if response has no data.
    */
-  async walletToWalletRequery(transactionReference: string): Promise<{
-    code: string;
-    success: boolean;
-    message: string;
-    data?: any;
-  }> {
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data?: any;
-    }>(`/api/v1/wallets/wallet/transaction/wallet-to-wallet/status/${transactionReference}`, 'GET');
-
-    return response;
+  async getPartnershipAccountDetails(phoneNumber?: string): Promise<AlatPartnershipAccountDetails | null> {
+    const endpoint = phoneNumber
+      ? `/CustomerAccount/GetPartnershipAccountDetails?phoneNumber=${encodeURIComponent(phoneNumber)}`
+      : '/CustomerAccount/GetPartnershipAccountDetails';
+    const res = await this.makeKycRequest<AlatGetPartnershipAccountDetailsResponse>(endpoint, 'GET');
+    return res.data ?? null;
   }
 
-  /**
-   * Reverse transaction
-   */
-  async reverseTransaction(transactionReference: string): Promise<{
-    code: string;
-    success: boolean;
-    message: string;
-    data?: any;
-  }> {
-    const body = {
-      transactionReference,
-      organizationId: this.organizationId,
-    };
-
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data?: any;
-    }>('/api/v1/wallets/wallet/transaction/reverse', 'PUT', body);
-
-    return response;
-  }
+  // ==================== DEBIT-WALLET (payouts: banks, enquiry, transfer) ====================
 
   /**
-   * Close wallet
-   */
-  async closeWallet(
-    accountNumber: string,
-    accountClosureReasonId: number,
-    tellerId: number,
-    closeOrDelete: boolean,
-    customerOrAccount: boolean,
-  ): Promise<{
-    code: string;
-    success: boolean;
-    message: string;
-    data?: any;
-  }> {
-    const body = {
-      accountNumber,
-      accountClosureReasonId,
-      tellerId,
-      closeOrDelete,
-      customerOrAccount,
-    };
-
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data?: any;
-    }>('/api/v1/wallets/close', 'POST', body);
-
-    return response;
-  }
-
-  /**
-   * Restrict wallet by account ID
-   */
-  async restrictByAccountId(accountId: string, restrictionType: string): Promise<{
-    code: string;
-    success: boolean;
-    message: string;
-    data?: any;
-  }> {
-    const response = await this.makeRequest<{
-      code: string;
-      success: boolean;
-      message: string;
-      data?: any;
-    }>(`/api/v1/wallets/wallet/restrict/account/${accountId}/type/${restrictionType}`, 'PATCH');
-
-    return response;
-  }
-
-  // ==================== PAYOUT OPERATIONS ====================
-
-  /**
-   * Get banks available for payouts
+   * Get banks available for payouts (debit-wallet Shared API).
    */
   async getBanks(): Promise<Array<{ bankcode: string; bankname: string }>> {
-    const response = await this.makePayoutRequest<{
-      data: Array<{ bankCode: string; bankName: string }>;
-      statusCode: number;
-      message: string;
-      succeeded: boolean;
-    }>('/api/Payout/banks', 'GET');
-
-    // Map the response from camelCase (bankCode, bankName) to lowercase (bankcode, bankname)
-    if (!response.data || !Array.isArray(response.data)) {
-      return [];
+    const rows = await this.makeDebitWalletRequest<Array<{ bankName: string; bankCode: string; bankLogo?: string }>>(
+      '/Shared/GetAllBanks',
+      'GET',
+      { logLabel: 'Debit-wallet GetAllBanks' },
+    );
+    const list = Array.isArray(rows) ? rows : [];
+    const seen = new Set<string>();
+    const out: Array<{ bankcode: string; bankname: string }> = [];
+    for (const bank of list) {
+      const code = bank.bankCode?.trim();
+      if (!code || seen.has(code)) {
+        continue;
+      }
+      seen.add(code);
+      out.push({ bankcode: code, bankname: bank.bankName || code });
     }
-
-    return response.data.map(bank => ({
-      bankcode: bank.bankCode,
-      bankname: bank.bankName,
-    }));
+    return out;
   }
 
   /**
-   * Bank account name enquiry
+   * Destination account name enquiry (bank code + account number).
    */
-  async bankAccountNameEnquiry(bankCode: string, accountNumber: string): Promise<{
+  async bankAccountNameEnquiry(
+    bankCode: string,
+    accountNumber: string,
+  ): Promise<{
     destinationBankCode: string;
     accountNumber: string;
     accountName: string;
   }> {
-    const body = {
-      bankCode,
-      accountNumber,
+    const bc = encodeURIComponent(bankCode);
+    const an = encodeURIComponent(accountNumber);
+    const result = await this.makeDebitWalletRequest<{
+      bankCode: string;
+      accountName: string;
+      accountNumber: string;
+      currency?: string;
+    }>(`/Shared/AccountNameEnquiry/${bc}/${an}`, 'GET', { logLabel: 'Debit-wallet AccountNameEnquiry' });
+
+    return {
+      destinationBankCode: result.bankCode,
+      accountNumber: result.accountNumber,
+      accountName: result.accountName,
     };
-
-    const response = await this.makePayoutRequest<{
-      data: {
-        destinationBankCode: string;
-        accountNumber: string;
-        accountName: string;
-      };
-      statusCode: number;
-      code: string | null;
-      message: string;
-      succeeded: boolean;
-    }>('/api/Payout/name-enquiry', 'POST', body);
-
-    if (!response.succeeded) {
-      throw new HttpException(
-        response.message || 'Name enquiry failed',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    return response.data;
   }
 
   /**
-   * Inter bank transfer (payout)
+   * Wallet (managed) account name enquiry — e.g. validate source wallet virtual account.
    */
-  async interBankTransfer(request: {
+  async walletAccountNameEnquiry(accountNumber: string): Promise<{
+    bankCode: string;
+    accountName: string;
+    accountNumber: string;
+    currency?: string;
+  }> {
+    const enc = encodeURIComponent(accountNumber);
+    return this.makeDebitWalletRequest(`/Shared/AccountNameEnquiry/Wallet/${enc}`, 'GET', {
+      logLabel: 'Debit-wallet AccountNameEnquiry Wallet',
+    });
+  }
+
+  /**
+   * NIP interbank charge bands + terms (for future fee UI).
+   */
+  async getNIPCharges(): Promise<{
+    chargeFees: Array<{
+      id: number;
+      chargeFeeName: string;
+      transactionType: number;
+      charge: number;
+      lower: number;
+      upper: number;
+    }>;
+    termsAndConditions?: string;
+    termsAndConditionsUrl?: string;
+  }> {
+    return this.makeDebitWalletRequest('/Shared/GetNIPCharges', 'GET', { logLabel: 'Debit-wallet GetNIPCharges' });
+  }
+
+  /**
+   * Poll transfer status by client transaction reference (reconciliation / support).
+   */
+  async confirmClientTransferStatus(clientTransactionReference: string): Promise<{
+    title?: string;
+    message?: string;
+    data?: {
+      status?: string;
+      message?: string;
+      narration?: string;
+      transactionReference?: string;
+      platformTransactionReference?: string;
+      transactionStan?: string;
+      orinalTxnTransactionDate?: string;
+    };
+    request?: number;
+  }> {
+    const ref = encodeURIComponent(clientTransactionReference);
+    return this.makeDebitWalletRequest(`/IntraBankTransfer/ConfirmClientTransferStatus/${ref}`, 'GET', {
+      logLabel: 'Debit-wallet ConfirmClientTransferStatus',
+    });
+  }
+
+  /**
+   * Debits source wallet account and credits destination (intra or inter). Callbacks drive final settlement.
+   * Returns `result` from the provider envelope (status, platformTransactionReference, etc.).
+   */
+  async processClientTransfer(request: {
+    securityInfo: string;
+    amount: number;
     destinationBankCode: string;
+    destinationBankName: string;
     destinationAccountNumber: string;
     destinationAccountName: string;
     sourceAccountNumber: string;
-    sourceAccountName: string;
-    remarks: string;
-    amount: number;
-    currencyId: string;
-    customerTransactionReference: string;
-    webhookUrl?: string;
+    narration: string;
+    transactionReference: string;
+    useCustomNarration: boolean;
   }): Promise<{
-    transactionRef: string;
-    message: string;
+    status?: string;
+    message?: string;
+    narration?: string;
+    transactionReference?: string;
+    platformTransactionReference?: string;
+    transactionStan?: string;
+    orinalTxnTransactionDate?: string;
   }> {
-    const response = await this.makePayoutRequest<{
-      data: string; // transactionRef
-      statusCode: number;
-      message: string;
-      succeeded: boolean;
-    }>('/api/Payout/inter-bank-transfer', 'POST', request);
+    const absoluteUrl =
+      process.env.PROVIDER_DEBIT_WALLET_PROCESS_CLIENT_TRANSFER_URL ||
+      this.buildDebitWalletUrl('/Shared/ProcessClientTransfer');
 
-    console.log("response:", response);
-
-    if (!response.succeeded) {
-      throw new HttpException(
-        response.message || 'Inter bank transfer failed',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    return {
-      transactionRef: response.data,
-      message: response.message,
-    };
-  }
-
-  /**
-   * Transaction status re-query
-   */
-  async transactionStatusRequery(transactionRef: string): Promise<{
-    status: string;
-    data?: any;
-    message: string;
-  }> {
-    const response = await this.makePayoutRequest<{
-      data: {
-        status: string;
-        data?: any;
-      };
-      statusCode: number;
-      message: string;
-      succeeded: boolean;
-    }>(`/api/Payout/status/${transactionRef}`, 'GET');
-
-    return {
-      status: response.data?.status || 'unknown',
-      data: response.data?.data,
-      message: response.message,
-    };
+    return this.makeDebitWalletRequest({ absoluteUrl }, 'POST', {
+      body: request,
+      logLabel: 'Debit-wallet ProcessClientTransfer',
+    });
   }
 }

@@ -19,9 +19,4 @@ export class GetAllCustomersQueryDto {
     message: 'KYC Tier must be one of: Tier_0, Tier_1, Tier_2, Tier_3',
   })
   tier?: KycTier;
-
-  @IsOptional()
-  @IsString({ message: 'Organization ID must be a string' })
-  organizationId?: string;
 }
-

@@ -3,4 +3,3 @@ export * from './wallet-query.dto.js';
 export * from './wallet-transfer.dto.js';
 export * from './payout-security.dto.js';
 export * from './update-bank-account.dto.js';
-

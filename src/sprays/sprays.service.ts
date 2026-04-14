@@ -1,37 +1,28 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-  ForbiddenException,
-  Logger,
-  Inject,
-  forwardRef,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { CreateSprayDto } from './dto/create-spray.dto.js';
-import { LiveGateway } from '../live/live.gateway.js';
 import { ProviderService } from '../provider/provider.service.js';
-import { CacheService } from '../cache/cache.service.js';
-import { EventsService } from '../events/events.service.js';
-import { NotificationsService } from '../notifications/notifications.service.js';
-import { EventStatus } from '../../generated/prisma/enums.js';
-import { EventRole } from '../events/dto/event-enums.js';
+import { EventStatus, SprayStatus } from '../../generated/prisma/enums.js';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { WalletRiskService } from '../common/services/wallet-risk.service.js';
-import { SprayAnomalyService } from './services/spray-anomaly.service.js';
-import { AmlLoggingService } from '../common/services/aml-logging.service.js';
+import { LiveGateway } from '../live/live.gateway.js';
+import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
+import { normalizeToKobo } from '../common/utils/money.util.js';
 
 export interface SprayResult {
-  spray: any;
+  spray: any | null;
   sprayerBalance: Decimal;
   receiverBalance: Decimal;
   eventTotals: {
     totalAmount: Decimal;
     totalCount: number;
   };
+  /** When true, funds move via provider; spray row exists but may still be PENDING_PROVIDER until callback. */
+  pending?: boolean;
+  transactionRef?: string;
+  message?: string;
 }
 
 @Injectable()
@@ -40,15 +31,9 @@ export class SpraysService {
 
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly liveGateway: LiveGateway,
     private readonly providerService: ProviderService,
-    private readonly cacheService: CacheService,
-    private readonly eventsService: EventsService,
-    @Inject(forwardRef(() => NotificationsService))
-    private readonly notificationsService: NotificationsService,
-    private readonly walletRiskService: WalletRiskService,
-    private readonly sprayAnomalyService: SprayAnomalyService,
-    private readonly amlLoggingService: AmlLoggingService,
+    private readonly liveGateway: LiveGateway,
+    private readonly debitWalletMandateService: DebitWalletMandateService,
   ) {}
 
   /**
@@ -86,16 +71,70 @@ export class SpraysService {
     if (existingTransaction && existingTransaction.spray) {
       this.logger.log(`Idempotent request detected for key: ${idempotencyKey}`);
       const spray = existingTransaction.spray;
-
-      // Compute event totals
       const eventTotals = await this.computeEventTotals(eventId);
 
-      return {
-        spray,
-        sprayerBalance: spray.sprayerWallet.availableBalance,
-        receiverBalance: spray.receiverWallet.availableBalance,
-        eventTotals,
-      };
+      if (spray.status === SprayStatus.CONFIRMED) {
+        return {
+          spray,
+          sprayerBalance: spray.sprayerWallet.availableBalance,
+          receiverBalance: spray.receiverWallet.availableBalance,
+          eventTotals,
+        };
+      }
+
+      if (spray.status === SprayStatus.PENDING_PROVIDER) {
+        return {
+          spray,
+          sprayerBalance: spray.sprayerWallet.availableBalance,
+          receiverBalance: spray.receiverWallet.availableBalance,
+          eventTotals,
+          pending: true,
+          transactionRef: idempotencyKey,
+          message: 'Spray transfer is still pending provider confirmation.',
+        };
+      }
+
+      if (spray.status === SprayStatus.FAILED) {
+        throw new BadRequestException(
+          'Previous spray attempt with this idempotency key failed. Use a new Idempotency-Key to retry.',
+        );
+      }
+    }
+
+    if (existingTransaction && !existingTransaction.spray) {
+      const st = existingTransaction.status;
+      if (st === TransactionStatus.PENDING || st === TransactionStatus.PROCESSING) {
+        const meta = existingTransaction.metadata as Record<string, unknown> | null;
+        const sc = meta?.sprayCompletion as Record<string, unknown> | undefined;
+        const rwId = typeof sc?.receiverWalletId === 'string' ? sc.receiverWalletId : null;
+        if (rwId) {
+          const [sw, rw] = await Promise.all([
+            this.databaseService.wallet.findUnique({
+              where: { id: existingTransaction.walletId },
+              select: { availableBalance: true },
+            }),
+            this.databaseService.wallet.findUnique({
+              where: { id: rwId },
+              select: { availableBalance: true },
+            }),
+          ]);
+          const eventTotals = await this.computeEventTotals(eventId);
+          return {
+            spray: null,
+            sprayerBalance: sw!.availableBalance,
+            receiverBalance: rw!.availableBalance,
+            eventTotals,
+            pending: true,
+            transactionRef: idempotencyKey,
+            message: 'Spray transfer is still pending provider confirmation.',
+          };
+        }
+      }
+      if (st === TransactionStatus.FAILED) {
+        throw new BadRequestException(
+          'Previous spray attempt with this idempotency key failed. Use a new Idempotency-Key to retry.',
+        );
+      }
     }
 
     // Validate event exists and is LIVE
@@ -119,9 +158,7 @@ export class SpraysService {
     }
 
     if (event.minSprayAmount && amount.lt(event.minSprayAmount)) {
-      throw new BadRequestException(
-        `Spray amount must be at least ${event.minSprayAmount.toString()}`,
-      );
+      throw new BadRequestException(`Spray amount must be at least ${event.minSprayAmount.toString()}`);
     }
 
     // Get sprayer participant
@@ -138,9 +175,7 @@ export class SpraysService {
     });
 
     if (!sprayerParticipant) {
-      throw new ForbiddenException(
-        `User ${userId} is not a participant in event ${eventId}`,
-      );
+      throw new ForbiddenException(`User ${userId} is not a participant in event ${eventId}`);
     }
 
     // Get receiver participant (include role for notification check)
@@ -187,9 +222,7 @@ export class SpraysService {
         );
       }
     } else {
-      throw new BadRequestException(
-        'Either receiverUserId or receiverParticipantId must be provided',
-      );
+      throw new BadRequestException('Either receiverUserId or receiverParticipantId must be provided');
     }
 
     // Determine wallets
@@ -207,9 +240,7 @@ export class SpraysService {
       });
 
       if (!customer || !customer.wallets || customer.wallets.length === 0) {
-        throw new NotFoundException(
-          `No wallet found for sprayer. Please create a wallet first.`,
-        );
+        throw new NotFoundException(`No wallet found for sprayer. Please create a wallet first.`);
       }
 
       sprayerWallet = customer.wallets[0];
@@ -229,9 +260,7 @@ export class SpraysService {
       });
 
       if (!receiverCustomer || !receiverCustomer.wallets || receiverCustomer.wallets.length === 0) {
-        throw new NotFoundException(
-          `No wallet found for receiver. Please create a wallet first.`,
-        );
+        throw new NotFoundException(`No wallet found for receiver. Please create a wallet first.`);
       }
 
       receiverWallet = receiverCustomer.wallets[0];
@@ -239,9 +268,7 @@ export class SpraysService {
 
     // Ensure wallets have same currency
     if (sprayerWallet.currencyId !== receiverWallet.currencyId) {
-      throw new BadRequestException(
-        'Sprayer and receiver wallets must have the same currency',
-      );
+      throw new BadRequestException('Sprayer and receiver wallets must have the same currency');
     }
 
     // Ensure wallets have virtual account numbers (required for provider transfer)
@@ -257,514 +284,205 @@ export class SpraysService {
       );
     }
 
-    // Lock wallet and check balance BEFORE calling provider
-    // This prevents race conditions where multiple requests try to spend the same balance
-    const lockedSprayerWallet = await this.databaseService.$transaction(
-      async (tx: Prisma.TransactionClient) => {
-        // Lock sprayer wallet row to prevent double spend
-        await tx.$queryRaw`
-          SELECT id FROM "Wallet" WHERE id = ${sprayerWallet.id} FOR UPDATE
-        `;
-
-        // Re-fetch sprayer wallet with lock to get latest balance
-        const locked = await tx.wallet.findUnique({
-          where: { id: sprayerWallet.id },
-          select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
-        });
-
-        if (!locked) {
-          throw new NotFoundException('Sprayer wallet not found');
-        }
-
-        // Verify sufficient balance
-        if (locked.availableBalance.lt(amount)) {
-          throw new BadRequestException('Insufficient balance');
-        }
-
-        // Check wallet freeze status (hard freeze blocks all transactions)
-        const wallet = await tx.wallet.findUnique({
-          where: { id: sprayerWallet.id },
-          select: { riskStatus: true, riskScore: true },
-        });
-
-        if (wallet?.riskStatus === 'HARD_FREEZE') {
-          throw new BadRequestException(
-            `Wallet is hard frozen due to high risk score (${wallet.riskScore?.toString() || 'N/A'}). ` +
-            `All transactions are blocked. Please contact support.`,
-          );
-        }
-
-        return locked;
-      },
-      {
-        timeout: 5000,
-      },
-    );
-
-    // Generate group reference
-    const groupReference = randomUUID();
-
-    // Call provider service to execute the actual wallet-to-wallet transfer
-    this.logger.log(
-      `Calling provider service for wallet transfer: ${sprayerWallet.virtualAccountNumber} -> ${receiverWallet.virtualAccountNumber}`,
-    );
-
-    const providerResponse = await this.providerService.walletToWalletTransfer({
-      fromWalletId: sprayerWallet.virtualAccountNumber,
-      toWalletId: receiverWallet.virtualAccountNumber,
-      amount: Number(amount),
-      currencyId: sprayerWallet.currencyId,
-      description: createSprayDto.note || `Spray in event ${event.title }, EventId: ${eventId}`,
-      reference: idempotencyKey,
-    });
-
-    if (!providerResponse.success) {
-      this.logger.error(
-        `Provider transfer failed: ${providerResponse.message}`,
-      );
+    if (!receiverWallet.virtualBankCode) {
       throw new BadRequestException(
-        providerResponse.message || 'Transfer failed. Please try again.',
+        'Receiver wallet is missing virtualBankCode, which is required for provider transfer.',
       );
     }
 
-    this.logger.log(`Provider transfer successful: ${providerResponse.message}`);
+    const receiverCustomer = await this.databaseService.customer.findUnique({
+      where: { id: receiverWallet.customerId },
+      select: { firstName: true, lastName: true },
+    });
+    const destinationAccountName =
+      [receiverCustomer?.firstName, receiverCustomer?.lastName].filter(Boolean).join(' ').trim() || 'Receiver';
 
-    // After provider succeeds, create transaction records and spray record atomically
-    // Re-fetch wallet balances inside transaction with lock to get latest balance after provider call
-    // This prevents race conditions where multiple concurrent requests use stale balance data
-    const result = await this.databaseService.$transaction(
+    const groupReference = randomUUID();
+    const amountKobo = normalizeToKobo(createSprayDto.amount);
+    const amountNormalized = amountKobo.toFixed(2);
+    const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generateEventSprayMandate({
+      transactionReference: idempotencyKey,
+      eventId,
+      sprayerWalletId: sprayerWallet.id,
+      receiverWalletId: receiverWallet.id,
+      amountNormalized,
+      receiverVirtualAccount: receiverWallet.virtualAccountNumber,
+      receiverBankCode: receiverWallet.virtualBankCode.trim(),
+    });
+    const narration = createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`;
+
+    await this.databaseService.$transaction(
       async (tx: Prisma.TransactionClient) => {
-        // Re-lock and re-fetch sprayer wallet to get latest balance after provider call
-        // This ensures we use the most current balance after all concurrent requests
         await tx.$queryRaw`
           SELECT id FROM "Wallet" WHERE id = ${sprayerWallet.id} FOR UPDATE
         `;
-        
-        await tx.$queryRaw`
-          SELECT id FROM "Wallet" WHERE id = ${receiverWallet.id} FOR UPDATE
-        `;
 
-        // Re-fetch both wallets with lock to get latest balances
-        const currentSprayerWallet = await tx.wallet.findUnique({
+        const lockedSprayer = await tx.wallet.findUnique({
           where: { id: sprayerWallet.id },
-          select: { 
-            id: true, 
-            availableBalance: true, 
-            ledgerBalance: true, 
-            currencyId: true 
+          select: {
+            id: true,
+            availableBalance: true,
+            ledgerBalance: true,
+            currencyId: true,
+            riskStatus: true,
+            riskScore: true,
           },
         });
 
-        const currentReceiverWallet = await tx.wallet.findUnique({
-          where: { id: receiverWallet.id },
-          select: { 
-            id: true, 
-            availableBalance: true, 
-            ledgerBalance: true, 
-            currencyId: true 
-          },
-        });
-
-        if (!currentSprayerWallet) {
-          throw new NotFoundException('Sprayer wallet not found after provider call');
+        if (!lockedSprayer) {
+          throw new NotFoundException('Sprayer wallet not found');
         }
 
-        if (!currentReceiverWallet) {
-          throw new NotFoundException('Receiver wallet not found after provider call');
+        if (lockedSprayer.availableBalance.lt(amountKobo)) {
+          throw new BadRequestException('Insufficient balance');
         }
 
-        // Calculate new balances from CURRENT balances (not stale lockedSprayerWallet)
-        // This ensures we always use the latest balance after all concurrent requests
-        const newSprayerAvailableBalance = currentSprayerWallet.availableBalance.minus(amount);
-        const newSprayerLedgerBalance = currentSprayerWallet.ledgerBalance.minus(amount);
-        const newReceiverAvailableBalance = currentReceiverWallet.availableBalance.plus(amount);
-        const newReceiverLedgerBalance = currentReceiverWallet.ledgerBalance.plus(amount);
+        if (lockedSprayer.riskStatus === 'HARD_FREEZE') {
+          throw new BadRequestException(
+            `Wallet is hard frozen due to high risk score (${lockedSprayer.riskScore?.toString() || 'N/A'}). ` +
+              `All transactions are blocked. Please contact support.`,
+          );
+        }
 
-        // Update wallets
-        await Promise.all([
-          tx.wallet.update({
-            where: { id: sprayerWallet.id },
-            data: {
-              availableBalance: newSprayerAvailableBalance,
-              ledgerBalance: newSprayerLedgerBalance,
-            },
-          }),
-          tx.wallet.update({
-            where: { id: receiverWallet.id },
-            data: {
-              availableBalance: newReceiverAvailableBalance,
-              ledgerBalance: newReceiverLedgerBalance,
-            },
-          }),
-        ]);
-
-        // Create debit transaction
-        const debitTransaction = await tx.transaction.create({
+        const createdTxn = await tx.transaction.create({
           data: {
             walletId: sprayerWallet.id,
             type: TransactionType.SPRAY,
             direction: TransactionDirection.DEBIT,
-            status: TransactionStatus.SUCCESS,
-            amount,
-            currencyId: currentSprayerWallet.currencyId,
-            reference: idempotencyKey, // Use idempotency key as reference
+            status: TransactionStatus.PENDING,
+            amount: amountKobo,
+            currencyId: lockedSprayer.currencyId,
+            reference: idempotencyKey,
             groupReference,
-            narration: createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`,
+            securityInfoHash,
+            destinationAccountNumber: receiverWallet.virtualAccountNumber,
+            destinationAccountName,
+            narration,
             metadata: {
-              eventId,
-              receiverWalletId: receiverWallet.id,
-              providerResponse: providerResponse.data,
+              eventSpray: true,
+              walletToWalletSpray: true,
+              sprayCompletion: {
+                eventId,
+                receiverWalletId: receiverWallet.id,
+                note: createSprayDto.note ?? null,
+                sprayerUserId: userId,
+                receiverUserId: receiverParticipant.userId,
+                receiverRole: receiverParticipant.role,
+                eventTitle: event.title,
+              },
             },
           },
         });
 
-        // Create credit transaction
-        const creditTransaction = await tx.transaction.create({
-          data: {
-            walletId: receiverWallet.id,
-            type: TransactionType.SPRAY,
-            direction: TransactionDirection.CREDIT,
-            status: TransactionStatus.SUCCESS,
-            amount,
-            currencyId: receiverWallet.currencyId,
-            reference: `SPRAY-CREDIT-${randomUUID()}`,
-            groupReference,
-            narration: createSprayDto.note || `Spray received in event ${event.title}, EventId: ${eventId}`,
-            metadata: {
-              eventId,
-              sprayerWalletId: sprayerWallet.id,
-              debitTransactionId: debitTransaction.id,
-              providerResponse: providerResponse.data,
-            },
-          },
-        });
-
-        // Create Spray record
-        const spray = await tx.spray.create({
+        await tx.spray.create({
           data: {
             eventId,
             sprayerWalletId: sprayerWallet.id,
             receiverWalletId: receiverWallet.id,
-            transactionId: debitTransaction.id,
+            transactionId: createdTxn.id,
             transactionGroupReference: groupReference,
-            totalAmount: amount,
-            note: createSprayDto.note,
-            metadata: {
-              creditTransactionId: creditTransaction.id,
-              providerResponse: providerResponse.data,
-            },
+            totalAmount: amountKobo,
+            note: createSprayDto.note ?? null,
+            status: SprayStatus.PENDING_PROVIDER,
+            metadata: { pendingProvider: true },
           },
         });
-
-        // Log spray transaction (event-based)
-        this.logger.log(
-          `💰 SPRAY TRANSACTION (Event): Amount=${amount.toString()}, ` +
-          `EventId=${eventId}, EventTitle="${event.title}", ` +
-          `From=${sprayerWallet.virtualAccountNumber || sprayerWallet.id}, ` +
-          `To=${receiverWallet.virtualAccountNumber || receiverWallet.id}, ` +
-          `DebitTxId=${debitTransaction.id}, CreditTxId=${creditTransaction.id}, ` +
-          `SprayId=${spray.id}, GroupRef=${groupReference}, ` +
-          `Reference=${idempotencyKey}, Note="${createSprayDto.note || 'N/A'}"`,
-        );
-
-        return {
-          spray,
-          sprayerBalance: newSprayerAvailableBalance,
-          receiverBalance: newReceiverAvailableBalance,
-        };
       },
-      {
-        timeout: 10000, // 10 seconds timeout
-      },
+      { timeout: 10000 },
     );
 
-    // Recalculate risk scores for both wallets (outside transaction to avoid blocking)
-    this.walletRiskService.updateWalletRiskScore(sprayerWallet.id).catch((error) => {
-      this.logger.error(`Failed to update risk score for sprayer wallet: ${error.message}`);
+    const sprayWithWallets = await this.databaseService.spray.findFirst({
+      where: { transaction: { reference: idempotencyKey } },
+      include: {
+        sprayerWallet: { select: { id: true, availableBalance: true } },
+        receiverWallet: { select: { id: true, availableBalance: true } },
+      },
     });
-    this.walletRiskService.updateWalletRiskScore(receiverWallet.id).catch((error) => {
-      this.logger.error(`Failed to update risk score for receiver wallet: ${error.message}`);
-    });
 
-    // Detect anomalies (async, non-blocking)
-    const spray = result.spray;
-    if (spray && spray.transactionId) {
-      this.sprayAnomalyService
-        .detectAnomalies(
-          spray.id,
-          spray.transactionId,
-          sprayerWallet.id,
-          receiverWallet.id,
-          amount,
-          eventId,
-          spray.createdAt,
-        )
-        .catch((error) => {
-          this.logger.error(`Failed to detect anomalies for spray ${spray.id}: ${error.message}`);
-        });
-    }
+    const [swAfter, rwAfter] = await Promise.all([
+      this.databaseService.wallet.findUnique({
+        where: { id: sprayerWallet.id },
+        select: { availableBalance: true },
+      }),
+      this.databaseService.wallet.findUnique({
+        where: { id: receiverWallet.id },
+        select: { availableBalance: true },
+      }),
+    ]);
 
-    // Send push notification to celebrant/performer immediately after spray creation (non-blocking)
-    // This ensures real-time delivery without waiting for other operations
-    if (
-      receiverParticipant.role === EventRole.CELEBRANT ||
-      receiverParticipant.role === EventRole.PERFORMER
-    ) {
-      // Fetch sprayer name asynchronously and send notification (fire and forget)
-      this.databaseService.user
-        .findUnique({
-          where: { id: userId },
-          select: {
-            username: true,
-            profilePicture: true,
-          },
-        })
-        .then((sprayerUser) => {
-          const sprayerName =
-            sprayerUser?.username ||
-            sprayerUser?.profilePicture ||
-            'Someone';
-          
-          // Send notification asynchronously (non-blocking)
-          return this.notificationsService.sendNotificationIfEnabled(
-            receiverParticipant.userId,
-            {
-              notification: {
-                title: 'You were sprayed!',
-                body: `${sprayerName} sprayed you ${spray.totalAmount.toString()}`,
-              },
-              data: {
-                type: 'SPRAY_RECEIVED',
-                eventId: eventId,
-                eventTitle: event.title,
-                sprayId: spray.id,
-                amount: spray.totalAmount.toString(),
-                sprayerId: userId,
-                sprayerName: sprayerName,
-              },
-            },
-          );
-        })
-        .catch((notificationError: any) => {
-          // Log error but don't fail the request - notification is optional
-          this.logger.warn(
-            `Failed to send spray notification: ${notificationError.message}`,
-          );
-        });
-    }
-
-    // Compute event totals
     const eventTotals = await this.computeEventTotals(eventId);
 
-    // Fetch sprayer and receiver user details for the WebSocket event
-    const sprayerUser = await this.databaseService.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        username: true,
-        profilePicture: true,
-        settings: {
-          select: {
-            showOnLeaderboard: true,
-          },
-        },
-      },
-    });
-
-    const receiverUser = await this.databaseService.user.findUnique({
-      where: { id: receiverParticipant.userId },
-      select: {
-        id: true,
-        username: true,
-        profilePicture: true,
-        settings: {
-          select: {
-            showOnLeaderboard: true,
-          },
-        },
-      },
-    });
-
-    // Emit WebSocket events AFTER transaction commits
-    try {
-      // Fetch sprays array first (we'll use it in multiple events)
-      let formattedSprays: any[] = [];
-      try {
-        const eventWithSprays = await this.databaseService.event.findUnique({
-          where: { id: eventId },
-          include: {
-            sprays: {
-              include: {
-                sprayerWallet: {
-                  include: {
-                    customer: {
-                      include: {
-                        user: {
-                          select: {
-                            id: true,
-                            username: true,
-                            profilePicture: true,
-                            settings: {
-                              select: {
-                                showOnLeaderboard: true,
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-                receiverWallet: {
-                  include: {
-                    customer: {
-                      include: {
-                        user: {
-                          select: {
-                            id: true,
-                            username: true,
-                            profilePicture: true,
-                            settings: {
-                              select: {
-                                showOnLeaderboard: true,
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-              orderBy: { createdAt: 'desc' },
-            },
-          },
-        });
-
-        if (eventWithSprays?.sprays) {
-          formattedSprays = eventWithSprays.sprays
-            .filter((spray: any) => 
-              spray.sprayerWallet?.customer?.user && 
-              spray.receiverWallet?.customer?.user
-            )
-            .map((spray: any) => ({
-              id: spray.id,
-              totalAmount: spray.totalAmount.toString(),
-              note: spray.note,
-              createdAt: spray.createdAt,
-              updatedAt: spray.updatedAt,
-              sprayer: {
-                id: spray.sprayerWallet.customer.user.id,
-                username: spray.sprayerWallet.customer.user.username,
-                profilePicture: spray.sprayerWallet.customer.user.profilePicture,
-                showOnLeaderboard: spray.sprayerWallet.customer.user.settings?.showOnLeaderboard ?? true,
-              },
-              receiver: {
-                id: spray.receiverWallet.customer.user.id,
-                username: spray.receiverWallet.customer.user.username,
-                profilePicture: spray.receiverWallet.customer.user.profilePicture,
-                showOnLeaderboard: spray.receiverWallet.customer.user.settings?.showOnLeaderboard ?? true,
-              },
-            }));
-        }
-      } catch (spraysError: any) {
-        // Log error but don't fail the request - sprays fetch is optional
-        this.logger.warn(`Failed to fetch sprays: ${spraysError.message}`);
-      }
-
-      // Emit to event room with full user details (now includes sprays array)
+    if (sprayWithWallets) {
       this.liveGateway.emitSprayCreated(eventId, {
         eventId,
-        eventName: event.title,
-        spray: {
-          id: result.spray.id,
-          totalAmount: result.spray.totalAmount.toString(),
-          note: result.spray.note,
-          createdAt: result.spray.createdAt,
-          sprayer: {
-            id: sprayerUser?.id || userId,
-            username: sprayerUser?.username || null,
-            profilePicture: sprayerUser?.profilePicture || null,
-            showOnLeaderboard: sprayerUser?.settings?.showOnLeaderboard ?? true,
-          },
-          receiver: {
-            id: receiverUser?.id || receiverParticipant.userId,
-            username: receiverUser?.username || null,
-            profilePicture: receiverUser?.profilePicture || null,
-            showOnLeaderboard: receiverUser?.settings?.showOnLeaderboard ?? true,
-          },
-        },
+        spray: sprayWithWallets,
+        sprayerBalance: swAfter!.availableBalance,
+        receiverBalance: rwAfter!.availableBalance,
         eventTotals: {
           totalAmount: eventTotals.totalAmount.toString(),
           totalCount: eventTotals.totalCount,
         },
-        sprays: formattedSprays,
+        pending: true,
       });
-
-      // Emit balance updates to sprayer and receiver
-      this.liveGateway.emitBalanceUpdate(userId, {
-        walletId: sprayerWallet.id,
-        availableBalance: result.sprayerBalance.toString(),
-        eventBalance: eventTotals.totalAmount.toString(),
-      });
-
-      this.liveGateway.emitBalanceUpdate(receiverParticipant.userId, {
-        walletId: receiverWallet.id,
-        availableBalance: result.receiverBalance.toString(),
-        eventBalance: eventTotals.totalAmount.toString(),
-      });
-
-      // Fetch and emit updated leaderboard (now includes sprays array)
-      try {
-        const leaderboard = await this.eventsService.getEventLeaderboard(eventId);
-        this.liveGateway.emitLeaderboardUpdate(eventId, {
-          ...leaderboard,
-          sprays: formattedSprays,
-        });
-      } catch (leaderboardError: any) {
-        // Log error but don't fail the request - leaderboard is optional
-        this.logger.warn(`Failed to emit leaderboard update: ${leaderboardError.message}`);
-      }
-
-      // Still emit separate sprays.updated event for consistency
-      if (formattedSprays.length > 0) {
-        this.liveGateway.emitSpraysUpdate(eventId, formattedSprays);
-      }
-    } catch (error: any) {
-      // Log error but don't fail the request - spray was successful
-      this.logger.error(`Failed to emit WebSocket events: ${error.message}`);
     }
 
-    // Invalidate event leaderboard cache (new spray changes leaderboard)
     try {
-      await this.cacheService.del(this.cacheService.getEventKey(eventId, 'leaderboard'));
+      await this.providerService.processClientTransfer({
+        securityInfo,
+        amount: amountKobo.toNumber(),
+        destinationBankCode: receiverWallet.virtualBankCode,
+        destinationBankName: receiverWallet.virtualBankName?.trim() || 'Wallet',
+        destinationAccountNumber: receiverWallet.virtualAccountNumber,
+        destinationAccountName,
+        sourceAccountNumber: sprayerWallet.virtualAccountNumber,
+        narration,
+        transactionReference: idempotencyKey,
+        useCustomNarration: true,
+      });
     } catch (error: any) {
-      // Log error but don't fail the request
-      this.logger.warn(`Failed to invalidate leaderboard cache: ${error.message}`);
+      await this.databaseService.transaction.update({
+        where: { reference: idempotencyKey },
+        data: {
+          status: TransactionStatus.FAILED,
+          providerStatus: 'FAILED',
+          providerCallbackReceivedAt: new Date(),
+        },
+      });
+      await this.databaseService.spray.updateMany({
+        where: { transaction: { reference: idempotencyKey } },
+        data: { status: SprayStatus.FAILED },
+      });
+      throw error;
     }
+
+    this.logger.log(
+      `💰 SPRAY (provider): Amount=${amountKobo.toString()}, EventId=${eventId}, Ref=${idempotencyKey} — pending callback`,
+    );
 
     return {
-      ...result,
+      spray: sprayWithWallets,
+      sprayerBalance: swAfter!.availableBalance,
+      receiverBalance: rwAfter!.availableBalance,
       eventTotals,
+      pending: true,
+      transactionRef: idempotencyKey,
+      message: 'Spray submitted to the payment partner. Balances and live event data update when the transfer succeeds.',
     };
   }
 
   /**
-   * Compute event totals (count and sum of sprays)
+   * Compute event totals (count and sum of confirmed sprays only)
    */
   private async computeEventTotals(eventId: string): Promise<{
     totalAmount: Decimal;
     totalCount: number;
   }> {
     const sprays = await this.databaseService.spray.findMany({
-      where: { eventId },
+      where: { eventId, status: SprayStatus.CONFIRMED },
       select: { totalAmount: true },
     });
 
-    const totalAmount = sprays.reduce(
-      (sum, spray) => sum.plus(spray.totalAmount),
-      new Decimal(0),
-    );
+    const totalAmount = sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     return {
       totalAmount,
@@ -772,4 +490,3 @@ export class SpraysService {
     };
   }
 }
-

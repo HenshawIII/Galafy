@@ -8,6 +8,7 @@ import {
   HttpStatus,
   UnauthorizedException,
   BadRequestException,
+  GoneException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service.js';
@@ -35,8 +36,10 @@ export class WebhooksController {
   ) {
     // Get raw body for signature verification
     // rawBody is a Buffer when rawBody: true is set in NestFactory.create
-    const rawBody = req.rawBody 
-      ? (Buffer.isBuffer(req.rawBody) ? req.rawBody.toString('utf8') : String(req.rawBody))
+    const rawBody = req.rawBody
+      ? Buffer.isBuffer(req.rawBody)
+        ? req.rawBody.toString('utf8')
+        : String(req.rawBody)
       : JSON.stringify(body);
 
     // Verify signature
@@ -46,6 +49,11 @@ export class WebhooksController {
 
     // Route to appropriate handler based on event type
     if (body.event === 'nip') {
+      if (process.env.INFLOW_VIA_LEGACY_WEBHOOK === 'false') {
+        throw new GoneException(
+          'Legacy NIP inflow webhook is disabled. Inflow is processed via the provider transaction-notification callback.',
+        );
+      }
       return this.webhooksService.handleInflowWebhook(body as InflowWebhookDto);
     } else if (body.event === 'payout') {
       return this.webhooksService.handlePayoutWebhook(body as PayoutWebhookDto);
@@ -54,4 +62,3 @@ export class WebhooksController {
     }
   }
 }
-

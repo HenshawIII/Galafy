@@ -161,7 +161,9 @@ export class PayoutSecurityService {
     });
 
     if (!user || !user.payoutPin) {
-      throw new BadRequestException('Payout PIN has not been set. Please set your PIN first using the create endpoint.');
+      throw new BadRequestException(
+        'Payout PIN has not been set. Please set your PIN first using the create endpoint.',
+      );
     }
 
     // Verify OTP
@@ -290,6 +292,17 @@ export class PayoutSecurityService {
   }
 
   /**
+   * Read pending transfer payload without clearing (use before confirm to route payout vs W2W).
+   */
+  async peekPendingPayout(userId: string): Promise<any | null> {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { pendingPayoutData: true },
+    });
+    return user?.pendingPayoutData ?? null;
+  }
+
+  /**
    * Store pending payout data temporarily
    */
   async storePendingPayout(userId: string, payoutData: any): Promise<void> {
@@ -326,4 +339,3 @@ export class PayoutSecurityService {
     return user.pendingPayoutData;
   }
 }
-

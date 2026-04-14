@@ -18,27 +18,14 @@ config();
     UsersModule, // Import UsersModule to access EmailService
     PassportModule,
     JwtModule.register({
-      secret:
-        process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || 'admin-secret',
+      secret: process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || 'admin-secret',
       signOptions: {
         expiresIn: '8h', // Default, can be overridden in service
       },
     }),
   ],
   controllers: [AdminAuthController],
-  providers: [
-    AdminAuthService,
-    AdminJwtStrategy,
-    AdminJwtAuthGuard,
-    RolesGuard,
-    PermissionsGuard,
-  ],
-  exports: [
-    AdminAuthService,
-    AdminJwtAuthGuard,
-    RolesGuard,
-    PermissionsGuard,
-  ],
+  providers: [AdminAuthService, AdminJwtStrategy, AdminJwtAuthGuard, RolesGuard, PermissionsGuard],
+  exports: [AdminAuthService, AdminJwtAuthGuard, RolesGuard, PermissionsGuard],
 })
 export class AdminAuthModule {}
-

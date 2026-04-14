@@ -1,4 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  ConflictException,
+  GoneException,
+  Logger,
+} from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { CacheService } from '../cache/cache.service.js';
@@ -8,8 +16,26 @@ import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-manage
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
 import { GetActionLogsDto } from './dto/action-log.dto.js';
-import { InviteAdminDto, AcceptInviteDto, GetAdminsDto, UpdateAdminDto, AssignRoleDto } from './dto/admin-management.dto.js';
-import { AdminRole, KycRequestStatus, UtilityBillStatus, TransactionType, TransactionDirection, TransactionStatus, AlertStatus, EventStatus, PayoutStatus } from '../../generated/prisma/enums.js';
+import {
+  InviteAdminDto,
+  AcceptInviteDto,
+  GetAdminsDto,
+  UpdateAdminDto,
+  AssignRoleDto,
+} from './dto/admin-management.dto.js';
+import {
+  AdminRole,
+  KycRequestStatus,
+  UtilityBillStatus,
+  TransactionType,
+  TransactionDirection,
+  TransactionStatus,
+  AlertStatus,
+  EventStatus,
+  PayoutStatus,
+  KycTier,
+  SprayStatus,
+} from '../../generated/prisma/enums.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
@@ -20,21 +46,16 @@ import * as crypto from 'crypto';
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { EmailService } from '../users/email.service.js';
-import { WalletmoduleService } from '../walletmodule/walletmodule.service.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { Prisma } from '@prisma/client';
 import { ProviderService } from '../provider/provider.service.js';
+import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
-import { WithdrawalLimitService } from '../walletmodule/services/withdrawal-limit.service.js';
-import { KycTier } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
-  // 10 million Naira = 1,000,000,000,000 (based on divide by 100000 conversion)
-  private readonly APPROVED_TIER_2_LIMIT = new Decimal(1000000000000); // 10M Naira
-
   private readonly CACHE_KEY = 'admin:analytics:transaction-summary';
   private readonly CACHE_TTL = 300; // 5 minutes in seconds
 
@@ -43,10 +64,9 @@ export class AdminService {
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
-    private readonly walletmoduleService: WalletmoduleService,
     private readonly providerService: ProviderService,
+    private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
-    private readonly withdrawalLimitService: WithdrawalLimitService,
   ) {}
 
   /**
@@ -284,7 +304,11 @@ export class AdminService {
     let filteredUsers = users;
     if (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill') {
       filteredUsers = users.filter((user) => {
-        if (!user.customer || !user.customer.utilityBillSubmissions || user.customer.utilityBillSubmissions.length === 0) {
+        if (
+          !user.customer ||
+          !user.customer.utilityBillSubmissions ||
+          user.customer.utilityBillSubmissions.length === 0
+        ) {
           return false;
         }
         const latestSubmission = user.customer.utilityBillSubmissions[0];
@@ -326,7 +350,9 @@ export class AdminService {
         page,
         limit,
         total: filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total,
-        totalPages: Math.ceil((filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total) / limit),
+        totalPages: Math.ceil(
+          (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total) / limit,
+        ),
       },
     };
   }
@@ -456,7 +482,11 @@ export class AdminService {
           let filteredUsers = users;
           if (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill') {
             filteredUsers = users.filter((user) => {
-              if (!user.customer || !user.customer.utilityBillSubmissions || user.customer.utilityBillSubmissions.length === 0) {
+              if (
+                !user.customer ||
+                !user.customer.utilityBillSubmissions ||
+                user.customer.utilityBillSubmissions.length === 0
+              ) {
                 return false;
               }
               const latestSubmission = user.customer.utilityBillSubmissions[0];
@@ -468,16 +498,17 @@ export class AdminService {
           for (const user of filteredUsers) {
             // Get latest utility bill status
             let utilityBillStatus: string = '';
-            if (user.customer && user.customer.utilityBillSubmissions && user.customer.utilityBillSubmissions.length > 0) {
+            if (
+              user.customer &&
+              user.customer.utilityBillSubmissions &&
+              user.customer.utilityBillSubmissions.length > 0
+            ) {
               utilityBillStatus = user.customer.utilityBillSubmissions[0].status || '';
             }
 
             // Calculate total wallet balance
             const totalWalletBalance = user.customer?.wallets
-              ? user.customer.wallets.reduce(
-                  (sum, wallet) => sum.plus(wallet.availableBalance),
-                  new Decimal(0),
-                )
+              ? user.customer.wallets.reduce((sum, wallet) => sum.plus(wallet.availableBalance), new Decimal(0))
               : new Decimal(0);
 
             // Format dates
@@ -588,7 +619,7 @@ export class AdminService {
           },
         },
       });
-      
+
       // If not found with original format, try normalized format
       if (!user && normalizedPhone !== trimmedQuery) {
         user = await this.databaseService.user.findUnique({
@@ -644,10 +675,11 @@ export class AdminService {
     return {
       users: users.map((user) => {
         const walletCount = user.customer?.wallets?.length || 0;
-        const totalBalance = user.customer?.wallets?.reduce(
-          (sum: Decimal, wallet: any) => sum.plus(wallet.availableBalance || 0),
-          new Decimal(0),
-        ) || new Decimal(0);
+        const totalBalance =
+          user.customer?.wallets?.reduce(
+            (sum: Decimal, wallet: any) => sum.plus(wallet.availableBalance || 0),
+            new Decimal(0),
+          ) || new Decimal(0);
 
         return {
           id: user.id,
@@ -772,13 +804,7 @@ export class AdminService {
         username: user.username,
       });
 
-      await this.logAdminAction(
-        adminId,
-        'KYC_REMINDER_SENT',
-        'USER',
-        user.id,
-        { userId: user.id, email: user.email },
-      );
+      await this.logAdminAction(adminId, 'KYC_REMINDER_SENT', 'USER', user.id, { userId: user.id, email: user.email });
 
       return {
         success: true,
@@ -867,13 +893,7 @@ export class AdminService {
       },
     });
 
-    await this.logAdminAction(
-      adminId,
-      'USER_UNRESTRICTED',
-      'CUSTOMER',
-      customer.id,
-      { userId },
-    );
+    await this.logAdminAction(adminId, 'USER_UNRESTRICTED', 'CUSTOMER', customer.id, { userId });
 
     return customer;
   }
@@ -921,54 +941,6 @@ export class AdminService {
 
     return {
       requests,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  /**
-   * Get pending utility bill submissions
-   */
-  async getPendingUtilityBills(filters: GetKycRequestsDto) {
-    const page = filters.page || 1;
-    const limit = filters.limit || 20;
-    const skip = (page - 1) * limit;
-
-    const where: any = {
-      status: UtilityBillStatus.PENDING,
-    };
-
-    const [submissions, total] = await Promise.all([
-      this.databaseService.utilityBillSubmission.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          customer: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  email: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-              withdrawalLimit: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.databaseService.utilityBillSubmission.count({ where }),
-    ]);
-
-    return {
-      submissions,
       pagination: {
         page,
         limit,
@@ -1054,130 +1026,53 @@ export class AdminService {
       },
     });
 
-    await this.logAdminAction(
-      adminId,
-      'KYC_REJECTED',
-      'KYC_REQUEST',
-      requestId,
-      { reason: dto.reason },
-      dto.reason,
-    );
+    await this.logAdminAction(adminId, 'KYC_REJECTED', 'KYC_REQUEST', requestId, { reason: dto.reason }, dto.reason);
 
     return updatedRequest;
   }
 
   /**
-   * Approve utility bill
+   * Manual Tier 3 promotion after off-line verification (e.g. bank address). Customer must already be Tier 2.
    */
-  async approveUtilityBill(submissionId: string, adminId: string, dto: ApproveKycDto) {
-    const submission = await this.databaseService.utilityBillSubmission.findUnique({
-      where: { id: submissionId },
-      include: { customer: true },
+  async promoteCustomerToTier3(customerId: string, adminId: string, dto?: ApproveKycDto) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
     });
 
-    if (!submission) {
-      throw new NotFoundException('Utility bill submission not found');
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
     }
 
-    if (submission.status !== UtilityBillStatus.PENDING) {
-      throw new BadRequestException('Utility bill submission is not pending');
+    if (customer.tier !== KycTier.Tier_2) {
+      throw new BadRequestException('Customer must be Tier 2 to be promoted to Tier 3 via this endpoint');
     }
 
-    // Update submission status
-    const updatedSubmission = await this.databaseService.utilityBillSubmission.update({
-      where: { id: submissionId },
+    const previousTier = customer.tier;
+    const updated = await this.databaseService.customer.update({
+      where: { id: customerId },
       data: {
-        status: UtilityBillStatus.APPROVED,
-        adminId,
-        reviewedAt: new Date(),
-        reason: dto.notes,
-      },
-    });
-
-    // Get or create withdrawal limit
-    let withdrawalLimit = await this.databaseService.withdrawalLimit.findUnique({
-      where: { customerId: submission.customerId },
-    });
-
-    if (!withdrawalLimit) {
-      withdrawalLimit = await this.databaseService.withdrawalLimit.create({
-        data: {
-          customerId: submission.customerId,
-          dailyLimit: new Decimal(100000000000), // 1M Naira default
-          approvedDailyLimit: this.APPROVED_TIER_2_LIMIT,
-          isLimitIncreased: true,
-          dailyWithdrawn: new Decimal(0),
-          lastResetDate: new Date(),
-        },
-      });
-    } else {
-      withdrawalLimit = await this.databaseService.withdrawalLimit.update({
-        where: { id: withdrawalLimit.id },
-        data: {
-          approvedDailyLimit: this.APPROVED_TIER_2_LIMIT,
-          isLimitIncreased: true,
-        },
-      });
-    }
-
-    await this.logAdminAction(
-      adminId,
-      'UTILITY_BILL_APPROVED',
-      'UTILITY_BILL',
-      submissionId,
-      { customerId: submission.customerId, notes: dto.notes },
-      dto.notes,
-    );
-
-    return {
-      submission: updatedSubmission,
-      withdrawalLimit,
-    };
-  }
-
-  /**
-   * Reject utility bill
-   */
-  async rejectUtilityBill(submissionId: string, adminId: string, dto: RejectKycDto) {
-    const submission = await this.databaseService.utilityBillSubmission.findUnique({
-      where: { id: submissionId },
-    });
-
-    if (!submission) {
-      throw new NotFoundException('Utility bill submission not found');
-    }
-
-    if (submission.status !== UtilityBillStatus.PENDING) {
-      throw new BadRequestException('Utility bill submission is not pending');
-    }
-
-    const updatedSubmission = await this.databaseService.utilityBillSubmission.update({
-      where: { id: submissionId },
-      data: {
-        status: UtilityBillStatus.REJECTED,
-        adminId,
-        reviewedAt: new Date(),
-        reason: dto.reason,
+        tier: KycTier.Tier_3,
+        providerTierCode: 3,
       },
     });
 
     await this.logAdminAction(
       adminId,
-      'UTILITY_BILL_REJECTED',
-      'UTILITY_BILL',
-      submissionId,
-      { reason: dto.reason },
-      dto.reason,
+      'CUSTOMER_TIER3_PROMOTED',
+      'CUSTOMER',
+      customerId,
+      { previousTier, newTier: KycTier.Tier_3, notes: dto?.notes },
+      dto?.notes,
     );
 
-    return updatedSubmission;
+    return updated;
   }
 
   /**
    * Get transaction analytics summary
    * Returns aggregated metrics: total wallet balance, total withdrawn, and total received
    * Results are cached for 5 minutes to reduce database load (only for all-time queries)
-   * 
+   *
    * @param filters Optional date range filters (startDate, endDate)
    */
   async getTransactionAnalyticsSummary(filters?: TransactionAnalyticsDto) {
@@ -1197,9 +1092,10 @@ export class AdminService {
     }
 
     // Build cache key (include date range if provided, or use default for all-time)
-    const cacheKey = filters?.startDate || filters?.endDate
-      ? `${this.CACHE_KEY}:${filters.startDate || 'all'}:${filters.endDate || 'all'}`
-      : this.CACHE_KEY;
+    const cacheKey =
+      filters?.startDate || filters?.endDate
+        ? `${this.CACHE_KEY}:${filters.startDate || 'all'}:${filters.endDate || 'all'}`
+        : this.CACHE_KEY;
 
     // Only use cache for all-time queries (no date filters)
     if (!filters?.startDate && !filters?.endDate) {
@@ -1260,9 +1156,9 @@ export class AdminService {
 
     // Generate chart data - default to last 7 days if no date filters provided
     let chartData: Array<{ date: string; amount: string; count: number }> = [];
-    
+
     // Determine date range for chart data
-    const chartStartDate = filters?.startDate 
+    const chartStartDate = filters?.startDate
       ? new Date(filters.startDate)
       : (() => {
           const date = new Date();
@@ -1270,7 +1166,7 @@ export class AdminService {
           date.setHours(0, 0, 0, 0);
           return date;
         })();
-    
+
     const chartEndDate = filters?.endDate
       ? (() => {
           const date = new Date(filters.endDate);
@@ -1296,11 +1192,11 @@ export class AdminService {
 
     // Group transactions by date
     const transactionsByDate = new Map<string, { amount: Decimal; count: number }>();
-    
+
     chartTransactions.forEach((tx) => {
       const dateKey = tx.createdAt.toISOString().split('T')[0]; // YYYY-MM-DD format
       const existing = transactionsByDate.get(dateKey);
-      
+
       if (existing) {
         existing.amount = existing.amount.plus(tx.amount);
         existing.count += 1;
@@ -1334,15 +1230,21 @@ export class AdminService {
 
     // Only cache all-time queries (no date filters) to avoid cache bloat
     if (!filters?.startDate && !filters?.endDate) {
-      await this.cacheService.set(cacheKey, {
-        totalWalletBalance: result.totalWalletBalance,
-        totalWithdrawn: result.totalWithdrawn,
-        totalReceived: result.totalReceived,
-        timestamp: result.timestamp,
-      }, this.CACHE_TTL);
+      await this.cacheService.set(
+        cacheKey,
+        {
+          totalWalletBalance: result.totalWalletBalance,
+          totalWithdrawn: result.totalWithdrawn,
+          totalReceived: result.totalReceived,
+          timestamp: result.timestamp,
+        },
+        this.CACHE_TTL,
+      );
       this.logger.log('Transaction analytics summary calculated and cached');
     } else {
-      this.logger.log(`Transaction analytics summary calculated for date range: ${filters.startDate || 'all'} to ${filters.endDate || 'all'}`);
+      this.logger.log(
+        `Transaction analytics summary calculated for date range: ${filters.startDate || 'all'} to ${filters.endDate || 'all'}`,
+      );
     }
 
     return result;
@@ -1350,7 +1252,7 @@ export class AdminService {
 
   /**
    * Get dashboard overview metrics
-   * Returns: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count (utility bill submissions)
+   * Returns: Total Users, Verified Users, Total Events, Active Events, Revenue, pending KYC requests count
    * Includes growth percentages comparing last 7 days vs previous 7 days
    */
   async getDashboardMetrics() {
@@ -1390,10 +1292,10 @@ export class AdminService {
           status: 'LIVE',
         },
       }),
-      // Pending KYC Requests - count pending utility bill submissions
-      this.databaseService.utilityBillSubmission.count({
+      // Pending KYC requests (KycRequest table)
+      this.databaseService.kycRequest.count({
         where: {
-          status: UtilityBillStatus.PENDING,
+          status: KycRequestStatus.PENDING,
         },
       }),
       // All-time Revenue from AdminFee (status = COLLECTED)
@@ -1455,15 +1357,17 @@ export class AdminService {
     // 7 days ago: Sum of all AdminFee with status='COLLECTED' that were created before 7 days ago
     const totalRevenue7DaysAgoAmount = totalRevenue7DaysAgo._sum.amount || new Decimal(0);
     const currentTotalRevenue = allTimeRevenueResult._sum.amount || new Decimal(0);
-    
+
     // Convert to numbers for comparison (handle Decimal type properly)
-    const currentAmount = currentTotalRevenue instanceof Decimal 
-      ? Number(currentTotalRevenue.toString()) 
-      : Number(currentTotalRevenue) || 0;
-    const previousAmount = totalRevenue7DaysAgoAmount instanceof Decimal
-      ? Number(totalRevenue7DaysAgoAmount.toString())
-      : Number(totalRevenue7DaysAgoAmount) || 0;
-    
+    const currentAmount =
+      currentTotalRevenue instanceof Decimal
+        ? Number(currentTotalRevenue.toString())
+        : Number(currentTotalRevenue) || 0;
+    const previousAmount =
+      totalRevenue7DaysAgoAmount instanceof Decimal
+        ? Number(totalRevenue7DaysAgoAmount.toString())
+        : Number(totalRevenue7DaysAgoAmount) || 0;
+
     // Calculate growth: if same, should be 0%; negative only if fees were reversed/refunded
     // Current = sum of all COLLECTED fees (all time)
     // Previous = sum of COLLECTED fees created before 7 days ago
@@ -1782,7 +1686,7 @@ export class AdminService {
     // Use streaming to avoid loading all logs into memory
     // Limit to 100,000 records max to prevent memory issues
     const MAX_EXPORT_RECORDS = 100000;
-    
+
     return new Promise(async (resolve, reject) => {
       const chunks: Buffer[] = [];
       const rows: any[] = [];
@@ -1861,9 +1765,10 @@ export class AdminService {
         stream.on('data', (chunk: Buffer) => chunks.push(chunk));
         stream.on('end', () => {
           const buffer = Buffer.concat(chunks);
-          const filename = filters.startDate && filters.endDate
-            ? `admin-action-logs-${filters.startDate.split('T')[0]}-to-${filters.endDate.split('T')[0]}.csv`
-            : 'admin-action-logs-all.csv';
+          const filename =
+            filters.startDate && filters.endDate
+              ? `admin-action-logs-${filters.startDate.split('T')[0]}-to-${filters.endDate.split('T')[0]}.csv`
+              : 'admin-action-logs-all.csv';
           resolve({ buffer, filename });
         });
         stream.on('error', (error) => {
@@ -2493,10 +2398,7 @@ export class AdminService {
           // Add batch rows
           for (const event of events) {
             // Calculate stats (same logic as getEvents)
-            const totalSprayed = event.sprays.reduce(
-              (sum, spray) => sum.plus(spray.totalAmount),
-              new Decimal(0),
-            );
+            const totalSprayed = event.sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
             const uniqueSprayers = new Set(
               event.sprays
                 .map((s) => s.sprayerWallet?.customer?.userId)
@@ -2577,77 +2479,71 @@ export class AdminService {
     };
 
     // Current metrics - ALL events
-    const [
-      totalEvents,
-      activeEvents,
-      allSprays,
-      allSprays7DaysAgo,
-      totalEvents7DaysAgo,
-      activeEvents7DaysAgo,
-    ] = await Promise.all([
-      // Total Events (current)
-      this.databaseService.event.count(),
-      // Active Events (LIVE status)
-      this.databaseService.event.count({
-        where: {
-          status: 'LIVE',
-        },
-      }),
-      // All sprays (for unique sprayers and total sprayed)
-      this.databaseService.spray.findMany({
-        select: {
-          sprayerWalletId: true,
-          totalAmount: true,
-          sprayerWallet: {
-            select: {
-              customer: {
-                select: {
-                  userId: true,
+    const [totalEvents, activeEvents, allSprays, allSprays7DaysAgo, totalEvents7DaysAgo, activeEvents7DaysAgo] =
+      await Promise.all([
+        // Total Events (current)
+        this.databaseService.event.count(),
+        // Active Events (LIVE status)
+        this.databaseService.event.count({
+          where: {
+            status: 'LIVE',
+          },
+        }),
+        // All sprays (for unique sprayers and total sprayed)
+        this.databaseService.spray.findMany({
+          select: {
+            sprayerWalletId: true,
+            totalAmount: true,
+            sprayerWallet: {
+              select: {
+                customer: {
+                  select: {
+                    userId: true,
+                  },
                 },
               },
             },
           },
-        },
-      }),
-      // All sprays created before 7 days ago
-      this.databaseService.spray.findMany({
-        where: {
-          createdAt: {
-            lt: sevenDaysAgo,
+        }),
+        // All sprays created before 7 days ago
+        this.databaseService.spray.findMany({
+          where: {
+            createdAt: {
+              lt: sevenDaysAgo,
+            },
           },
-        },
-        select: {
-          sprayerWalletId: true,
-          totalAmount: true,
-          sprayerWallet: {
-            select: {
-              customer: {
-                select: {
-                  userId: true,
+          select: {
+            sprayerWalletId: true,
+            totalAmount: true,
+            sprayerWallet: {
+              select: {
+                customer: {
+                  select: {
+                    userId: true,
+                  },
                 },
               },
             },
           },
-        },
-      }),
-      // Total Events 7 days ago
-      this.databaseService.event.count({
-        where: {
-          createdAt: {
-            lt: sevenDaysAgo,
+        }),
+        // Total Events 7 days ago
+        this.databaseService.event.count({
+          where: {
+            createdAt: {
+              lt: sevenDaysAgo,
+            },
           },
-        },
-      }),
-      // Active Events 7 days ago (LIVE status AND created before 7 days ago)
-      this.databaseService.event.count({
-        where: {
-          status: 'LIVE',
-          createdAt: {
-            lt: sevenDaysAgo,
+        }),
+        // Active Events 7 days ago (LIVE status AND created before 7 days ago)
+        this.databaseService.event.count({
+          where: {
+            status: 'LIVE',
+            createdAt: {
+              lt: sevenDaysAgo,
+            },
           },
-        },
-      }),
-    ]);
+        }),
+      ]);
 
     // Calculate current metrics
     // Unique sprayers: count distinct userIds from sprayerWallet.customer.userId
@@ -2659,10 +2555,7 @@ export class AdminService {
     const totalAttendees = uniqueSprayerIds.size;
 
     // Total sprayed: sum of all spray amounts
-    const totalSprayed = allSprays.reduce(
-      (sum, spray) => sum.plus(spray.totalAmount),
-      new Decimal(0),
-    );
+    const totalSprayed = allSprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     // Calculate 7 days ago metrics
     const uniqueSprayerIds7DaysAgo = new Set(
@@ -2672,10 +2565,7 @@ export class AdminService {
     );
     const totalAttendees7DaysAgo = uniqueSprayerIds7DaysAgo.size;
 
-    const totalSprayed7DaysAgo = allSprays7DaysAgo.reduce(
-      (sum, spray) => sum.plus(spray.totalAmount),
-      new Decimal(0),
-    );
+    const totalSprayed7DaysAgo = allSprays7DaysAgo.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     // Calculate growth percentages
     const totalEventsGrowth = calculateGrowth(totalEvents, totalEvents7DaysAgo);
@@ -2908,6 +2798,7 @@ export class AdminService {
 
     const where: any = {
       eventId,
+      status: SprayStatus.CONFIRMED,
     };
 
     if (filters.startDate || filters.endDate) {
@@ -3034,10 +2925,11 @@ export class AdminService {
 
     const limit = filters.limit || 10;
 
-    // Get all sprays for the event
+    // Get all confirmed sprays for the event
     const sprays = await this.databaseService.spray.findMany({
       where: {
         eventId,
+        status: SprayStatus.CONFIRMED,
       },
       include: {
         sprayerWallet: {
@@ -3067,7 +2959,10 @@ export class AdminService {
     });
 
     // Aggregate by sprayer
-    const sprayerMap = new Map<string, { user: any; totalAmount: Decimal; sprayCount: number; firstSprayAt: Date; lastSprayAt: Date }>();
+    const sprayerMap = new Map<
+      string,
+      { user: any; totalAmount: Decimal; sprayCount: number; firstSprayAt: Date; lastSprayAt: Date }
+    >();
 
     for (const spray of sprays) {
       const userId = spray.sprayerWallet.customer.userId;
@@ -3166,14 +3061,14 @@ export class AdminService {
 
     // Generate CSV content
     const csvRows: string[] = [];
-    
+
     // Header
     csvRows.push('Event Report');
     csvRows.push(`Event: ${event.title}`);
     csvRows.push(`Status: ${event.status}`);
     csvRows.push(`Created: ${event.createdAt}`);
     csvRows.push('');
-    
+
     // Summary
     csvRows.push('Summary');
     csvRows.push(`Total Participants: ${event.participantCount}`);
@@ -3181,29 +3076,31 @@ export class AdminService {
     csvRows.push(`Total Amount Sprayed: ${event.totalSprayed}`);
     csvRows.push(`Unique Sprayers: ${event.uniqueSprayerCount}`);
     csvRows.push('');
-    
+
     // Participants
     csvRows.push('Participants');
     csvRows.push('User ID,Email,First Name,Last Name,Role');
     for (const participant of event.participants) {
       csvRows.push(
-        `${participant.user.id},${participant.user.email},${participant.user.firstName || ''},${participant.user.lastName || ''},${participant.role}`
+        `${participant.user.id},${participant.user.email},${participant.user.firstName || ''},${participant.user.lastName || ''},${participant.role}`,
       );
     }
     csvRows.push('');
-    
+
     // Sprays
     csvRows.push('Sprays');
     csvRows.push('Spray ID,Sprayer,Receiver,Amount,Note,Created At');
     for (const spray of event.sprays) {
       const sprayerName = spray.sprayerWallet.customer.user
-        ? `${spray.sprayerWallet.customer.user.firstName || ''} ${spray.sprayerWallet.customer.user.lastName || ''}`.trim() || spray.sprayerWallet.customer.user.email
+        ? `${spray.sprayerWallet.customer.user.firstName || ''} ${spray.sprayerWallet.customer.user.lastName || ''}`.trim() ||
+          spray.sprayerWallet.customer.user.email
         : 'Anonymous';
       const receiverName = spray.receiverWallet.customer.user
-        ? `${spray.receiverWallet.customer.user.firstName || ''} ${spray.receiverWallet.customer.user.lastName || ''}`.trim() || spray.receiverWallet.customer.user.email
+        ? `${spray.receiverWallet.customer.user.firstName || ''} ${spray.receiverWallet.customer.user.lastName || ''}`.trim() ||
+          spray.receiverWallet.customer.user.email
         : 'Unknown';
       csvRows.push(
-        `${spray.id},${sprayerName},${receiverName},${spray.totalAmount.toString()},${spray.note || ''},${spray.createdAt.toISOString()}`
+        `${spray.id},${sprayerName},${receiverName},${spray.totalAmount.toString()},${spray.note || ''},${spray.createdAt.toISOString()}`,
       );
     }
 
@@ -3435,14 +3332,14 @@ export class AdminService {
 
     // Generate CSV content
     const csvRows: string[] = [];
-    
+
     // Header
     csvRows.push('Transaction Receipt');
     csvRows.push(`Transaction ID: ${transaction.id}`);
     csvRows.push(`Reference: ${transaction.reference}`);
     csvRows.push(`Date: ${transaction.createdAt.toISOString()}`);
     csvRows.push('');
-    
+
     // Transaction Details
     csvRows.push('Transaction Details');
     csvRows.push(`Type: ${transaction.type}`);
@@ -3453,16 +3350,18 @@ export class AdminService {
     csvRows.push(`Narration: ${transaction.narration || ''}`);
     csvRows.push(`External Reference: ${transaction.externalReference || ''}`);
     csvRows.push('');
-    
+
     // User Details
     if (transaction.wallet?.customer?.user) {
       csvRows.push('User Details');
       csvRows.push(`User ID: ${transaction.wallet.customer.user.id}`);
       csvRows.push(`Email: ${transaction.wallet.customer.user.email}`);
-      csvRows.push(`Name: ${transaction.wallet.customer.user.firstName || ''} ${transaction.wallet.customer.user.lastName || ''}`.trim());
+      csvRows.push(
+        `Name: ${transaction.wallet.customer.user.firstName || ''} ${transaction.wallet.customer.user.lastName || ''}`.trim(),
+      );
       csvRows.push('');
     }
-    
+
     // Event Details (if spray transaction)
     if (transaction.spray?.event) {
       csvRows.push('Event Details');
@@ -3585,300 +3484,12 @@ export class AdminService {
   }
 
   /**
-   * Approve withdrawal (if manual approval workflow exists)
-   * For withdrawals that require approval (exceed daily limit), processes the payout
-   * For other withdrawals, just updates status to PROCESSING
+   * Admin approval for over-limit withdrawals has been removed; payouts must stay within daily limits.
    */
-  async approveWithdrawal(payoutTransactionId: string, adminId: string) {
-    const payoutTransaction = await this.databaseService.payoutTransaction.findUnique({
-      where: { id: payoutTransactionId },
-      include: {
-        transaction: true,
-        wallet: {
-          include: {
-            customer: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        },
-        bankAccount: true,
-      },
-    });
-
-    if (!payoutTransaction) {
-      throw new NotFoundException('Withdrawal not found');
-    }
-
-    // If already successful, return as-is
-    if (payoutTransaction.status === PayoutStatus.SUCCESS) {
-      return payoutTransaction;
-    }
-
-    // Check if this withdrawal requires approval
-    if (payoutTransaction.requiresApproval && payoutTransaction.status === PayoutStatus.PENDING) {
-      // Process the payout that was pending approval
-      const providerPayload = payoutTransaction.providerPayload as any;
-      const payoutData = providerPayload?.payoutData;
-
-      if (!payoutData) {
-        throw new BadRequestException('Payout data not found. Cannot process approval.');
-      }
-
-      // Re-check balance and limit before processing
-      const wallet = await this.databaseService.wallet.findUnique({
-        where: { id: payoutTransaction.walletId },
-        include: {
-          customer: {
-            include: {
-              user: true,
-            },
-          },
-        },
-      });
-
-      if (!wallet) {
-        throw new NotFoundException('Wallet not found');
-      }
-
-      if (!wallet.virtualAccountNumber) {
-        throw new BadRequestException('Wallet does not have a virtual account number');
-      }
-
-      const virtualAccountNumber = wallet.virtualAccountNumber; // Type narrowing
-      const grossAmount = payoutTransaction.amount;
-      const { fee, netAmount, feePercentage } = await calculatePayoutFee(grossAmount, this.configService);
-
-      // Process payout within a transaction
-      const result = await this.databaseService.$transaction(
-        async (tx: Prisma.TransactionClient) => {
-          // Lock wallet
-          await tx.$queryRaw`
-            SELECT id FROM "Wallet" WHERE id = ${wallet.id} FOR UPDATE
-          `;
-
-          // Re-check balance
-          const lockedWallet = await tx.wallet.findUnique({
-            where: { id: wallet.id },
-            select: { id: true, availableBalance: true, ledgerBalance: true, currencyId: true },
-          });
-
-          if (!lockedWallet) {
-            throw new NotFoundException('Wallet not found after lock');
-          }
-
-          if (lockedWallet.availableBalance.lt(grossAmount)) {
-            throw new BadRequestException('Insufficient balance. Wallet balance has changed since request was made.');
-          }
-
-          // Process payout - update existing PayoutTransaction instead of creating new one
-          // This is similar to processPayoutTransaction but updates the existing record
-          const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
-          const userTransactionRef = `PAYOUT-${randomUUID()}`;
-          const providerTransactionRef = randomUUID();
-
-          // Step 1: Transfer full amount from user wallet to organization wallet
-          const userToOrgProviderResponse = await this.providerService.walletToWalletTransfer({
-            fromWalletId: virtualAccountNumber,
-            toWalletId: adminWalletAccountNumber,
-            amount: grossAmount.toNumber(),
-            currencyId: wallet.currencyId || "45852f0c-84fa-410c-b66c-1ffec56e5cd8",
-            description: `Payout fee transfer: ${payoutData.description || 'Wallet payout'}`,
-            reference: userTransactionRef,
-          });
-
-          if (!userToOrgProviderResponse.success) {
-            throw new BadRequestException(
-              `Failed to transfer to organization wallet: ${userToOrgProviderResponse.message}`,
-            );
-          }
-
-          // Create DEBIT transaction for user wallet
-          const userDebitTransaction = await tx.transaction.create({
-            data: {
-              walletId: wallet.id,
-              type: TransactionType.PAYOUT,
-              direction: TransactionDirection.DEBIT,
-              status: TransactionStatus.SUCCESS,
-              amount: grossAmount,
-              currencyId: wallet.currencyId,
-              reference: userTransactionRef,
-              externalReference: null,
-              narration: `Payout to ${payoutData.toAccountNumber}: ${payoutData.description || 'Wallet payout'}`,
-              metadata: {
-                fee: fee.toString(),
-                netAmount: netAmount.toString(),
-                feePercentage: feePercentage.toString(),
-                feeType: 'payout',
-                destinationAccount: payoutData.toAccountNumber,
-                destinationBank: payoutData.bankCode,
-              },
-            },
-          });
-
-          // Get destination account name
-          let destinationAccountName = payoutData.recipientName as string;
-          if (!destinationAccountName) {
-            try {
-              const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
-                payoutData.bankCode as string,
-                payoutData.toAccountNumber as string,
-              );
-              destinationAccountName = nameEnquiry.accountName;
-            } catch (error) {
-              this.logger.warn(`Name enquiry failed: ${error.message}. Using 'Unknown'.`);
-              destinationAccountName = 'Unknown';
-            }
-          }
-
-          // Get source account name
-          const customerName = wallet.customer.firstName && wallet.customer.lastName
-            ? `${wallet.customer.firstName} ${wallet.customer.lastName}`
-            : null;
-          const userName = wallet.customer.user.firstName && wallet.customer.user.lastName
-            ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
-            : null;
-          const sourceAccountName = wallet.name || customerName || userName || 'Unknown';
-
-          // Step 2: Transfer netAmount from organization wallet to external bank
-          const orgToBankProviderResponse = await this.providerService.interBankTransfer({
-            destinationBankCode: payoutData.bankCode as string,
-            destinationAccountNumber: payoutData.toAccountNumber as string,
-            destinationAccountName: destinationAccountName,
-            sourceAccountNumber: adminWalletAccountNumber,
-            sourceAccountName: sourceAccountName,
-            remarks: (payoutData.description as string) || 'Wallet payout',
-            amount: netAmount.toNumber(),
-            currencyId: payoutData.currencyId as string,
-            customerTransactionReference: providerTransactionRef,
-          });
-
-          // Update wallet balance
-          const newUserAvailableBalance = normalizeToKobo(lockedWallet.availableBalance.minus(grossAmount));
-          const newUserLedgerBalance = normalizeToKobo(lockedWallet.ledgerBalance.minus(grossAmount));
-
-          await tx.wallet.update({
-            where: { id: wallet.id },
-            data: {
-              availableBalance: newUserAvailableBalance,
-              ledgerBalance: newUserLedgerBalance,
-            },
-          });
-
-          // Update existing PayoutTransaction with processing info
-          await tx.payoutTransaction.update({
-            where: { id: payoutTransactionId },
-            data: {
-              requiresApproval: false,
-              approvedBy: adminId,
-              approvedAt: new Date(),
-              status: PayoutStatus.PROCESSING, // Will be updated to SUCCESS by webhook
-              transactionId: userDebitTransaction.id, // Update to real transaction
-              providerTransactionRef: providerTransactionRef,
-              providerPayload: {
-                userToOrgTransfer: userToOrgProviderResponse.data,
-                orgToBankTransfer: orgToBankProviderResponse,
-                netAmount: netAmount.toString(),
-              },
-            },
-          });
-
-          // Delete placeholder transaction
-          await tx.transaction.delete({
-            where: { id: payoutTransaction.transactionId },
-          });
-
-          // Create AdminFee record
-          const normalizedFeePercentage = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
-          await tx.adminFee.create({
-            data: {
-              walletId: wallet.id,
-              customerId: wallet.customerId,
-              amount: fee,
-              feeType: 'payout',
-              feePercentage: normalizedFeePercentage,
-              relatedTransactionId: userDebitTransaction.id,
-              payoutTransactionId: payoutTransactionId,
-              status: 'COLLECTED',
-              grossAmount: grossAmount,
-              netAmount: netAmount,
-              adminWalletAccountNumber: adminWalletAccountNumber,
-              metadata: {
-                destinationAccount: payoutData.toAccountNumber,
-                destinationBank: payoutData.bankCode,
-                recipientName: destinationAccountName,
-                providerTransactionRef: providerTransactionRef,
-                userToOrgTransfer: userToOrgProviderResponse.data,
-                orgToBankTransfer: orgToBankProviderResponse,
-              },
-            },
-          });
-
-          // Record withdrawal (outside transaction)
-          if (wallet.customer.tier === KycTier.Tier_2 || wallet.customer.tier === KycTier.Tier_3) {
-            this.withdrawalLimitService.recordWithdrawal(wallet.customer.id, grossAmount).catch((error) => {
-              this.logger.error(`Failed to record withdrawal: ${error.message}`);
-            });
-          }
-
-          return {
-            success: true,
-            message: orgToBankProviderResponse.message || 'Payout approved and processed successfully',
-            transactionRef: providerTransactionRef,
-            payoutTransactionId: payoutTransactionId,
-          };
-        },
-        {
-          timeout: 15000,
-        },
-      );
-
-      // Log admin action
-      await this.logAdminAction(adminId, 'WITHDRAWAL_APPROVED', 'PAYOUT_TRANSACTION', payoutTransactionId, {
-        amount: payoutTransaction.amount.toString(),
-        previousStatus: payoutTransaction.status,
-        newStatus: PayoutStatus.PROCESSING,
-        requiresApproval: true,
-      });
-
-      // Fetch updated payout transaction
-      const updatedPayout = await this.databaseService.payoutTransaction.findUnique({
-        where: { id: payoutTransactionId },
-        include: {
-          transaction: true,
-          wallet: {
-            include: {
-              customer: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-          bankAccount: true,
-        },
-      });
-
-      return updatedPayout;
-    } else {
-      // For withdrawals that don't require approval, just update status
-      const updatedPayout = await this.databaseService.payoutTransaction.update({
-        where: { id: payoutTransactionId },
-        data: {
-          status: PayoutStatus.PROCESSING,
-        },
-      });
-
-      // Log admin action
-      await this.logAdminAction(adminId, 'WITHDRAWAL_APPROVED', 'PAYOUT_TRANSACTION', payoutTransactionId, {
-        amount: payoutTransaction.amount.toString(),
-        previousStatus: payoutTransaction.status,
-        newStatus: PayoutStatus.PROCESSING,
-      });
-
-      return updatedPayout;
-    }
+  async approveWithdrawal(_payoutTransactionId: string, _adminId: string) {
+    throw new GoneException(
+      'Admin withdrawal approval is disabled. Users must withdraw within their daily limit or use a smaller amount.',
+    );
   }
 
   /**

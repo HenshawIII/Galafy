@@ -90,10 +90,7 @@ export class EventRemindersTask {
 
       this.logger.log(`Sent 10-minute reminders for ${events.length} event(s)`);
     } catch (error: any) {
-      this.logger.error(
-        `Error sending 10-minute reminders: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Error sending 10-minute reminders: ${error.message}`, error.stack);
     }
   }
 
@@ -175,10 +172,7 @@ export class EventRemindersTask {
 
       this.logger.log(`Updated ${events.length} event(s) to LIVE and sent start notifications`);
     } catch (error: any) {
-      this.logger.error(
-        `Error sending start notifications: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Error sending start notifications: ${error.message}`, error.stack);
     }
   }
 
@@ -240,10 +234,7 @@ export class EventRemindersTask {
         `Updated ${eventsToLive.length} event(s) to LIVE status: ${eventsToLive.map((e) => e.code).join(', ')}`,
       );
     } catch (error: any) {
-      this.logger.error(
-        `Error updating scheduled events to LIVE status: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Error updating scheduled events to LIVE status: ${error.message}`, error.stack);
     }
   }
 
@@ -303,11 +294,7 @@ export class EventRemindersTask {
         `Updated ${endedEvents.length} event(s) to ENDED status: ${endedEvents.map((e) => e.code).join(', ')}`,
       );
     } catch (error: any) {
-      this.logger.error(
-        `Error updating ended events status: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Error updating ended events status: ${error.message}`, error.stack);
     }
   }
 }
-

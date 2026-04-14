@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  ExecutionContext,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
 import { IS_ADMIN_PUBLIC_KEY } from './decorators/public.decorator.js';
@@ -15,10 +11,10 @@ export class AdminJwtAuthGuard extends AuthGuard('admin-jwt') {
 
   canActivate(context: ExecutionContext) {
     // Check if route is marked as public
-    const isPublic = this.reflector.getAllAndOverride<boolean>(
-      IS_ADMIN_PUBLIC_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_ADMIN_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
     if (isPublic) {
       return true;
@@ -34,28 +30,19 @@ export class AdminJwtAuthGuard extends AuthGuard('admin-jwt') {
       if (info) {
         switch (info.name) {
           case 'TokenExpiredError':
-            throw new UnauthorizedException(
-              'Your admin session has expired. Please log in again.',
-            );
+            throw new UnauthorizedException('Your admin session has expired. Please log in again.');
           case 'JsonWebTokenError':
-            throw new UnauthorizedException(
-              'Invalid admin authentication token. Please provide a valid token.',
-            );
+            throw new UnauthorizedException('Invalid admin authentication token. Please provide a valid token.');
           case 'NotBeforeError':
             throw new UnauthorizedException('Token is not yet valid.');
           default:
             // Check if token is missing
-            if (
-              info.message === 'No auth token' ||
-              info.message?.includes('No auth token')
-            ) {
+            if (info.message === 'No auth token' || info.message?.includes('No auth token')) {
               throw new UnauthorizedException(
                 'Admin authentication token is required. Please provide a valid Bearer token.',
               );
             }
-            throw new UnauthorizedException(
-              'Admin authentication failed. Please log in again.',
-            );
+            throw new UnauthorizedException('Admin authentication failed. Please log in again.');
         }
       }
 
@@ -65,9 +52,7 @@ export class AdminJwtAuthGuard extends AuthGuard('admin-jwt') {
       }
 
       // Default case: no admin and no specific error info
-      throw new UnauthorizedException(
-        'Admin authentication required. Please provide a valid authentication token.',
-      );
+      throw new UnauthorizedException('Admin authentication required. Please provide a valid authentication token.');
     }
 
     // IMPORTANT: Attach admin to request.admin (Passport attaches to request.user by default)
@@ -77,4 +62,3 @@ export class AdminJwtAuthGuard extends AuthGuard('admin-jwt') {
     return admin;
   }
 }
-

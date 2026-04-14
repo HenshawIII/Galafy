@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
-import { WalletmoduleService } from '../walletmodule.service.js';
-import { ProviderService } from '../../provider/provider.service.js';
 import { DatabaseService } from '../../database/database.service.js';
 import * as csv from 'fast-csv';
 import PDFDocument from 'pdfkit';
-import { toDisplayAmount } from '../../common/utils/money.util.js';
+import { toDisplayAmount, normalizeToKobo } from '../../common/utils/money.util.js';
+import { TransactionDirection } from '../../../generated/prisma/enums.js';
+import { Decimal } from '@prisma/client/runtime/library';
 
 interface TransactionData {
   id: string;
@@ -18,15 +18,8 @@ interface TransactionData {
 
 @Injectable()
 export class WalletExportService {
-  constructor(
-    private readonly walletmoduleService: WalletmoduleService,
-    private readonly providerService: ProviderService,
-    private readonly databaseService: DatabaseService,
-  ) {}
+  constructor(private readonly databaseService: DatabaseService) {}
 
-  /**
-   * Verify wallet ownership
-   */
   async verifyWalletOwnership(accountNumber: string, userId: string): Promise<void> {
     const wallet = await this.databaseService.wallet.findFirst({
       where: { virtualAccountNumber: accountNumber },
@@ -38,57 +31,64 @@ export class WalletExportService {
     }
 
     if (wallet.customer.userId !== userId) {
-      throw new UnauthorizedException('You do not have permission to export this wallet\'s transaction history');
+      throw new UnauthorizedException("You do not have permission to export this wallet's transaction history");
     }
   }
 
-  /**
-   * Fetch all transactions for a date range (handles pagination)
-   */
-  async fetchAllTransactions(
-    accountNumber: string,
-    fromDate: string,
-    toDate: string,
-  ): Promise<TransactionData[]> {
-    const allTransactions: TransactionData[] = [];
-    let currentPage = 1;
-    const pageSize = 100; // Fetch 100 at a time
-    let hasMore = true;
-
-    while (hasMore) {
-      const response = await this.providerService.getWalletHistoryByAccountNumber(
-        accountNumber,
-        fromDate,
-        toDate,
-        currentPage,
-        pageSize,
-      );
-
-      if (response.transactions && response.transactions.length > 0) {
-        allTransactions.push(...response.transactions);
-      }
-
-      // Check if there are more pages
-      if (response.total && response.page && response.limit) {
-        const totalPages = Math.ceil(response.total / response.limit);
-        hasMore = currentPage < totalPages;
-        currentPage++;
-      } else {
-        hasMore = false;
-      }
+  async fetchAllTransactions(accountNumber: string, fromDate: string, toDate: string): Promise<TransactionData[]> {
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: accountNumber },
+    });
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
     }
 
-    return allTransactions;
+    const startRange = new Date(`${fromDate}T00:00:00.000Z`);
+    const endRange = new Date(`${toDate}T23:59:59.999Z`);
+
+    const priorRows = await this.databaseService.transaction.findMany({
+      where: { walletId: wallet.id, createdAt: { lt: startRange } },
+      select: { direction: true, amount: true },
+    });
+
+    let priorNet = new Decimal(0);
+    for (const r of priorRows) {
+      priorNet = priorNet.plus(r.direction === TransactionDirection.CREDIT ? r.amount : r.amount.neg());
+    }
+
+    const rows = await this.databaseService.transaction.findMany({
+      where: {
+        walletId: wallet.id,
+        createdAt: { gte: startRange, lte: endRange },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    let run = priorNet;
+    const out: TransactionData[] = [];
+    for (const t of rows) {
+      run = normalizeToKobo(run.plus(t.direction === TransactionDirection.CREDIT ? t.amount : t.amount.neg()));
+      out.push({
+        id: t.id,
+        type: t.direction === TransactionDirection.CREDIT ? 'CREDIT' : 'DEBIT',
+        amount: toDisplayAmount(t.amount),
+        balance: toDisplayAmount(run),
+        description: t.narration ?? undefined,
+        reference: t.reference,
+        timestamp: t.createdAt.toISOString(),
+      });
+    }
+
+    return out;
   }
 
-  /**
-   * Generate CSV file from transaction data
-   */
-  async generateCSV(transactions: TransactionData[], walletInfo: { accountNumber: string; customerName?: string }): Promise<Buffer> {
+  async generateCSV(
+    transactions: TransactionData[],
+    walletInfo: { accountNumber: string; customerName?: string },
+  ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const rows: any[] = [];
-      
-      // Add header row
+
       rows.push([
         'Date',
         'Time',
@@ -100,12 +100,11 @@ export class WalletExportService {
         'Transaction ID',
       ]);
 
-      // Add transaction rows
       transactions.forEach((tx) => {
         const date = new Date(tx.timestamp);
         const dateStr = date.toISOString().split('T')[0];
         const timeStr = date.toTimeString().split(' ')[0];
-        
+
         rows.push([
           dateStr,
           timeStr,
@@ -118,7 +117,6 @@ export class WalletExportService {
         ]);
       });
 
-      // Convert to CSV using fast-csv
       const chunks: Buffer[] = [];
       const stream = csv.write(rows, { headers: false });
 
@@ -132,9 +130,6 @@ export class WalletExportService {
     });
   }
 
-  /**
-   * Generate PDF file from transaction data
-   */
   async generatePDF(
     transactions: TransactionData[],
     walletInfo: { accountNumber: string; customerName?: string; availableBalance?: number; ledgerBalance?: number },
@@ -147,11 +142,9 @@ export class WalletExportService {
       doc.on('end', () => resolve(Buffer.concat(buffers)));
       doc.on('error', (error) => reject(error));
 
-      // Header
       doc.fontSize(20).text('Transaction History', { align: 'center' });
       doc.moveDown();
-      
-      // Wallet Information
+
       doc.fontSize(12);
       doc.text(`Account Number: ${walletInfo.accountNumber}`);
       if (walletInfo.customerName) {
@@ -165,7 +158,6 @@ export class WalletExportService {
       }
       doc.moveDown();
 
-      // Summary
       const credits = transactions.filter((tx) => tx.type === 'CREDIT');
       const debits = transactions.filter((tx) => tx.type === 'DEBIT');
       const totalCredits = credits.reduce((sum, tx) => sum + tx.amount, 0);
@@ -179,11 +171,9 @@ export class WalletExportService {
       doc.text(`Total Transactions: ${transactions.length}`);
       doc.moveDown();
 
-      // Transactions Table Header
       doc.fontSize(12).text('Transactions', { underline: true });
       doc.moveDown(0.5);
 
-      // Table headers
       const tableTop = doc.y;
       const tableLeft = 50;
       const colWidths = [80, 60, 80, 80, 100, 120, 80];
@@ -195,19 +185,27 @@ export class WalletExportService {
       doc.text('Type', tableLeft + colWidths[0] + colWidths[1], tableTop);
       doc.text('Amount', tableLeft + colWidths[0] + colWidths[1] + colWidths[2], tableTop);
       doc.text('Balance', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], tableTop);
-      doc.text('Description', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], tableTop);
-      doc.text('Reference', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5], tableTop);
+      doc.text(
+        'Description',
+        tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4],
+        tableTop,
+      );
+      doc.text(
+        'Reference',
+        tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5],
+        tableTop,
+      );
 
-      // Draw header line
-      doc.moveTo(tableLeft, tableTop + 15).lineTo(tableLeft + 700, tableTop + 15).stroke();
+      doc
+        .moveTo(tableLeft, tableTop + 15)
+        .lineTo(tableLeft + 700, tableTop + 15)
+        .stroke();
       doc.moveDown();
 
-      // Transaction rows
       doc.font('Helvetica').fontSize(9);
       let yPos = doc.y;
 
       transactions.forEach((tx, index) => {
-        // Check if we need a new page
         if (yPos > 750) {
           doc.addPage();
           yPos = 50;
@@ -221,33 +219,42 @@ export class WalletExportService {
         doc.text(timeStr, tableLeft + colWidths[0], yPos);
         doc.text(tx.type === 'CREDIT' ? 'Credit' : 'Debit', tableLeft + colWidths[0] + colWidths[1], yPos);
         doc.text(`₦${tx.amount.toFixed(2)}`, tableLeft + colWidths[0] + colWidths[1] + colWidths[2], yPos);
-        doc.text(`₦${tx.balance.toFixed(2)}`, tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], yPos);
-        doc.text((tx.description || '').substring(0, 30), tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], yPos, { width: colWidths[4], ellipsis: true });
-        doc.text((tx.reference || '').substring(0, 20), tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5], yPos, { width: colWidths[5], ellipsis: true });
+        doc.text(
+          `₦${tx.balance.toFixed(2)}`,
+          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3],
+          yPos,
+        );
+        doc.text(
+          (tx.description || '').substring(0, 30),
+          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4],
+          yPos,
+          { width: colWidths[4], ellipsis: true },
+        );
+        doc.text(
+          (tx.reference || '').substring(0, 20),
+          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5],
+          yPos,
+          { width: colWidths[5], ellipsis: true },
+        );
 
         yPos += rowHeight;
 
-        // Draw row separator
         if (index < transactions.length - 1) {
-          doc.moveTo(tableLeft, yPos - 5).lineTo(tableLeft + 700, yPos - 5).stroke();
+          doc
+            .moveTo(tableLeft, yPos - 5)
+            .lineTo(tableLeft + 700, yPos - 5)
+            .stroke();
         }
       });
 
-      // Footer
-      doc.fontSize(8).text(
-        `Generated on ${new Date().toLocaleString()}`,
-        50,
-        doc.page.height - 50,
-        { align: 'center' },
-      );
+      doc
+        .fontSize(8)
+        .text(`Generated on ${new Date().toLocaleString()}`, 50, doc.page.height - 50, { align: 'center' });
 
       doc.end();
     });
   }
 
-  /**
-   * Export wallet transaction history
-   */
   async exportWalletHistory(
     accountNumber: string,
     userId: string,
@@ -255,10 +262,8 @@ export class WalletExportService {
     startDate: string,
     endDate: string,
   ): Promise<{ buffer: Buffer; filename: string; mimeType: string }> {
-    // Verify wallet ownership
     await this.verifyWalletOwnership(accountNumber, userId);
 
-    // Get wallet info
     const wallet = await this.databaseService.wallet.findFirst({
       where: { virtualAccountNumber: accountNumber },
       include: { customer: { include: { user: true } } },
@@ -268,10 +273,9 @@ export class WalletExportService {
       throw new NotFoundException('Wallet not found');
     }
 
-    // Validate date range
     const fromDate = new Date(startDate);
     const toDate = new Date(endDate);
-    
+
     if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
       throw new BadRequestException('Invalid date format. Use YYYY-MM-DD');
     }
@@ -280,24 +284,22 @@ export class WalletExportService {
       throw new BadRequestException('Start date must be before or equal to end date');
     }
 
-    // Fetch all transactions
     const transactions = await this.fetchAllTransactions(accountNumber, startDate, endDate);
 
     if (transactions.length === 0) {
       throw new NotFoundException('No transactions found for the specified date range');
     }
 
-    // Prepare wallet info
     const walletInfo = {
       accountNumber,
-      customerName: wallet.customer.user?.firstName && wallet.customer.user?.lastName
-        ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
-        : undefined,
+      customerName:
+        wallet.customer.user?.firstName && wallet.customer.user?.lastName
+          ? `${wallet.customer.user.firstName} ${wallet.customer.user.lastName}`
+          : undefined,
       availableBalance: wallet.availableBalance ? toDisplayAmount(wallet.availableBalance) : undefined,
       ledgerBalance: wallet.ledgerBalance ? toDisplayAmount(wallet.ledgerBalance) : undefined,
     };
 
-    // Generate file based on format
     let buffer: Buffer;
     let filename: string;
     let mimeType: string;
@@ -315,7 +317,3 @@ export class WalletExportService {
     return { buffer, filename, mimeType };
   }
 }
-
-
-
-

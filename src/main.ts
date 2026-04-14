@@ -3,7 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module.js';
-import {config} from 'dotenv';
+import { config } from 'dotenv';
 config();
 
 async function bootstrap() {
@@ -13,7 +13,7 @@ async function bootstrap() {
 
   // Configure Socket.IO adapter for WebSocket support
   app.useWebSocketAdapter(new IoAdapter(app));
-  
+
   // Enable CORS for mobile apps (allow all origins)
   app.enableCors({
     origin: true, // Allow all origins for mobile apps
@@ -34,10 +34,10 @@ async function bootstrap() {
   );
 
   const port = process.env.PORT || 3000;
-  
+
   // Get base URL from environment or default to localhost
   const baseUrl = process.env.API_BASE_URL || process.env.APP_URL || `http://localhost:${port}`;
-  
+
   // Swagger/OpenAPI documentation setup
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Gala API')
@@ -65,18 +65,18 @@ async function bootstrap() {
       'bearer', // Security scheme name
     )
     .build();
-  
+
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document);
-  
+
   // Expose OpenAPI JSON spec endpoint for Postman import
   app.getHttpAdapter().get('/api/docs-json', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.send(document);
   });
-  
+
   await app.listen(port, '0.0.0.0');
-  
+
   console.log(`Application is running on: ${baseUrl}/api`);
   console.log(`Swagger documentation available at: ${baseUrl}/api/docs`);
   console.log(`OpenAPI JSON spec available at: ${baseUrl}/api/docs-json`);

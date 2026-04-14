@@ -12,13 +12,19 @@ import { DatabaseService } from '../database/database.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
 import { SearchEventDto } from './dto/search-event.dto.js';
-import { EventStatus, EventRole, EventVisibility, KycTier } from '../../generated/prisma/enums.js';
+import { EventStatus, EventRole, EventVisibility, KycTier, SprayStatus } from '../../generated/prisma/enums.js';
 import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ConfigService } from '../config/config.service.js';
-import { getWATDateForComparison, parseWATDate, formatWATDate as formatWATDateUtil, getWATISOString, getCurrentWATAsUTC } from '../common/utils/timezone.util.js';
+import {
+  getWATDateForComparison,
+  parseWATDate,
+  formatWATDate as formatWATDateUtil,
+  getWATISOString,
+  getCurrentWATAsUTC,
+} from '../common/utils/timezone.util.js';
 
 @Injectable()
 export class EventsService {
@@ -51,17 +57,17 @@ export class EventsService {
    */
   private convertEventDatesToWAT(event: any): any {
     if (!event) return event;
-    
+
     const converted = { ...event };
-    
+
     if (event.startsAt) {
       converted.startsAt = getWATISOString(event.startsAt);
     }
-    
+
     if (event.endsAt) {
       converted.endsAt = getWATISOString(event.endsAt);
     }
-    
+
     return converted;
   }
 
@@ -79,10 +85,12 @@ export class EventsService {
     }
 
     // CELEBRANT and PERFORMER require Tier_2 or higher
-    if ((role === EventRole.CELEBRANT || role === EventRole.PERFORMER) && 
-        (customer.tier === KycTier.Tier_0 || customer.tier === KycTier.Tier_1)) {
+    if (
+      (role === EventRole.CELEBRANT || role === EventRole.PERFORMER) &&
+      (customer.tier === KycTier.Tier_0 || customer.tier === KycTier.Tier_1)
+    ) {
       throw new ForbiddenException(
-        `You need at least KYC Tier_2 to be a ${role}. Your current tier is ${customer.tier}.`
+        `You need at least KYC Tier_2 to be a ${role}. Your current tier is ${customer.tier}.`,
       );
     }
   }
@@ -135,15 +143,12 @@ export class EventsService {
     });
 
     // Get default event duration from config
-    const defaultDurationHours = await this.configService.getConfig<number>(
-      'EVENT_DEFAULT_DURATION_HOURS',
-      24,
-    );
+    const defaultDurationHours = await this.configService.getConfig<number>('EVENT_DEFAULT_DURATION_HOURS', 24);
 
     // Check each existing event for overlap
     // All dates are stored in UTC in the database, so we compare UTC timestamps directly
     const now = new Date(); // Current UTC time
-    
+
     for (const existingEvent of existingEvents) {
       // Calculate effective end date for existing event
       // Dates from database are already UTC
@@ -166,7 +171,8 @@ export class EventsService {
       // Check if events would overlap in time
       // All dates are UTC, so direct comparison works correctly
       // Events overlap if: newEvent starts before existingEvent ends AND newEvent ends after existingEvent starts
-      const eventsOverlap = newEventStartAt < existingEventEndAt && newEventEffectiveEndAt > new Date(existingEvent.startsAt);
+      const eventsOverlap =
+        newEventStartAt < existingEventEndAt && newEventEffectiveEndAt > new Date(existingEvent.startsAt);
 
       if (!eventsOverlap) {
         continue; // No time overlap, allow both events
@@ -181,7 +187,7 @@ export class EventsService {
       // Block to prevent 2 LIVE events at the same time
       const existingEventStartAt = new Date(existingEvent.startsAt);
       const existingEventEndAtDate = new Date(existingEventEndAt);
-      
+
       // Format dates for error message in a user-friendly format (WAT timezone)
       const formatDate = (date: Date) => {
         return formatWATDateUtil(date, {
@@ -193,18 +199,16 @@ export class EventsService {
           hour12: true,
         });
       };
-      
+
       const startDateStr = formatDate(existingEventStartAt);
       const endDateStr = formatDate(existingEventEndAtDate);
-      
+
       // Build error message based on whether existing event has an end date
-      const dateRangeStr = existingEvent.endsAt
-        ? `${startDateStr} to ${endDateStr}`
-        : `starting ${startDateStr}`;
+      const dateRangeStr = existingEvent.endsAt ? `${startDateStr} to ${endDateStr}` : `starting ${startDateStr}`;
 
       const eventType = existingEvent.status === EventStatus.LIVE ? 'live' : 'scheduled';
       const newEventType = newEventWillBeLive ? 'live' : 'scheduled';
-      
+
       throw new BadRequestException(
         `You already have a ${eventType} event. You can only have one live event running at a time.`,
       );
@@ -232,14 +236,14 @@ export class EventsService {
     // Validate that role is PERFORMER or CELEBRANT (not ATTENDEE)
     if (creatorRole === EventRole.ATTENDEE) {
       throw new BadRequestException(
-        'ATTENDEE role is not allowed for event creators. Please use PERFORMER or CELEBRANT.'
+        'ATTENDEE role is not allowed for event creators. Please use PERFORMER or CELEBRANT.',
       );
     }
 
     // Validate that taggedPerformer is not provided when role is PERFORMER
     if (creatorRole === EventRole.PERFORMER && createEventDto.taggedPerformer) {
       throw new BadRequestException(
-        'taggedPerformer field is invalid when creating an event as PERFORMER. Only CELEBRANTs can tag performers.'
+        'taggedPerformer field is invalid when creating an event as PERFORMER. Only CELEBRANTs can tag performers.',
       );
     }
 
@@ -247,7 +251,7 @@ export class EventsService {
     if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
       const performerIdentifier = createEventDto.taggedPerformer.trim();
       const isEmail = performerIdentifier.includes('@');
-      
+
       let performerUser;
       if (isEmail) {
         performerUser = await this.databaseService.user.findUnique({
@@ -263,7 +267,7 @@ export class EventsService {
 
       if (!performerUser) {
         throw new NotFoundException(
-          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`
+          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`,
         );
       }
 
@@ -275,13 +279,13 @@ export class EventsService {
 
       if (!performerCustomer) {
         throw new BadRequestException(
-          `Tagged performer (${performerIdentifier}) does not have a customer record. They need to complete KYC registration.`
+          `Tagged performer (${performerIdentifier}) does not have a customer record. They need to complete KYC registration.`,
         );
       }
 
       if (performerCustomer.tier !== KycTier.Tier_2 && performerCustomer.tier !== KycTier.Tier_3) {
         throw new BadRequestException(
-          `Tagged performer (${performerIdentifier}) must have at least KYC Tier_2. Their current tier is ${performerCustomer.tier}.`
+          `Tagged performer (${performerIdentifier}) must have at least KYC Tier_2. Their current tier is ${performerCustomer.tier}.`,
         );
       }
     }
@@ -299,7 +303,7 @@ export class EventsService {
     // Only Tier_2 and Tier_3 users can create events (same requirement for both PERFORMER and CELEBRANT)
     if (customer.tier !== KycTier.Tier_2 && customer.tier !== KycTier.Tier_3) {
       throw new ForbiddenException(
-        `You need at least KYC Tier_2 to create events. Your current tier is ${customer.tier}. Please complete your KYC verification to upgrade.`
+        `You need at least KYC Tier_2 to create events. Your current tier is ${customer.tier}. Please complete your KYC verification to upgrade.`,
       );
     }
 
@@ -327,9 +331,7 @@ export class EventsService {
     // Parse dates assuming WAT timezone if no timezone specified
     // When goLiveInstantly is true, use getCurrentWATAsUTC to get current WAT time
     // converted to UTC format (matching parseWATDate format) for proper comparison
-    const startAt = createEventDto.goLiveInstantly 
-      ? getCurrentWATAsUTC() 
-      : parseWATDate(createEventDto.startAt);
+    const startAt = createEventDto.goLiveInstantly ? getCurrentWATAsUTC() : parseWATDate(createEventDto.startAt);
 
     // Validate endAt if provided (must be after startAt)
     let endAt: Date | null = null;
@@ -378,7 +380,7 @@ export class EventsService {
     if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
       const performerIdentifier = createEventDto.taggedPerformer.trim();
       const isEmail = performerIdentifier.includes('@');
-      
+
       // Lookup performer user (already validated above, so this should always succeed)
       if (isEmail) {
         performerUser = await this.databaseService.user.findUnique({
@@ -395,7 +397,7 @@ export class EventsService {
       // Safety check (should never happen since we validated above, but defensive programming)
       if (!performerUser) {
         throw new NotFoundException(
-          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`
+          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`,
         );
       }
 
@@ -452,7 +454,7 @@ export class EventsService {
           endsAt: endAt,
           enableLeaderboard: createEventDto.enableLeaderboard ?? true,
           anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? true,
-          taggedPerformer: creatorRole === EventRole.PERFORMER ? null : (createEventDto.taggedPerformer || null),
+          taggedPerformer: creatorRole === EventRole.PERFORMER ? null : createEventDto.taggedPerformer || null,
           visibility: createEventDto.visibility || EventVisibility.PUBLIC,
         },
       });
@@ -597,6 +599,7 @@ export class EventsService {
             },
           },
           sprays: {
+            where: { status: SprayStatus.CONFIRMED },
             include: {
               sprayerWallet: {
                 include: {
@@ -666,10 +669,7 @@ export class EventsService {
 
       // Format sprays with sprayer and receiver info
       const sprays = (event.sprays || [])
-        .filter((spray: any) => 
-          spray.sprayerWallet?.customer?.user && 
-          spray.receiverWallet?.customer?.user
-        )
+        .filter((spray: any) => spray.sprayerWallet?.customer?.user && spray.receiverWallet?.customer?.user)
         .map((spray: any) => ({
           id: spray.id,
           totalAmount: spray.totalAmount.toString(),
@@ -709,7 +709,7 @@ export class EventsService {
 
       // Convert dates to WAT format
       const eventWithWATDates = this.convertEventDatesToWAT(eventWithoutRawData);
-      
+
       return {
         ...eventWithWATDates,
         participants,
@@ -877,7 +877,7 @@ export class EventsService {
     const updateData: any = {};
     // Type assertion to access properties from PartialType
     const dto = updateEventDto as Partial<CreateEventDto> & { status?: EventStatus };
-    
+
     if (dto.title !== undefined) {
       updateData.title = dto.title;
       updateData.name = dto.title; // Keep name in sync
@@ -892,19 +892,17 @@ export class EventsService {
       updateData.sprayGoal = dto.sprayGoal !== null ? new Decimal(dto.sprayGoal) : null;
     }
     if (dto.minSprayAmount !== undefined) {
-      updateData.minSprayAmount = dto.minSprayAmount !== null 
-        ? new Decimal(dto.minSprayAmount) 
-        : null;
+      updateData.minSprayAmount = dto.minSprayAmount !== null ? new Decimal(dto.minSprayAmount) : null;
     }
     if (dto.startAt !== undefined) updateData.startsAt = parseWATDate(dto.startAt);
     if (dto.endAt !== undefined) {
       const newEndAt = dto.endAt ? parseWATDate(dto.endAt) : null;
       const currentStartAt = updateData.startsAt ? updateData.startsAt : event.startsAt;
-      
+
       if (newEndAt && newEndAt <= currentStartAt) {
         throw new BadRequestException('Event end date must be after start date');
       }
-      
+
       updateData.endsAt = newEndAt;
     }
     if (dto.enableLeaderboard !== undefined) updateData.enableLeaderboard = dto.enableLeaderboard;
@@ -1016,15 +1014,13 @@ export class EventsService {
     if (role === EventRole.CELEBRANT) {
       if (event.hostUserId !== userId) {
         throw new ForbiddenException(
-          'Only the event host can have the CELEBRANT role. Regular participants must join as ATTENDEE.'
+          'Only the event host can have the CELEBRANT role. Regular participants must join as ATTENDEE.',
         );
       }
     } else if (role === EventRole.PERFORMER) {
       // Check if user is the tagged performer
       if (!event.taggedPerformer) {
-        throw new BadRequestException(
-          'This event does not have a tagged performer. Only ATTENDEE role is available.'
-        );
+        throw new BadRequestException('This event does not have a tagged performer. Only ATTENDEE role is available.');
       }
 
       // Find the tagged performer user
@@ -1041,15 +1037,15 @@ export class EventsService {
 
       if (!taggedPerformerUser || taggedPerformerUser.id !== userId) {
         throw new ForbiddenException(
-          'Only the tagged performer can have the PERFORMER role. Regular participants must join as ATTENDEE.'
+          'Only the tagged performer can have the PERFORMER role. Regular participants must join as ATTENDEE.',
         );
       }
 
       // Check if there's already a PERFORMER
-      const existingPerformer = event.participants.find(p => p.role === EventRole.PERFORMER);
+      const existingPerformer = event.participants.find((p) => p.role === EventRole.PERFORMER);
       if (existingPerformer && existingPerformer.userId !== userId) {
         throw new ConflictException(
-          'This event already has a PERFORMER participant. Only one PERFORMER is allowed per event.'
+          'This event already has a PERFORMER participant. Only one PERFORMER is allowed per event.',
         );
       }
     } else if (role === EventRole.ATTENDEE) {
@@ -1057,7 +1053,7 @@ export class EventsService {
       // But prevent host from joining as ATTENDEE
       if (event.hostUserId === userId) {
         throw new ForbiddenException(
-          'Event host cannot join as ATTENDEE. The host must remain as CELEBRANT or PERFORMER.'
+          'Event host cannot join as ATTENDEE. The host must remain as CELEBRANT or PERFORMER.',
         );
       }
     }
@@ -1082,14 +1078,12 @@ export class EventsService {
         if (event.hostUserId === userId) {
           if (role === EventRole.ATTENDEE) {
             throw new ForbiddenException(
-              'Event host cannot change their role to ATTENDEE. The host must remain as CELEBRANT or PERFORMER.'
+              'Event host cannot change their role to ATTENDEE. The host must remain as CELEBRANT or PERFORMER.',
             );
           }
           // Host can only be CELEBRANT or PERFORMER
           if (role !== EventRole.CELEBRANT && role !== EventRole.PERFORMER) {
-            throw new ForbiddenException(
-              'Event host can only have CELEBRANT or PERFORMER role.'
-            );
+            throw new ForbiddenException('Event host can only have CELEBRANT or PERFORMER role.');
           }
         }
 
@@ -1099,14 +1093,14 @@ export class EventsService {
           const hasOtherNonAttendees = await this.hasNonAttendeeParticipant(eventId, userId);
           if (!hasOtherNonAttendees) {
             throw new BadRequestException(
-              'Cannot change role to ATTENDEE. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.'
+              'Cannot change role to ATTENDEE. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.',
             );
           }
         }
 
         // Check KYC tier for new role
         await this.checkKycTierForRole(userId, role);
-        
+
         return this.databaseService.eventParticipant.update({
           where: { id: existingParticipant.id },
           data: {
@@ -1233,29 +1227,24 @@ export class EventsService {
           `${participant.user.firstName || ''} ${participant.user.lastName || ''}`.trim() ||
           'Someone';
 
-        await this.notificationsService.sendNotificationIfEnabled(
-          event.hostUserId,
-          {
-            notification: {
-              title: 'New Participant Joined',
-              body: `${participantName} joined your event "${eventDetails?.title || 'Event'}"`,
-            },
-            data: {
-              type: 'EVENT_PARTICIPANT_JOINED',
-              eventId: eventId,
-              eventCode: eventDetails?.code || '',
-              eventTitle: eventDetails?.title || '',
-              participantId: userId,
-              participantName: participantName,
-              participantRole: role,
-            },
+        await this.notificationsService.sendNotificationIfEnabled(event.hostUserId, {
+          notification: {
+            title: 'New Participant Joined',
+            body: `${participantName} joined your event "${eventDetails?.title || 'Event'}"`,
           },
-        );
+          data: {
+            type: 'EVENT_PARTICIPANT_JOINED',
+            eventId: eventId,
+            eventCode: eventDetails?.code || '',
+            eventTitle: eventDetails?.title || '',
+            participantId: userId,
+            participantName: participantName,
+            participantRole: role,
+          },
+        });
       } catch (notificationError: any) {
         // Log error but don't fail the join - notification is optional
-        this.logger.warn(
-          `Failed to send participant joined notification: ${notificationError.message}`,
-        );
+        this.logger.warn(`Failed to send participant joined notification: ${notificationError.message}`);
       }
     }
 
@@ -1294,7 +1283,7 @@ export class EventsService {
       const hasOtherNonAttendees = await this.hasNonAttendeeParticipant(eventId, userId);
       if (!hasOtherNonAttendees) {
         throw new BadRequestException(
-          'Cannot leave event. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.'
+          'Cannot leave event. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.',
         );
       }
     }
@@ -1341,7 +1330,7 @@ export class EventsService {
       },
     });
 
-    return participants.map(p => {
+    return participants.map((p) => {
       // Convert event dates to WAT format
       const eventWithWATDates = this.convertEventDatesToWAT(p.event);
       return {
@@ -1398,7 +1387,7 @@ export class EventsService {
     return {
       eventId,
       totalParticipants: participants.length,
-      participants: participants.map(p => ({
+      participants: participants.map((p) => ({
         id: p.id,
         userId: p.userId,
         role: p.role,
@@ -1411,12 +1400,14 @@ export class EventsService {
           username: p.user.username,
           phone: p.user.phone,
         },
-        wallet: p.wallet ? {
-          id: p.wallet.id,
-          virtualAccountNumber: p.wallet.virtualAccountNumber,
-          availableBalance: p.wallet.availableBalance,
-          ledgerBalance: p.wallet.ledgerBalance,
-        } : null,
+        wallet: p.wallet
+          ? {
+              id: p.wallet.id,
+              virtualAccountNumber: p.wallet.virtualAccountNumber,
+              availableBalance: p.wallet.availableBalance,
+              ledgerBalance: p.wallet.ledgerBalance,
+            }
+          : null,
       })),
     };
   }
@@ -1428,7 +1419,7 @@ export class EventsService {
   async verifyPerformerEligibility(identifier: string) {
     // Determine if identifier is email or username
     const isEmail = identifier.includes('@');
-    
+
     let user;
     if (isEmail) {
       user = await this.databaseService.user.findUnique({
@@ -1475,8 +1466,8 @@ export class EventsService {
 
     return {
       eligible: isEligible,
-      reason: isEligible 
-        ? 'User is eligible to be a performer' 
+      reason: isEligible
+        ? 'User is eligible to be a performer'
         : `User has KYC Tier ${customer.tier}. Performer role requires Tier_2 or Tier_3.`,
       user: {
         id: user.id,
@@ -1512,7 +1503,7 @@ export class EventsService {
 
     // Get all sprays for this event with sprayer wallet and user info
     const sprays = await this.databaseService.spray.findMany({
-      where: { eventId },
+      where: { eventId, status: SprayStatus.CONFIRMED },
       select: {
         id: true,
         totalAmount: true,
@@ -1707,6 +1698,7 @@ export class EventsService {
             },
           },
           sprays: {
+            where: { status: SprayStatus.CONFIRMED },
             include: {
               sprayerWallet: {
                 include: {
@@ -1726,7 +1718,6 @@ export class EventsService {
           _count: {
             select: {
               participants: true,
-              sprays: true,
             },
           },
         },
@@ -1767,7 +1758,7 @@ export class EventsService {
         endsAt: eventWithWATDates.endsAt,
         hostUser: event.hostUser,
         participantCount: event._count.participants,
-        sprayCount: event._count.sprays,
+        sprayCount: (event.sprays || []).length,
         uniqueSprayerCount: uniqueSprayerCount,
         createdAt: event.createdAt,
       };

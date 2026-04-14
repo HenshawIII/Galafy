@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNotEmpty, IsDecimal, Min, ValidateIf } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty, IsDecimal, ValidateIf } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, ApiHideProperty } from '@nestjs/swagger';
 
 export class CreateSprayDto {
@@ -40,4 +40,3 @@ export class CreateSprayDto {
   @IsNotEmpty({ message: 'Either receiverUserId or receiverParticipantId must be provided' })
   _receiverValidation?: never;
 }
-

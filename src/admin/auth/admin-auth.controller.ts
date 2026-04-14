@@ -1,22 +1,13 @@
-import {
-  Controller,
-  Post,
-  Body,
-  UseGuards,
-  ValidationPipe,
-  Request,
-} from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
-  ApiBearerAuth,
-  ApiUnauthorizedResponse,
-} from '@nestjs/swagger';
+import { Controller, Post, Body, UseGuards, ValidationPipe, Request } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AdminAuthService } from './admin-auth.service.js';
-import { AdminLoginDto, AdminRefreshTokenDto, AdminForgotPasswordDto, AdminResetPasswordDto } from './dto/admin-login.dto.js';
+import {
+  AdminLoginDto,
+  AdminRefreshTokenDto,
+  AdminForgotPasswordDto,
+  AdminResetPasswordDto,
+} from './dto/admin-login.dto.js';
 import { AdminJwtAuthGuard } from './admin-jwt-auth.guard.js';
 import { AdminPublic } from './decorators/public.decorator.js';
 
@@ -30,8 +21,7 @@ export class AdminAuthController {
   @Throttle({ default: { limit: 5, ttl: 900000 } }) // 5 attempts per 15 minutes
   @ApiOperation({
     summary: 'Admin login',
-    description:
-      'Authenticate admin with email and password. Rate limited to 5 attempts per 15 minutes.',
+    description: 'Authenticate admin with email and password. Rate limited to 5 attempts per 15 minutes.',
   })
   @ApiBody({ type: AdminLoginDto })
   @ApiResponse({
@@ -84,9 +74,7 @@ export class AdminAuthController {
     status: 401,
     description: 'Invalid or expired refresh token',
   })
-  async refreshToken(
-    @Body(ValidationPipe) refreshTokenDto: AdminRefreshTokenDto,
-  ) {
+  async refreshToken(@Body(ValidationPipe) refreshTokenDto: AdminRefreshTokenDto) {
     return this.adminAuthService.refreshToken(refreshTokenDto);
   }
 
@@ -143,7 +131,8 @@ export class AdminAuthController {
   @AdminPublic()
   @ApiOperation({
     summary: 'Reset password with token',
-    description: 'Reset admin password using token from email. This endpoint is public and does not require authentication.',
+    description:
+      'Reset admin password using token from email. This endpoint is public and does not require authentication.',
   })
   @ApiBody({ type: AdminResetPasswordDto })
   @ApiResponse({
@@ -163,4 +152,3 @@ export class AdminAuthController {
     return this.adminAuthService.resetPassword(resetPasswordDto);
   }
 }
-

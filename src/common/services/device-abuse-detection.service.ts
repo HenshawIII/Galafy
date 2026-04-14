@@ -89,9 +89,9 @@ export class DeviceAbuseDetectionService {
 
       this.logger.log(
         `Device abuse detection configured: Max per device=${this.maxWalletsPerDevice}, ` +
-        `Max per IP=${this.maxWalletsPerIp}, ` +
-        `Max per device 24h=${this.maxWalletsPerDevice24H}, ` +
-        `Max per IP 24h=${this.maxWalletsPerIp24H}`,
+          `Max per IP=${this.maxWalletsPerIp}, ` +
+          `Max per device 24h=${this.maxWalletsPerDevice24H}, ` +
+          `Max per IP 24h=${this.maxWalletsPerIp24H}`,
       );
     } catch (error) {
       this.logger.warn(`Failed to load device abuse config, using fallback values: ${error.message}`);
@@ -112,13 +112,9 @@ export class DeviceAbuseDetectionService {
   /**
    * Detect if wallet creation is abusive based on device/IP patterns
    */
-  async detectAbuse(
-    userId: string,
-    customerId: string,
-    deviceInfo: DeviceInfo,
-  ): Promise<AbuseDetectionResult> {
+  async detectAbuse(userId: string, customerId: string, deviceInfo: DeviceInfo): Promise<AbuseDetectionResult> {
     const config = await this.loadConfig();
-    
+
     const reasons: string[] = [];
     let severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'LOW';
     let deviceWalletCount = 0;
@@ -158,9 +154,7 @@ export class DeviceAbuseDetectionService {
 
       // Check total wallets from device
       if (deviceWalletCount >= config.MAX_WALLETS_PER_DEVICE) {
-        reasons.push(
-          `Device has ${deviceWalletCount} wallets (threshold: ${config.MAX_WALLETS_PER_DEVICE})`,
-        );
+        reasons.push(`Device has ${deviceWalletCount} wallets (threshold: ${config.MAX_WALLETS_PER_DEVICE})`);
         severity = this.upgradeSeverity(severity, 'HIGH');
         flaggedWallets.push(
           ...deviceWallets.slice(0, 5).map((event) => ({
@@ -175,9 +169,7 @@ export class DeviceAbuseDetectionService {
       // Check wallets from device in last 24 hours
       const twentyFourHoursAgo = new Date();
       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-      const recentDeviceWallets = deviceWallets.filter(
-        (event) => event.createdAt >= twentyFourHoursAgo,
-      );
+      const recentDeviceWallets = deviceWallets.filter((event) => event.createdAt >= twentyFourHoursAgo);
 
       if (recentDeviceWallets.length >= config.MAX_WALLETS_PER_DEVICE_24H) {
         reasons.push(
@@ -215,9 +207,7 @@ export class DeviceAbuseDetectionService {
 
       // Check total wallets from IP
       if (ipWalletCount >= config.MAX_WALLETS_PER_IP) {
-        reasons.push(
-          `IP address has ${ipWalletCount} wallets (threshold: ${config.MAX_WALLETS_PER_IP})`,
-        );
+        reasons.push(`IP address has ${ipWalletCount} wallets (threshold: ${config.MAX_WALLETS_PER_IP})`);
         severity = this.upgradeSeverity(severity, 'HIGH');
         flaggedWallets.push(
           ...ipWallets.slice(0, 5).map((event) => ({
@@ -232,9 +222,7 @@ export class DeviceAbuseDetectionService {
       // Check wallets from IP in last 24 hours
       const twentyFourHoursAgo = new Date();
       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-      const recentIpWallets = ipWallets.filter(
-        (event) => event.createdAt >= twentyFourHoursAgo,
-      );
+      const recentIpWallets = ipWallets.filter((event) => event.createdAt >= twentyFourHoursAgo);
 
       if (recentIpWallets.length >= config.MAX_WALLETS_PER_IP_24H) {
         reasons.push(
@@ -248,9 +236,7 @@ export class DeviceAbuseDetectionService {
 
     // Log abuse detection
     if (isAbuse) {
-      this.logger.warn(
-        `🚨 Wallet creation abuse detected for user ${userId}: ${reasons.join(', ')}`,
-      );
+      this.logger.warn(`🚨 Wallet creation abuse detected for user ${userId}: ${reasons.join(', ')}`);
 
       // Log to AML system (non-blocking)
       try {
@@ -268,17 +254,17 @@ export class DeviceAbuseDetectionService {
             flaggedWallets: flaggedWallets.map((w) => ({
               walletId: w.walletId,
               userId: w.userId,
-            customerId: w.customerId,
-            createdAt: w.createdAt.toISOString(),
-          })),
-        },
-        {
-          userAgent: deviceInfo.userAgent,
-          browserFingerprint: deviceInfo.browserFingerprint,
-          os: deviceInfo.os,
-          browser: deviceInfo.browser,
-        },
-      );
+              customerId: w.customerId,
+              createdAt: w.createdAt.toISOString(),
+            })),
+          },
+          {
+            userAgent: deviceInfo.userAgent,
+            browserFingerprint: deviceInfo.browserFingerprint,
+            os: deviceInfo.os,
+            browser: deviceInfo.browser,
+          },
+        );
       } catch (logError) {
         // Log the logging error but don't block wallet creation check
         this.logger.error(`AML logging failed for wallet creation abuse: ${logError.message}`);
@@ -447,4 +433,3 @@ export class DeviceAbuseDetectionService {
     return levels[newSeverity] > levels[current] ? newSeverity : current;
   }
 }
-

@@ -11,4 +11,3 @@ export class SubmitUtilityBillDto {
   @IsUrl({}, { message: 'Utility bill URL must be a valid URL' })
   utilityBillUrl: string;
 }
-

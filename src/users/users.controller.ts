@@ -1,7 +1,40 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ValidationPipe, UseGuards, Request, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse, ApiQuery } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  Query,
+  ValidationPipe,
+  UseGuards,
+  Request,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiBody,
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service.js';
-import { CreateUserDto, UpdateUserDto, SignupDto, LoginDto, ResetPasswordDto, ForgotPasswordDto, VerifyAccountDto, ResendVerificationDto, UpdateUserProfileDto } from './dto/create-user-dto.js';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  SignupDto,
+  LoginDto,
+  ResetPasswordDto,
+  ForgotPasswordDto,
+  VerifyAccountDto,
+  ResendVerificationDto,
+  UpdateUserProfileDto,
+} from './dto/create-user-dto.js';
 import { UserSettingsDto, UpdateUserSettingsDto } from './dto/user-settings.dto.js';
 import { SearchUserDto } from './dto/search-user.dto.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
@@ -19,7 +52,16 @@ export class UsersController {
   @Post('signup')
   @Public()
   @ApiOperation({ summary: 'User signup' })
-  @ApiBody({ schema: { properties: {  email: { type: 'string' }, username: { type: 'string' }, password: { type: 'string' }, phone: { type: 'string' } } } })
+  @ApiBody({
+    schema: {
+      properties: {
+        email: { type: 'string' },
+        username: { type: 'string' },
+        password: { type: 'string' },
+        phone: { type: 'string' },
+      },
+    },
+  })
   @ApiResponse({ status: 201, description: 'User created successfully' })
   @ApiResponse({ status: 400, description: 'User already exists or validation failed' })
   signup(@Body(ValidationPipe) signupDto: SignupDto) {
@@ -51,9 +93,10 @@ export class UsersController {
   @Public()
   @ApiOperation({ summary: 'User login' })
   @ApiBody({ type: LoginDto })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Login successful, returns access token, refresh token, user details, KYC status, and verification status',
+  @ApiResponse({
+    status: 200,
+    description:
+      'Login successful, returns access token, refresh token, user details, KYC status, and verification status',
     schema: {
       example: {
         access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -72,9 +115,9 @@ export class UsersController {
           hasBvn: true,
           hasAddressVerification: false,
         },
-        isVerified: 'true'
-      }
-    }
+        isVerified: 'true',
+      },
+    },
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   @ApiResponse({ status: 409, description: 'User already logged in on another device. Please log out first.' })
@@ -106,8 +149,8 @@ export class UsersController {
   @Patch('profile')
   @ApiOperation({ summary: 'Update user profile (username and profilePicture)' })
   @ApiBody({ type: UpdateUserProfileDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'User profile updated successfully',
     schema: {
       example: {
@@ -117,8 +160,8 @@ export class UsersController {
         profilePicture: 'https://example.com/profile.jpg',
         firstName: 'John',
         lastName: 'Doe',
-      }
-    }
+      },
+    },
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 404, description: 'User not found' })
@@ -144,21 +187,21 @@ export class UsersController {
     if (!userId) {
       throw new BadRequestException('User ID is required. Please ensure you are authenticated.');
     }
-    
+
     // Ensure users can only access their own details
     if (userId !== id) {
       throw new ForbiddenException('You can only access your own user details.');
     }
-    
+
     return this.usersService.getUserDetails(id);
   }
 
   @Get('settings')
   @ApiOperation({ summary: 'Get current user settings' })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'User settings retrieved successfully',
-    type: UserSettingsDto
+    type: UserSettingsDto,
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   getUserSettings(@Request() req: any) {
@@ -172,10 +215,10 @@ export class UsersController {
   @Patch('settings')
   @ApiOperation({ summary: 'Update current user settings' })
   @ApiBody({ type: UpdateUserSettingsDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'User settings updated successfully',
-    type: UserSettingsDto
+    type: UserSettingsDto,
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
@@ -192,8 +235,8 @@ export class UsersController {
   @ApiQuery({ name: 'query', required: false, description: 'Search query for username (case-insensitive)' })
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'pageSize', required: false, type: Number, description: 'Items per page (default: 20, max: 100)' })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Users found successfully',
     schema: {
       example: {
@@ -205,15 +248,15 @@ export class UsersController {
             lastName: 'Doe',
             profilePicture: 'https://example.com/profile.jpg',
             email: 'john@example.com',
-            createdAt: '2024-01-01T00:00:00Z'
-          }
+            createdAt: '2024-01-01T00:00:00Z',
+          },
         ],
         total: 1,
         page: 1,
         pageSize: 20,
-        totalPages: 1
-      }
-    }
+        totalPages: 1,
+      },
+    },
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   searchUsers(@Query(ValidationPipe) searchDto: SearchUserDto) {
@@ -235,7 +278,7 @@ export class UsersController {
   // findByEmail(@Query('email') email: string) {
   //   return this.usersService.findByEmail(email);
   // }
-  
+
   // @SkipThrottle({default:false})
   // @Get(':id')
   // findOne(@Param('id') id: string) {
@@ -252,4 +295,3 @@ export class UsersController {
   //   return this.usersService.remove(id);
   // }
 }
-

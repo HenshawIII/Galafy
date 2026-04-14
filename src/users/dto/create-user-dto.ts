@@ -138,4 +138,3 @@ export class UpdateUserProfileDto {
   @IsString({ message: 'Profile picture must be a string (URL)' })
   profilePicture?: string;
 }
-

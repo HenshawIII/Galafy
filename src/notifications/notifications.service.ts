@@ -2,12 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Inject } from '@nes
 import { DatabaseService } from '../database/database.service.js';
 import { FIREBASE_ADMIN } from './firesbase-admin.provider.js';
 import * as admin from 'firebase-admin';
-import {
-  RegisterDeviceDto,
-  SendMessageDto,
-  SendBulkMessageDto,
-  UpdateDeviceDto,
-} from './dto/notification.dto.js';
+import { RegisterDeviceDto, SendMessageDto, SendBulkMessageDto, UpdateDeviceDto } from './dto/notification.dto.js';
 
 @Injectable()
 export class NotificationsService {
@@ -445,12 +440,7 @@ export class NotificationsService {
   /**
    * Get user notifications
    */
-  async getUserNotifications(
-    userId: string,
-    limit: number = 20,
-    offset: number = 0,
-    unreadOnly: boolean = false,
-  ) {
+  async getUserNotifications(userId: string, limit: number = 20, offset: number = 0, unreadOnly: boolean = false) {
     // Get unread count
     const unreadCount = await this.databaseService.notification.count({
       where: {
@@ -519,10 +509,7 @@ export class NotificationsService {
   /**
    * Save notification to database
    */
-  private async saveNotification(
-    userId: string,
-    notification: SendMessageDto['notification'],
-  ): Promise<void> {
+  private async saveNotification(userId: string, notification: SendMessageDto['notification']): Promise<void> {
     try {
       const type = notification.data?.type || 'UNKNOWN';
       const title = notification.notification?.title || '';
