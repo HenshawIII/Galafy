@@ -1,5 +1,0 @@
--- CreateEnum
-CREATE TYPE "SprayStatus" AS ENUM ('PENDING_PROVIDER', 'CONFIRMED', 'FAILED');
-
--- AlterTable
-ALTER TABLE "Spray" ADD COLUMN "status" "SprayStatus" NOT NULL DEFAULT 'CONFIRMED';

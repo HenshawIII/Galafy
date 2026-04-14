@@ -1,44 +1,28 @@
-Prisma migration recovery (P3009 / failed migrations)
-=======================================================
+Prisma migrations (squashed baseline)
+======================================
 
-Error P3009 means: a migration is recorded as FAILED in "_prisma_migrations".
-Prisma will not apply anything new until you fix that row.
+There is a single migration folder: 20260415120000_baseline_schema
+It contains the full DDL for the current prisma/schema.prisma.
 
-1) Mark the failed migration as rolled back (then deploy can retry it)
-   From your machine, with DATABASE_URL pointing at the same DB as Render/Neon:
+Deploy / Neon (empty or reset database)
+---------------------------------------
+1. Empty database (or DROP SCHEMA public CASCADE; CREATE SCHEMA public; + grants).
+2. Deploy so `prisma migrate deploy` runs — it applies the baseline once and records it in _prisma_migrations.
 
-   npx prisma migrate resolve --rolled-back "20260221000000_kyc_provider_breaking_change"
+If migrate deploy fails partway (P3009 / P3018)
+-----------------------------------------------
+See: https://www.prisma.io/docs/orm/reference/prisma-cli-reference#migrate-resolve
 
-   Or: npm run prisma:migrate:resolve:rolled-back --
-        20260221000000_kyc_provider_breaking_change
+Or reset the DB again and redeploy.
 
-   Then run deploy again:
-   npx prisma migrate deploy
+Regenerating the baseline SQL (when schema.prisma changes a lot)
+----------------------------------------------------------------
+From repo root, with schema updated:
 
-2) If retry still fails (partial DDL / wrong order / dirty state)
-   For a disposable database (no real data): reset schema, clear history, redeploy.
+  npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script -o prisma/migrations/20260415120000_baseline_schema/migration.sql
 
-   In Neon SQL editor (same branch as DATABASE_URL):
+Then commit. For existing DBs that already applied the old baseline, you need a NEW migration name + migrate diff from current DB state — or reset the DB. For live with no migration history preference, resetting Neon is simplest.
 
-   DROP SCHEMA public CASCADE;
-   CREATE SCHEMA public;
-   GRANT ALL ON SCHEMA public TO PUBLIC;
-   -- Re-apply role grants your Neon role needs (match Neon docs for your user).
-
-   Then either omit _prisma_migrations (it was dropped with public) or TRUNCATE if it exists
-   in another schema (normally it is gone after CASCADE).
-
-   Redeploy so "prisma migrate deploy" runs the full chain from scratch.
-
-3) If you manually fixed the database to match the migration
-   npx prisma migrate resolve --applied "MIGRATION_FOLDER_NAME"
-
-4) Why "migrate dev" fails locally but "db push" works
-   - migrate dev uses a shadow database; pooled Neon / permissions can break it.
-   - Try a direct (non-pooler) DATABASE_URL for dev, or a local Postgres.
-   - db push does not use migration history; it is fine for quick local experiments
-     but production should stay on "migrate deploy" so history stays truthful.
-
-5) Neon tip
-   Use a direct connection URL for heavy migration operations if the pooler causes
-   timeouts; keep pooler URL for the app runtime if you prefer.
+Optional: local dev without migrations
+--------------------------------------
+You can use `npx prisma db push` against a throwaway local DB. Production/live should still use `migrate deploy` with this one baseline so deploys stay repeatable.
