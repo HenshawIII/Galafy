@@ -22,6 +22,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:resolve:rolled-back": "prisma migrate resolve --rolled-back",
+    "prisma:migrate:resolve:applied": "prisma migrate resolve --applied",
     "prebuild": "node --max-old-space-size=4096 ./node_modules/.bin/prisma generate",
     "db:migrate": "prisma migrate deploy && prisma generate",
     "db:seed:config": "node --loader ts-node/esm prisma/seed-config.ts",

@@ -1,0 +1,44 @@
+Prisma migration recovery (P3009 / failed migrations)
+=======================================================
+
+Error P3009 means: a migration is recorded as FAILED in "_prisma_migrations".
+Prisma will not apply anything new until you fix that row.
+
+1) Mark the failed migration as rolled back (then deploy can retry it)
+   From your machine, with DATABASE_URL pointing at the same DB as Render/Neon:
+
+   npx prisma migrate resolve --rolled-back "20260221000000_kyc_provider_breaking_change"
+
+   Or: npm run prisma:migrate:resolve:rolled-back --
+        20260221000000_kyc_provider_breaking_change
+
+   Then run deploy again:
+   npx prisma migrate deploy
+
+2) If retry still fails (partial DDL / wrong order / dirty state)
+   For a disposable database (no real data): reset schema, clear history, redeploy.
+
+   In Neon SQL editor (same branch as DATABASE_URL):
+
+   DROP SCHEMA public CASCADE;
+   CREATE SCHEMA public;
+   GRANT ALL ON SCHEMA public TO PUBLIC;
+   -- Re-apply role grants your Neon role needs (match Neon docs for your user).
+
+   Then either omit _prisma_migrations (it was dropped with public) or TRUNCATE if it exists
+   in another schema (normally it is gone after CASCADE).
+
+   Redeploy so "prisma migrate deploy" runs the full chain from scratch.
+
+3) If you manually fixed the database to match the migration
+   npx prisma migrate resolve --applied "MIGRATION_FOLDER_NAME"
+
+4) Why "migrate dev" fails locally but "db push" works
+   - migrate dev uses a shadow database; pooled Neon / permissions can break it.
+   - Try a direct (non-pooler) DATABASE_URL for dev, or a local Postgres.
+   - db push does not use migration history; it is fine for quick local experiments
+     but production should stay on "migrate deploy" so history stays truthful.
+
+5) Neon tip
+   Use a direct connection URL for heavy migration operations if the pooler causes
+   timeouts; keep pooler URL for the app runtime if you prefer.
