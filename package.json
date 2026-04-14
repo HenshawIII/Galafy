@@ -28,7 +28,7 @@
     "baseline:migrations": "node prisma/baseline-migrations.js",
     "db:seed:admin": "node --loader ts-node/esm prisma/seed-admin.ts",
     "db:seed:all": "npm run db:seed:config && npm run db:seed:admin",
-    "start:render": "prisma generate && npm run baseline:migrations && prisma migrate deploy && npm run db:seed:config && npm run db:seed:admin && npm run start:prod",
+    "start:render": "prisma generate && prisma migrate deploy && npm run db:seed:config && npm run db:seed:admin && npm run start:prod",
     "redis:start": "docker-compose up -d redis",
     "redis:stop": "docker-compose down",
     "redis:logs": "docker-compose logs -f redis",

@@ -1,9 +1,17 @@
 /**
- * Script to mark all existing migrations as applied in production
- * This is needed when database was created with db push instead of migrations
- * 
+ * ONE-TIME / LEGACY ONLY — do not run on an empty database.
+ *
+ * Marks every folder in prisma/migrations as applied in `_prisma_migrations`
+ * WITHOUT executing migration.sql. Use only when the schema already exists
+ * (e.g. created with `prisma db push`) and you need Prisma to treat migrations
+ * as already applied.
+ *
+ * Never add this to default deploy startup for a fresh DB: you would get
+ * `_prisma_migrations` rows but no tables, and `prisma migrate deploy` would skip
+ * all DDL (P2021 missing tables at runtime).
+ *
  * Usage:
- *   DATABASE_URL=<production_url> node prisma/baseline-migrations.js
+ *   DATABASE_URL=<url> node prisma/baseline-migrations.js
  */
 
 import pg from 'pg';
@@ -32,8 +40,22 @@ async function baselineMigrations() {
         SELECT COUNT(*) as count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL
       `);
       const count = parseInt(result.rows[0]?.count || 0);
-      
+
       if (count > 0) {
+        const adminCheck = await client.query(
+          `SELECT to_regclass('public."Admin"') IS NOT NULL AS admin_exists`,
+        );
+        const adminExists = adminCheck.rows[0]?.admin_exists === true;
+        if (!adminExists) {
+          console.error(
+            '\n❌ Migration history lists applied migrations but the "Admin" table is missing.\n' +
+              'This usually means baselining ran on an empty DB (rows were inserted without running migration SQL).\n\n' +
+              'Fix (Neon / Postgres): connect with the same DATABASE_URL and run:\n' +
+              '  TRUNCATE TABLE "_prisma_migrations";\n' +
+              'Then redeploy so `prisma migrate deploy` can apply all migrations.\n',
+          );
+          process.exit(1);
+        }
         console.log(`✓ Migration history already exists (${count} migrations found). Skipping baseline.`);
         return;
       }
@@ -69,6 +91,21 @@ async function baselineMigrations() {
         CONSTRAINT "_prisma_migrations_pkey" PRIMARY KEY ("id")
       );
     `);
+
+    const appTables = await client.query(`
+      SELECT COUNT(*)::int AS n FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        AND table_name NOT IN ('_prisma_migrations')
+    `);
+    const appTableCount = appTables.rows[0]?.n ?? 0;
+    if (appTableCount === 0) {
+      console.error(
+        '\n❌ Refusing baseline: this database has no application tables yet.\n' +
+          'Baselining only inserts into "_prisma_migrations" and does not run migration.sql.\n' +
+          'On a fresh Neon/database, run `prisma migrate deploy` only (do not run this script).\n',
+      );
+      process.exit(1);
+    }
 
     // Mark each migration as applied
     for (const migration of migrations) {
