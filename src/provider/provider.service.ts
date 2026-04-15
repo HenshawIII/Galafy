@@ -16,14 +16,15 @@ import type {
 import { config } from 'dotenv';
 config();
 
-const DEFAULT_KYC_BASE_URL = 'https://lagos-alat-blueapi.azure-api.net/create-account-face/api';
-const DEFAULT_DEBIT_WALLET_BASE_URL = 'https://lagos-alat-blueapi.azure-api.net/debit-wallet/api';
+/** APIM host only (no path). KYC and debit-wallet paths are appended unless full URLs are set via env. */
+const DEFAULT_APIM_GATEWAY = 'https://lagos-alat-blueapi.azure-api.net';
 
 @Injectable()
 export class ProviderService {
   private readonly logger = new Logger(ProviderService.name);
   private readonly apiKey: string;
   private readonly kycBaseUrl: string;
+  private readonly debitWalletBaseUrl: string;
   private readonly kycSubscriptionKey: string;
   /** Cache for Alat GetDropDownList (countryModel). TTL 1 hour. */
   private dropdownCache: { data: AlatCountryModel; expiresAt: number } | null = null;
@@ -35,7 +36,19 @@ export class ProviderService {
 
   constructor() {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
-    this.kycBaseUrl = (process.env.PROVIDER_KYC_BASE_URL || DEFAULT_KYC_BASE_URL).replace(/\/$/, '');
+    const explicitGateway = process.env.PROVIDER_APIM_GATEWAY_URL?.replace(/\/$/, '');
+    const kycEnv = process.env.PROVIDER_KYC_BASE_URL?.replace(/\/$/, '');
+    const debitEnv = process.env.PROVIDER_DEBIT_WALLET_BASE_URL?.replace(/\/$/, '');
+    const kycPathSuffix = /\/create-account-face\/api\/?$/i;
+    const gatewayFromKyc = kycEnv && kycPathSuffix.test(kycEnv) ? kycEnv.replace(kycPathSuffix, '') : '';
+    const gateway = explicitGateway || gatewayFromKyc || DEFAULT_APIM_GATEWAY;
+
+    this.kycBaseUrl = kycEnv || `${gateway}/create-account-face/api`;
+    this.debitWalletBaseUrl =
+      debitEnv ||
+      (kycEnv && kycPathSuffix.test(kycEnv) ? kycEnv.replace(kycPathSuffix, '/debit-wallet/api') : '') ||
+      `${gateway}/debit-wallet/api`;
+
     this.kycSubscriptionKey = process.env.PROVIDER_KYC_SUBSCRIPTION_KEY || '';
 
     if (!this.apiKey) {
@@ -56,7 +69,7 @@ export class ProviderService {
   }
 
   private buildDebitWalletUrl(path: string): string {
-    const base = (process.env.PROVIDER_DEBIT_WALLET_BASE_URL || DEFAULT_DEBIT_WALLET_BASE_URL).replace(/\/$/, '');
+    const base = this.debitWalletBaseUrl.replace(/\/$/, '');
     const p = path.startsWith('/') ? path : `/${path}`;
     return `${base}${p}`;
   }
