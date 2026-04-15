@@ -34,6 +34,18 @@ export class ProviderService {
   static readonly CLIENT_PARTNER_UNAVAILABLE_MESSAGE =
     'Our partner service is temporarily unavailable. Please try again in a few minutes.';
 
+  private truncateForLog(value: string, max = 500): string {
+    if (!value) return '';
+    return value.length > max ? `${value.substring(0, max)}...` : value;
+  }
+
+  private logUpstream5xx(label: string, response: Response, responseBody?: string): void {
+    const body = responseBody?.trim() ? this.truncateForLog(responseBody) : '[empty body]';
+    this.logger.error(
+      `${label}: upstream HTTP ${response.status} ${response.statusText || ''}. Provider response: ${body}`.trim(),
+    );
+  }
+
   constructor() {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
     const kycEnv = process.env.PROVIDER_KYC_BASE_URL?.replace(/\/$/, '');
@@ -137,8 +149,9 @@ export class ProviderService {
 
       const responseText = await response.text();
       if (!responseText || responseText.trim().length === 0) {
-        this.logger.error(`${logLabel} empty response. HTTP ${response.status}`);
+        this.logger.error(`${logLabel} empty response. HTTP ${response.status} ${response.statusText || ''}`.trim());
         if (response.status >= 500) {
+          this.logUpstream5xx(logLabel, response, responseText);
           throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException(`${logLabel} returned an empty response`, response.status || HttpStatus.BAD_REQUEST);
@@ -148,17 +161,22 @@ export class ProviderService {
       try {
         data = JSON.parse(responseText) as unknown;
       } catch {
-        this.logger.error(`${logLabel} invalid JSON: ${responseText.substring(0, 200)}`);
+        this.logger.error(
+          `${logLabel} invalid JSON. HTTP ${response.status} ${response.statusText || ''}. Body: ${this.truncateForLog(responseText)}`.trim(),
+        );
         if (response.status >= 500) {
+          this.logUpstream5xx(logLabel, response, responseText);
           throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException('Invalid response from payment partner', HttpStatus.BAD_REQUEST);
       }
 
       if (!response.ok) {
-        const detail = typeof data === 'string' ? data.substring(0, 500) : JSON.stringify(data);
+        const detail = typeof data === 'string' ? this.truncateForLog(data) : this.truncateForLog(JSON.stringify(data));
         if (response.status >= 500) {
-          this.logger.error(`${logLabel}: upstream HTTP ${response.status} ${detail}`);
+          this.logger.error(
+            `${logLabel}: upstream HTTP ${response.status} ${response.statusText || ''}. Provider error: ${detail}`.trim(),
+          );
           throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         const msg =
@@ -220,8 +238,11 @@ export class ProviderService {
 
       const responseText = await response.text();
       if (!responseText || responseText.trim().length === 0) {
-        this.logger.error(`KYC API returned empty response. Status: ${response.status}`);
+        this.logger.error(
+          `KYC API returned empty response. Status: ${response.status} ${response.statusText || ''}`.trim(),
+        );
         if (response.status >= 500) {
+          this.logUpstream5xx('KYC API', response, responseText);
           throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException('KYC API returned empty response', response.status || HttpStatus.BAD_REQUEST);
@@ -231,8 +252,11 @@ export class ProviderService {
       try {
         data = JSON.parse(responseText);
       } catch {
-        this.logger.error(`Invalid JSON from KYC API: ${responseText.substring(0, 200)}`);
+        this.logger.error(
+          `Invalid JSON from KYC API. HTTP ${response.status} ${response.statusText || ''}. Body: ${this.truncateForLog(responseText)}`.trim(),
+        );
         if (response.status >= 500) {
+          this.logUpstream5xx('KYC API', response, responseText);
           throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException('Invalid JSON response from KYC API', HttpStatus.BAD_REQUEST);
@@ -249,7 +273,9 @@ export class ProviderService {
           typeof msg === 'string' &&
           (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
         if (response.status >= 500) {
-          this.logger.error(`KYC API HTTP ${response.status}: ${JSON.stringify(data)}`);
+          this.logger.error(
+            `KYC API HTTP ${response.status} ${response.statusText || ''}. Provider error: ${this.truncateForLog(JSON.stringify(data))}`.trim(),
+          );
           throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : response.status || HttpStatus.BAD_REQUEST);
