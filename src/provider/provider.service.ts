@@ -36,18 +36,21 @@ export class ProviderService {
 
   constructor() {
     this.apiKey = process.env.PROVIDER_API_KEY || '';
-    const explicitGateway = process.env.PROVIDER_APIM_GATEWAY_URL?.replace(/\/$/, '');
     const kycEnv = process.env.PROVIDER_KYC_BASE_URL?.replace(/\/$/, '');
-    const debitEnv = process.env.PROVIDER_DEBIT_WALLET_BASE_URL?.replace(/\/$/, '');
-    const kycPathSuffix = /\/create-account-face\/api\/?$/i;
-    const gatewayFromKyc = kycEnv && kycPathSuffix.test(kycEnv) ? kycEnv.replace(kycPathSuffix, '') : '';
-    const gateway = explicitGateway || gatewayFromKyc || DEFAULT_APIM_GATEWAY;
+    const kycPathSuffix = '/create-account-face/api';
+    const hostOnly = (value: string): string => value.replace(/\/+$/, '');
+    const normalizeKycBaseUrl = (value?: string): string => {
+      if (!value) {
+        return `${DEFAULT_APIM_GATEWAY}${kycPathSuffix}`;
+      }
+      const cleaned = hostOnly(value);
+      return cleaned.toLowerCase().endsWith(kycPathSuffix) ? cleaned : `${cleaned}${kycPathSuffix}`;
+    };
+    const kycBaseUrl = normalizeKycBaseUrl(kycEnv);
+    const gateway = kycBaseUrl.slice(0, -kycPathSuffix.length);
 
-    this.kycBaseUrl = kycEnv || `${gateway}/create-account-face/api`;
-    this.debitWalletBaseUrl =
-      debitEnv ||
-      (kycEnv && kycPathSuffix.test(kycEnv) ? kycEnv.replace(kycPathSuffix, '/debit-wallet/api') : '') ||
-      `${gateway}/debit-wallet/api`;
+    this.kycBaseUrl = kycBaseUrl;
+    this.debitWalletBaseUrl = `${gateway}/debit-wallet/api`;
 
     this.kycSubscriptionKey = process.env.PROVIDER_KYC_SUBSCRIPTION_KEY || '';
 
