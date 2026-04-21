@@ -54,6 +54,7 @@ export class ProviderCallbackService {
    */
   async handleAccountCreationCallback(raw: any): Promise<{ received: true }> {
     // Accept provider payloads with extra fields; only depend on the documented subset.
+    const providerCustomerId = raw?.data?.customerId?.trim();
     const email = raw?.data?.email?.trim().toLowerCase();
     const phoneNumber = raw?.data?.phoneNumber?.trim();
     const nuban = raw?.data?.nuban?.trim();
@@ -97,10 +98,30 @@ export class ProviderCallbackService {
       return { received: true };
     }
 
+    let shouldSetProviderCustomerId = false;
+    if (providerCustomerId) {
+      const existingCustomerWithProviderId = await this.databaseService.customer.findFirst({
+        where: {
+          providerCustomerId,
+          id: { not: customer.id },
+        },
+        select: { id: true },
+      });
+
+      if (existingCustomerWithProviderId) {
+        this.logger.warn(
+          `Account creation callback: provider customerId=${providerCustomerId} already belongs to customer=${existingCustomerWithProviderId.id}. Skipping providerCustomerId update for customer=${customer.id}.`,
+        );
+      } else {
+        shouldSetProviderCustomerId = true;
+      }
+    }
+
     // Update tier1 account fields idempotently.
     await this.databaseService.customer.update({
       where: { id: customer.id },
       data: {
+        providerCustomerId: shouldSetProviderCustomerId ? providerCustomerId : customer.providerCustomerId,
         tier1AccountStatus,
         tier1FaceStatus: tier1AccountStatus === 'COMPLETED' ? Tier1FaceStatus.COMPLETED : Tier1FaceStatus.FAILED,
         tier1Nuban: nuban,
