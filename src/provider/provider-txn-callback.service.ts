@@ -28,6 +28,13 @@ export class ProviderTxnCallbackService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  private mask(value: unknown, visibleTail = 4): string {
+    const str = typeof value === 'string' ? value.trim() : value != null ? String(value).trim() : '';
+    if (!str) return 'n/a';
+    if (str.length <= visibleTail) return '*'.repeat(str.length);
+    return `${'*'.repeat(str.length - visibleTail)}${str.slice(-visibleTail)}`;
+  }
+
   private computeSecurityInfoHash(securityInfo: string): string {
     return createHash('sha256').update(securityInfo).digest('hex');
   }
@@ -63,8 +70,12 @@ export class ProviderTxnCallbackService {
   async handleTransactionAuthCallback(raw: any): Promise<{ transactionReference: string; authorized: boolean }> {
     const transactionReference: string = raw?.transactionReference ?? '';
     const securityInfo: unknown = raw?.securityInfo;
+    this.logger.log(`Transaction auth callback received: txRef=${this.mask(transactionReference)}`);
 
     if (!transactionReference || typeof securityInfo !== 'string') {
+      this.logger.warn(
+        `Transaction auth callback rejected: invalid payload txRef=${this.mask(transactionReference)} hasSecurityInfo=${typeof securityInfo === 'string'}`,
+      );
       return { transactionReference: transactionReference || '', authorized: false };
     }
 
@@ -73,17 +84,23 @@ export class ProviderTxnCallbackService {
     });
 
     if (!txn || !txn.securityInfoHash) {
+      this.logger.warn(`Transaction auth callback rejected: local transaction/hash missing txRef=${this.mask(transactionReference)}`);
       return { transactionReference, authorized: false };
     }
 
     const computed = this.computeSecurityInfoHash(securityInfo);
     if (computed !== txn.securityInfoHash) {
+      this.logger.warn(`Transaction auth callback rejected: security mismatch txRef=${this.mask(transactionReference)}`);
       return { transactionReference, authorized: false };
     }
     // Idempotent: partner may retry auth with the same mandate; deny if debit already failed.
     if (txn.status === TransactionStatus.FAILED || txn.status === TransactionStatus.REVERSED) {
+      this.logger.warn(
+        `Transaction auth callback rejected: txn already terminal txRef=${this.mask(transactionReference)} status=${txn.status}`,
+      );
       return { transactionReference, authorized: false };
     }
+    this.logger.log(`Transaction auth callback authorized: txRef=${this.mask(transactionReference)} status=${txn.status}`);
     return { transactionReference, authorized: true };
   }
 
@@ -93,15 +110,21 @@ export class ProviderTxnCallbackService {
     const platformTransactionReference = data?.platformTransactionReference;
     const providerStatus = data?.status;
 
-    this.logger.debug(
-      `Transaction callback received: txRef=${transactionReference}, platformRef=${platformTransactionReference}, status=${providerStatus}`,
+    this.logger.log(
+      `Transaction callback received: txRef=${this.mask(transactionReference)}, platformRef=${this.mask(platformTransactionReference)}, providerStatus=${providerStatus ?? 'n/a'}`,
     );
 
     if (!transactionReference || !platformTransactionReference) {
+      this.logger.warn(
+        `Transaction callback ignored: missing references txRef=${this.mask(transactionReference)} platformRef=${this.mask(platformTransactionReference)}`,
+      );
       return { received: true };
     }
 
     const mappedStatus = this.mapProviderStatusToTransactionStatus(providerStatus);
+    this.logger.log(
+      `Transaction callback normalized: txRef=${this.mask(transactionReference)} platformRef=${this.mask(platformTransactionReference)} mappedStatus=${mappedStatus}`,
+    );
     const receivedAt = new Date();
     const creditRef = `CREDIT-${platformTransactionReference}`;
 
@@ -126,7 +149,7 @@ export class ProviderTxnCallbackService {
 
       if (!txn) {
         this.logger.warn(
-          `Transaction callback: no local transaction found for reference=${transactionReference}.`,
+          `Transaction callback: no local transaction found for txRef=${this.mask(transactionReference)}.`,
         );
         return;
       }
@@ -139,6 +162,9 @@ export class ProviderTxnCallbackService {
         txn.providerPlatformTransactionReference === platformTransactionReference &&
         txn.status === TransactionStatus.SUCCESS
       ) {
+        this.logger.log(
+          `Transaction callback duplicate success ack: txRef=${this.mask(transactionReference)} platformRef=${this.mask(platformTransactionReference)}`,
+        );
         await tx.transaction.update({
           where: { id: txn.id },
           data: {
@@ -181,8 +207,14 @@ export class ProviderTxnCallbackService {
           } as any,
         },
       });
+      this.logger.log(
+        `Transaction callback status updated: txRef=${this.mask(transactionReference)} previousStatus=${previousStatus} currentStatus=${mappedStatus}`,
+      );
 
       if (mappedStatus === TransactionStatus.FAILED && previousStatus !== TransactionStatus.FAILED) {
+        this.logger.warn(
+          `Transaction callback failure branch: txRef=${this.mask(transactionReference)} platformRef=${this.mask(platformTransactionReference)}`,
+        );
         const sprayRow = await tx.spray.findFirst({ where: { transactionId: txn.id } });
         if (sprayRow?.status === SprayStatus.PENDING_PROVIDER) {
           const prev =
@@ -218,6 +250,9 @@ export class ProviderTxnCallbackService {
       }
 
       if (mappedStatus === TransactionStatus.SUCCESS && previousStatus !== TransactionStatus.SUCCESS) {
+        this.logger.log(
+          `Transaction callback success branch: debit settlement started txRef=${this.mask(transactionReference)} amount=${txn.amount.toString()}`,
+        );
         const amount = txn.amount;
         const sourceWalletId = txn.walletId;
 
@@ -258,6 +293,9 @@ export class ProviderTxnCallbackService {
         });
 
         if (destinationWalletId) {
+          this.logger.log(
+            `Transaction callback success branch: destination wallet found txRef=${this.mask(transactionReference)} destinationWallet=${destinationWalletId}`,
+          );
           const destinationWallet = await tx.wallet.findUnique({
             where: { id: destinationWalletId },
             select: { id: true, availableBalance: true, ledgerBalance: true },
@@ -310,6 +348,9 @@ export class ProviderTxnCallbackService {
                   },
                 },
               });
+              this.logger.log(
+                `Transaction callback success branch: mirror credit created creditRef=${this.mask(creditRef)} sourceTxRef=${this.mask(transactionReference)}`,
+              );
             }
 
             if (debitMeta?.eventSpray === true && debitMeta?.sprayCompletion) {
@@ -445,6 +486,10 @@ export class ProviderTxnCallbackService {
               this.logger.error(`Risk score update (receiver) failed: ${e.message}`);
             });
           }
+        } else {
+          this.logger.warn(
+            `Transaction callback success branch: destination wallet not found txRef=${this.mask(transactionReference)} destinationAccount=${this.mask(txn.destinationAccountNumber)}`,
+          );
         }
 
         const payerWallet = await tx.wallet.findUnique({
@@ -516,11 +561,14 @@ export class ProviderTxnCallbackService {
   }
 
   async handleTransactionNotification(raw: any): Promise<{ received: true }> {
-    this.logger.debug(`Transaction notification received for account=${raw?.accountNumber}`);
+    this.logger.log(`Transaction notification received: account=${this.mask(raw?.accountNumber)} transactionType=${raw?.transactionType ?? 'n/a'}`);
 
     const accountNumber: string | undefined = raw?.accountNumber?.toString()?.trim() || undefined;
     const transactionTypeRaw: string | undefined = raw?.transactionType?.toString();
     const transactionTypeNorm = transactionTypeRaw?.trim().toLowerCase();
+    this.logger.log(
+      `Transaction notification classified: account=${this.mask(accountNumber)} direction=${transactionTypeNorm === 'credit' ? 'INFLOW' : 'NON-INFLOW'} transactionType=${transactionTypeNorm ?? 'n/a'}`,
+    );
 
     const wallet = accountNumber
       ? await this.databaseService.wallet.findFirst({
@@ -559,6 +607,9 @@ export class ProviderTxnCallbackService {
         providerPayload,
         webhookEvent: { event: 'transaction-notification', paymentReference: providerReference },
       });
+      this.logger.log(
+        `Transaction notification inflow processed: account=${this.mask(accountNumber)} providerReference=${this.mask(providerReference)} status=${result.status} duplicate=${result.isDuplicate}`,
+      );
 
       const walletId = result.walletId;
       if (walletId) {
@@ -632,6 +683,10 @@ export class ProviderTxnCallbackService {
 
       return { received: true };
     }
+
+    this.logger.log(
+      `Transaction notification persisted as generic provider event: account=${this.mask(accountNumber)} transactionType=${transactionTypeNorm ?? 'n/a'}`,
+    );
 
     await this.databaseService.providerWebhookEvent.create({
       data: {

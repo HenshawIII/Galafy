@@ -10,20 +10,49 @@ export class ProviderCallbackController {
 
   constructor(private readonly providerCallbackService: ProviderCallbackService) {}
 
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+  }
+
+  private pick(obj: unknown, key: string): unknown {
+    if (!this.isRecord(obj)) return undefined;
+    return obj[key];
+  }
+
+  private mask(value: unknown, visibleTail = 4): string {
+    const str =
+      typeof value === 'string'
+        ? value.trim()
+        : typeof value === 'number' || typeof value === 'boolean'
+          ? String(value).trim()
+          : '';
+    if (!str) return 'n/a';
+    if (str.length <= visibleTail) return '*'.repeat(str.length);
+    return `${'*'.repeat(str.length - visibleTail)}${str.slice(-visibleTail)}`;
+  }
+
   /**
    * Provider webhook/callback endpoint for account creation (nuban) results.
    * We keep this `Public` because provider systems won't send our auth JWT.
    */
   @Public()
   @Post('account-creation-callback')
-  async accountCreationCallback(@Body() raw: any) {
+  async accountCreationCallback(@Body() raw: unknown) {
     // Important: provider callbacks may contain extra fields.
     // Your global ValidationPipe is strict (`forbidNonWhitelisted: true`), so we accept raw payloads
     // and validate only the fields we actually use inside the service.
-    this.logger.debug(
-      `Account creation callback received: email=${raw?.data?.email}, phone=${raw?.data?.phoneNumber}, requestType=${raw?.requestType}`,
+    const data = this.pick(raw, 'data');
+    const email = this.pick(data, 'email');
+    const phoneNumber = this.pick(data, 'phoneNumber');
+    const nuban = this.pick(data, 'nuban');
+    const requestType = this.pick(raw, 'requestType');
+    this.logger.log(
+      `Provider callback entry: account-creation-callback email=${this.mask(email)} phone=${this.mask(phoneNumber)} nuban=${this.mask(nuban)} requestType=${this.mask(requestType)}`,
     );
-    return this.providerCallbackService.handleAccountCreationCallback(raw);
+    const result = await this.providerCallbackService.handleAccountCreationCallback(raw);
+    this.logger.log(
+      `Provider callback exit: account-creation-callback email=${this.mask(email)} phone=${this.mask(phoneNumber)} received=${result.received}`,
+    );
+    return result;
   }
 }
-
