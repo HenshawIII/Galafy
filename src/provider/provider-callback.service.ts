@@ -13,6 +13,13 @@ export class ProviderCallbackService {
 
   constructor(private readonly databaseService: DatabaseService) {}
 
+  private mask(value: unknown, visibleTail = 4): string {
+    const str = typeof value === 'string' ? value.trim() : value != null ? String(value).trim() : '';
+    if (!str) return 'n/a';
+    if (str.length <= visibleTail) return '*'.repeat(str.length);
+    return `${'*'.repeat(str.length - visibleTail)}${str.slice(-visibleTail)}`;
+  }
+
   private isDevMode(): boolean {
     const nodeEnv = (process.env.NODE_ENV ?? 'development').toLowerCase();
     return nodeEnv !== 'production';
@@ -63,7 +70,7 @@ export class ProviderCallbackService {
 
     // Quick sanity-check log to aid sandbox/debug diagnostics.
     this.logger.log(
-      `Account creation callback received: email=${email ?? 'n/a'}, phone=${phoneNumber ?? 'n/a'}, nuban=${nuban ?? 'n/a'}, nubanStatus=${rawNubanStatus ?? 'n/a'}`,
+      `Account creation callback received: providerCustomerId=${this.mask(providerCustomerId)} email=${this.mask(email)} phone=${this.mask(phoneNumber)} nuban=${this.mask(nuban)} nubanStatus=${rawNubanStatus ?? 'n/a'}`,
     );
 
     if (!email || !phoneNumber || !nuban || !nubanName) {
@@ -92,9 +99,7 @@ export class ProviderCallbackService {
 
     if (!customer) {
       // Don't leak whether we have the customer; provider may retry.
-      this.logger.warn(
-        `Account creation callback: no local customer found for phone=${phoneNumber}, email=${email}`,
-      );
+      this.logger.warn(`Account creation callback: no local customer found for phone=${this.mask(phoneNumber)}, email=${this.mask(email)}`);
       return { received: true };
     }
 
@@ -110,10 +115,13 @@ export class ProviderCallbackService {
 
       if (existingCustomerWithProviderId) {
         this.logger.warn(
-          `Account creation callback: provider customerId=${providerCustomerId} already belongs to customer=${existingCustomerWithProviderId.id}. Skipping providerCustomerId update for customer=${customer.id}.`,
+          `Account creation callback: providerCustomerId=${this.mask(providerCustomerId)} already belongs to customer=${existingCustomerWithProviderId.id}. Skipping update for customer=${customer.id}.`,
         );
       } else {
         shouldSetProviderCustomerId = true;
+        this.logger.log(
+          `Account creation callback: linking providerCustomerId=${this.mask(providerCustomerId)} to customer=${customer.id}`,
+        );
       }
     }
 
@@ -130,6 +138,9 @@ export class ProviderCallbackService {
         tier1CompletedAt: tier1AccountStatus === 'COMPLETED' ? now : null,
       },
     });
+    this.logger.log(
+      `Account creation callback processed: customer=${customer.id} tier1AccountStatus=${tier1AccountStatus} nuban=${this.mask(nuban)}`,
+    );
 
     // Create/update wallet only when tier1 is successful.
     if (tier1AccountStatus !== 'COMPLETED') return { received: true };
@@ -163,6 +174,9 @@ export class ProviderCallbackService {
           isDefault: existingWallet.isDefault ?? true,
         },
       });
+      this.logger.log(
+        `Account creation callback wallet updated: customer=${customer.id} wallet=${existingWallet.id} nuban=${this.mask(nuban)}`,
+      );
       return { received: true };
     }
 
@@ -180,6 +194,7 @@ export class ProviderCallbackService {
         // Callback docs do not include bankCode/bankName; wallet fields remain optional.
       },
     });
+    this.logger.log(`Account creation callback wallet created: customer=${customer.id} nuban=${this.mask(nuban)}`);
 
     return { received: true };
   }

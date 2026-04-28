@@ -39,6 +39,18 @@ export class ProviderService {
     return value.length > max ? `${value.substring(0, max)}...` : value;
   }
 
+  private mask(value: unknown, visibleTail = 4): string {
+    const str =
+      typeof value === 'string'
+        ? value.trim()
+        : typeof value === 'number' || typeof value === 'boolean'
+          ? String(value).trim()
+          : '';
+    if (!str) return 'n/a';
+    if (str.length <= visibleTail) return '*'.repeat(str.length);
+    return `${'*'.repeat(str.length - visibleTail)}${str.slice(-visibleTail)}`;
+  }
+
   private logUpstream5xx(label: string, response: Response, responseBody?: string): void {
     const body = responseBody?.trim() ? this.truncateForLog(responseBody) : '[empty body]';
     this.logger.error(
@@ -409,6 +421,9 @@ export class ProviderService {
     accountNumber: string;
     accountName: string;
   }> {
+    this.logger.log(
+      `Provider debit-wallet account enquiry: destinationBankCode=${bankCode} destinationAccount=${this.mask(accountNumber)}`,
+    );
     const bc = encodeURIComponent(bankCode);
     const an = encodeURIComponent(accountNumber);
     const result = await this.makeDebitWalletRequest<{
@@ -434,6 +449,7 @@ export class ProviderService {
     accountNumber: string;
     currency?: string;
   }> {
+    this.logger.log(`Provider debit-wallet wallet enquiry: account=${this.mask(accountNumber)}`);
     const enc = encodeURIComponent(accountNumber);
     return this.makeDebitWalletRequest(`/Shared/AccountNameEnquiry/Wallet/${enc}`, 'GET', {
       logLabel: 'Debit-wallet AccountNameEnquiry Wallet',
@@ -475,6 +491,7 @@ export class ProviderService {
     };
     request?: number;
   }> {
+    this.logger.log(`Provider debit-wallet transfer status check: txRef=${this.mask(clientTransactionReference)}`);
     const ref = encodeURIComponent(clientTransactionReference);
     return this.makeDebitWalletRequest(`/IntraBankTransfer/ConfirmClientTransferStatus/${ref}`, 'GET', {
       logLabel: 'Debit-wallet ConfirmClientTransferStatus',
@@ -505,6 +522,9 @@ export class ProviderService {
     transactionStan?: string;
     orinalTxnTransactionDate?: string;
   }> {
+    this.logger.log(
+      `Provider debit-wallet transfer request: txRef=${this.mask(request.transactionReference)} sourceAccount=${this.mask(request.sourceAccountNumber)} destinationAccount=${this.mask(request.destinationAccountNumber)} amount=${request.amount}`,
+    );
     const absoluteUrl =
       process.env.PROVIDER_DEBIT_WALLET_PROCESS_CLIENT_TRANSFER_URL ||
       this.buildDebitWalletUrl('/Shared/ProcessClientTransfer');
