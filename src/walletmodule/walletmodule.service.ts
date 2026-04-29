@@ -20,6 +20,9 @@ import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
 import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
 import { ForbiddenException } from '@nestjs/common';
 
+const DEFAULT_PROVIDER_BANK_CODE = '035';
+const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
+
 @Injectable()
 export class WalletmoduleService {
   private readonly logger = new Logger(WalletmoduleService.name);
@@ -166,12 +169,6 @@ export class WalletmoduleService {
     if (fromWallet.id === toWallet.id) {
       throw new BadRequestException('Source and destination wallet must differ');
     }
-    if (!toWallet.virtualBankCode?.trim()) {
-      throw new BadRequestException(
-        'Destination wallet is missing provider bank routing (virtualBankCode). It cannot receive a provider transfer yet.',
-      );
-    }
-
     const amount = normalizeToKobo(dto.amount);
     if (fromWallet.availableBalance.lt(amount)) {
       throw new BadRequestException('Insufficient balance');
@@ -193,8 +190,8 @@ export class WalletmoduleService {
       toWallet.name ||
       [toWallet.customer.firstName, toWallet.customer.lastName].filter(Boolean).join(' ').trim() ||
       'Unknown';
-    const destinationBankCode = toWallet.virtualBankCode.trim();
-    const destinationBankName = (toWallet.virtualBankName || 'Unknown').trim() || 'Unknown';
+    const destinationBankCode = toWallet.virtualBankCode?.trim() || DEFAULT_PROVIDER_BANK_CODE;
+    const destinationBankName = toWallet.virtualBankName?.trim() || DEFAULT_PROVIDER_BANK_NAME;
     const mandateNonce = this.debitWalletMandateService.generateNonce();
     const amountNormalized = amount.toFixed(2);
     const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generateWalletToWalletMandate({

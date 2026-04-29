@@ -11,6 +11,9 @@ import { LiveGateway } from '../live/live.gateway.js';
 import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 
+const DEFAULT_PROVIDER_BANK_CODE = '035';
+const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
+
 export interface SprayResult {
   spray: any | null;
   sprayerBalance: Decimal;
@@ -284,11 +287,8 @@ export class SpraysService {
       );
     }
 
-    if (!receiverWallet.virtualBankCode) {
-      throw new BadRequestException(
-        'Receiver wallet is missing virtualBankCode, which is required for provider transfer.',
-      );
-    }
+    const receiverBankCode = receiverWallet.virtualBankCode?.trim() || DEFAULT_PROVIDER_BANK_CODE;
+    const receiverBankName = receiverWallet.virtualBankName?.trim() || DEFAULT_PROVIDER_BANK_NAME;
 
     const receiverCustomer = await this.databaseService.customer.findUnique({
       where: { id: receiverWallet.customerId },
@@ -307,7 +307,7 @@ export class SpraysService {
       receiverWalletId: receiverWallet.id,
       amountNormalized,
       receiverVirtualAccount: receiverWallet.virtualAccountNumber,
-      receiverBankCode: receiverWallet.virtualBankCode.trim(),
+      receiverBankCode,
     });
     const narration = createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`;
 
@@ -430,8 +430,8 @@ export class SpraysService {
       await this.providerService.processClientTransfer({
         securityInfo,
         amount: amountKobo.toNumber(),
-        destinationBankCode: receiverWallet.virtualBankCode,
-        destinationBankName: receiverWallet.virtualBankName?.trim() || 'Wallet',
+        destinationBankCode: receiverBankCode,
+        destinationBankName: receiverBankName,
         destinationAccountNumber: receiverWallet.virtualAccountNumber,
         destinationAccountName,
         sourceAccountNumber: sprayerWallet.virtualAccountNumber,
