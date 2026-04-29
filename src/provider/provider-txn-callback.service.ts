@@ -577,11 +577,18 @@ export class ProviderTxnCallbackService {
       : null;
 
     if (transactionTypeNorm === 'credit') {
+      this.logger.log(
+        `Transaction notification inflow path entered: account=${this.mask(accountNumber)} rawAmount=${raw?.amount != null ? String(raw.amount) : 'n/a'}`,
+      );
       if (!accountNumber) {
+        this.logger.error('Transaction notification inflow validation failed: missing accountNumber');
         throw new BadRequestException('accountNumber is required for credit transaction notifications');
       }
       const amountRaw = raw?.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        this.logger.error(
+          `Transaction notification inflow validation failed: invalid amount account=${this.mask(accountNumber)} rawAmount=${amountRaw != null ? String(amountRaw) : 'n/a'}`,
+        );
         throw new BadRequestException('amount is required for credit transaction notifications');
       }
 
@@ -598,15 +605,28 @@ export class ProviderTxnCallbackService {
         transactionType: transactionTypeRaw ?? null,
       };
 
-      const result = await this.inflowCreditService.processBankInflow({
-        accountNumber,
-        grossAmount,
-        providerFee,
-        providerReference,
-        narration,
-        providerPayload,
-        webhookEvent: { event: 'transaction-notification', paymentReference: providerReference },
-      });
+      this.logger.log(
+        `Transaction notification inflow processing started: account=${this.mask(accountNumber)} wallet=${wallet?.id ?? 'n/a'} providerReference=${this.mask(providerReference)} grossAmount=${grossAmount.toString()}`,
+      );
+
+      let result: Awaited<ReturnType<InflowCreditService['processBankInflow']>>;
+      try {
+        result = await this.inflowCreditService.processBankInflow({
+          accountNumber,
+          grossAmount,
+          providerFee,
+          providerReference,
+          narration,
+          providerPayload,
+          webhookEvent: { event: 'transaction-notification', paymentReference: providerReference },
+        });
+      } catch (error: any) {
+        this.logger.error(
+          `Transaction notification inflow processing failed: account=${this.mask(accountNumber)} providerReference=${this.mask(providerReference)} message=${error?.message ?? error}`,
+          error?.stack,
+        );
+        throw error;
+      }
       this.logger.log(
         `Transaction notification inflow processed: account=${this.mask(accountNumber)} providerReference=${this.mask(providerReference)} status=${result.status} duplicate=${result.isDuplicate}`,
       );
