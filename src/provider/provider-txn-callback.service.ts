@@ -247,6 +247,12 @@ export class ProviderTxnCallbackService {
             });
           }
         }
+        if (failMeta?.payoutAdminFeeSweep === true && typeof failMeta.adminFeeId === 'string') {
+          await tx.adminFee.update({
+            where: { id: failMeta.adminFeeId },
+            data: { status: 'REVERSED' },
+          });
+        }
       }
 
       if (mappedStatus === TransactionStatus.SUCCESS && previousStatus !== TransactionStatus.SUCCESS) {
@@ -255,6 +261,10 @@ export class ProviderTxnCallbackService {
         );
         const amount = txn.amount;
         const sourceWalletId = txn.walletId;
+        const txnDebitMeta =
+          typeof txn.metadata === 'object' && txn.metadata !== null
+            ? (txn.metadata as Record<string, unknown>)
+            : null;
 
         let destinationWalletId: string | null = null;
         if (txn.destinationAccountNumber) {
@@ -314,11 +324,7 @@ export class ProviderTxnCallbackService {
               where: { reference: creditRef },
             });
 
-            const debitMeta =
-              typeof txn.metadata === 'object' && txn.metadata !== null
-                ? (txn.metadata as Record<string, unknown>)
-                : null;
-            const isPayoutRefundCredit = debitMeta?.payoutRefundCredit === true;
+            const isPayoutRefundCredit = txnDebitMeta?.payoutRefundCredit === true;
             const creditType = isPayoutRefundCredit ? TransactionType.PAYOUT : TransactionType.INFLOW;
 
             if (!creditTxn) {
@@ -353,8 +359,8 @@ export class ProviderTxnCallbackService {
               );
             }
 
-            if (debitMeta?.eventSpray === true && debitMeta?.sprayCompletion) {
-              const sc = debitMeta.sprayCompletion as Record<string, unknown>;
+            if (txnDebitMeta?.eventSpray === true && txnDebitMeta?.sprayCompletion) {
+              const sc = txnDebitMeta.sprayCompletion as Record<string, unknown>;
               const existingEventSpray = await tx.spray.findFirst({ where: { transactionId: txn.id } });
               if (!existingEventSpray) {
                 const eventIdStr = typeof sc.eventId === 'string' ? sc.eventId : null;
@@ -386,7 +392,7 @@ export class ProviderTxnCallbackService {
                   },
                 });
               }
-            } else if (debitMeta?.walletToWalletSpray === true) {
+            } else if (txnDebitMeta?.walletToWalletSpray === true) {
               const existingSpray = await tx.spray.findFirst({ where: { transactionId: txn.id } });
               if (!existingSpray) {
                 await tx.spray.create({
@@ -416,37 +422,8 @@ export class ProviderTxnCallbackService {
               }
             }
 
-            if (debitMeta?.inflowAdminFeeSweep === true) {
-              const inflowTxId =
-                typeof debitMeta.inflowTransactionId === 'string' ? debitMeta.inflowTransactionId : null;
-              const adminFeeId = typeof debitMeta.adminFeeId === 'string' ? debitMeta.adminFeeId : null;
-              if (inflowTxId) {
-                const inflowTxn = await tx.transaction.findUnique({ where: { id: inflowTxId } });
-                if (inflowTxn) {
-                  const im =
-                    typeof inflowTxn.metadata === 'object' && inflowTxn.metadata !== null
-                      ? { ...(inflowTxn.metadata as Record<string, unknown>) }
-                      : {};
-                  im.feeSweepPending = false;
-                  await tx.transaction.update({
-                    where: { id: inflowTxId },
-                    data: {
-                      status: TransactionStatus.SUCCESS,
-                      metadata: im as any,
-                    },
-                  });
-                }
-              }
-              if (adminFeeId) {
-                await tx.adminFee.update({
-                  where: { id: adminFeeId },
-                  data: { status: 'COLLECTED' },
-                });
-              }
-            }
-
-            if (debitMeta?.eventSpray === true && debitMeta?.sprayCompletion) {
-              const sc = debitMeta.sprayCompletion as Record<string, unknown>;
+            if (txnDebitMeta?.eventSpray === true && txnDebitMeta?.sprayCompletion) {
+              const sc = txnDebitMeta.sprayCompletion as Record<string, unknown>;
               const receiverUserId = typeof sc.receiverUserId === 'string' ? sc.receiverUserId : null;
               const sprayerUserId = typeof sc.sprayerUserId === 'string' ? sc.sprayerUserId : null;
               const receiverRole = sc.receiverRole as string | undefined;
@@ -492,6 +469,43 @@ export class ProviderTxnCallbackService {
           );
         }
 
+        if (txnDebitMeta?.inflowAdminFeeSweep === true) {
+          const inflowTxId =
+            typeof txnDebitMeta.inflowTransactionId === 'string' ? txnDebitMeta.inflowTransactionId : null;
+          const adminFeeId = typeof txnDebitMeta.adminFeeId === 'string' ? txnDebitMeta.adminFeeId : null;
+          if (inflowTxId) {
+            const inflowTxn = await tx.transaction.findUnique({ where: { id: inflowTxId } });
+            if (inflowTxn) {
+              const im =
+                typeof inflowTxn.metadata === 'object' && inflowTxn.metadata !== null
+                  ? { ...(inflowTxn.metadata as Record<string, unknown>) }
+                  : {};
+              im.feeSweepPending = false;
+              await tx.transaction.update({
+                where: { id: inflowTxId },
+                data: {
+                  status: TransactionStatus.SUCCESS,
+                  metadata: im as any,
+                },
+              });
+            }
+          }
+          if (adminFeeId) {
+            await tx.adminFee.update({
+              where: { id: adminFeeId },
+              data: { status: 'COLLECTED' },
+            });
+          }
+        } else if (txnDebitMeta?.payoutAdminFeeSweep === true) {
+          const adminFeeId = typeof txnDebitMeta.adminFeeId === 'string' ? txnDebitMeta.adminFeeId : null;
+          if (adminFeeId) {
+            await tx.adminFee.update({
+              where: { id: adminFeeId },
+              data: { status: 'COLLECTED' },
+            });
+          }
+        }
+
         const payerWallet = await tx.wallet.findUnique({
           where: { id: sourceWalletId },
           include: {
@@ -502,7 +516,13 @@ export class ProviderTxnCallbackService {
             },
           },
         });
-        if (payerWallet?.customer?.userId) {
+        const txnMeta =
+          typeof txn.metadata === 'object' && txn.metadata !== null
+            ? (txn.metadata as Record<string, unknown>)
+            : null;
+        const suppressDebitSuccessNotify =
+          txnMeta?.payoutAdminFeeSweep === true || txnMeta?.inflowAdminFeeSweep === true;
+        if (payerWallet?.customer?.userId && !suppressDebitSuccessNotify) {
           notifyHolder.v = {
             userId: payerWallet.customer.userId,
             email: payerWallet.customer.user?.email ?? null,
