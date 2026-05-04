@@ -22,6 +22,7 @@ import { calculateFundingFee } from '../utils/fee.util.js';
 import { OrganizationWalletService } from '../services/organization-wallet.service.js';
 import { ConfigService } from '../../config/config.service.js';
 import { ProviderService } from '../../provider/provider.service.js';
+import { DebitWalletMandateService } from '../debit-mandate/debit-wallet-mandate.service.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -55,6 +56,7 @@ export class InflowCreditService {
     private readonly databaseService: DatabaseService,
     private readonly organizationWalletService: OrganizationWalletService,
     private readonly configService: ConfigService,
+    private readonly debitWalletMandateService: DebitWalletMandateService,
     @Inject(forwardRef(() => ProviderService))
     private readonly providerService: ProviderService,
   ) {}
@@ -97,6 +99,7 @@ export class InflowCreditService {
       orgVirtualAccount: string;
       orgBankCode: string;
       orgBankName: string;
+      securityInfo: string;
     };
 
     let result: (BankInflowProcessResult & { pendingFeeSweep: FeeSweepPayload | null }) | undefined;
@@ -294,7 +297,19 @@ export class InflowCreditService {
             },
           });
 
+          let feeSweepSecurityInfo: string | null = null;
           if (adminFee.gt(0)) {
+            const adminFeeKobo = normalizeToKobo(adminFee);
+            const amountNormalized = adminFeeKobo.toFixed(2);
+            const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generateInflowFeeSweepMandate({
+              feeSweepReference,
+              walletId: w.id,
+              amountNormalized,
+              userVirtualAccount: lockedUserWallet.virtualAccountNumber,
+              orgVirtualAccount,
+              orgBankCode,
+            });
+            feeSweepSecurityInfo = securityInfo;
             await tx.transaction.create({
               data: {
                 walletId: w.id,
@@ -306,6 +321,7 @@ export class InflowCreditService {
                 reference: feeSweepReference,
                 externalReference: providerReference,
                 groupReference,
+                securityInfoHash,
                 destinationAccountNumber: orgVirtualAccount,
                 destinationAccountName: 'Organization',
                 narration: `Admin funding fee (inflow ${providerReference})`,
@@ -332,16 +348,18 @@ export class InflowCreditService {
             `INFLOW processed: ${providerReference} - Gross: ${grossAmount.toString()}, Fee: ${adminFee.toString()}, Net: ${netAmount.toString()} to wallet ${w.id}`,
           );
 
-          const feeSweepPayload: FeeSweepPayload | null = adminFee.gt(0)
-            ? {
-                amount: adminFee,
-                feeSweepReference,
-                userVirtualAccount: lockedUserWallet.virtualAccountNumber,
-                orgVirtualAccount,
-                orgBankCode,
-                orgBankName,
-              }
-            : null;
+          const feeSweepPayload: FeeSweepPayload | null =
+            adminFee.gt(0) && feeSweepSecurityInfo
+              ? {
+                  amount: adminFee,
+                  feeSweepReference,
+                  userVirtualAccount: lockedUserWallet.virtualAccountNumber,
+                  orgVirtualAccount,
+                  orgBankCode,
+                  orgBankName,
+                  securityInfo: feeSweepSecurityInfo,
+                }
+              : null;
 
           return {
             status: 'success' as const,
@@ -379,10 +397,23 @@ export class InflowCreditService {
     const { pendingFeeSweep, ...clientResult } = result;
 
     if (pendingFeeSweep && !clientResult.isDuplicate) {
-      const feeSecurity = process.env.INFLOW_FEE_SWEEP_SECURITY_INFO?.trim();
-      if (!feeSecurity) {
+      try {
+        await this.providerService.processClientTransfer({
+          securityInfo: pendingFeeSweep.securityInfo,
+          amount: normalizeToKobo(pendingFeeSweep.amount).toNumber(),
+          destinationBankCode: pendingFeeSweep.orgBankCode,
+          destinationBankName: pendingFeeSweep.orgBankName,
+          destinationAccountNumber: pendingFeeSweep.orgVirtualAccount,
+          destinationAccountName: 'Organization',
+          sourceAccountNumber: pendingFeeSweep.userVirtualAccount,
+          narration: `Admin funding fee ${pendingFeeSweep.feeSweepReference}`,
+          transactionReference: pendingFeeSweep.feeSweepReference,
+          useCustomNarration: true,
+        });
+      } catch (e: unknown) {
+        const feeSweepErrorMessage = e instanceof Error ? e.message : String(e);
         this.logger.error(
-          `INFLOW_FEE_SWEEP_SECURITY_INFO is not set; fee sweep aborted for ref=${pendingFeeSweep.feeSweepReference}. User DB balance reflects gross until reconciled.`,
+          `Inflow fee sweep ProcessClientTransfer failed for ${pendingFeeSweep.feeSweepReference}: ${feeSweepErrorMessage}`,
         );
         await this.databaseService.transaction.update({
           where: { reference: pendingFeeSweep.feeSweepReference },
@@ -392,34 +423,6 @@ export class InflowCreditService {
             providerCallbackReceivedAt: new Date(),
           },
         });
-      } else {
-        try {
-          await this.providerService.processClientTransfer({
-            securityInfo: feeSecurity,
-            amount: pendingFeeSweep.amount.toNumber(),
-            destinationBankCode: pendingFeeSweep.orgBankCode,
-            destinationBankName: pendingFeeSweep.orgBankName,
-            destinationAccountNumber: pendingFeeSweep.orgVirtualAccount,
-            destinationAccountName: 'Organization',
-            sourceAccountNumber: pendingFeeSweep.userVirtualAccount,
-            narration: `Admin funding fee ${pendingFeeSweep.feeSweepReference}`,
-            transactionReference: pendingFeeSweep.feeSweepReference,
-            useCustomNarration: true,
-          });
-        } catch (e: unknown) {
-          const feeSweepErrorMessage = e instanceof Error ? e.message : String(e);
-          this.logger.error(
-            `Inflow fee sweep ProcessClientTransfer failed for ${pendingFeeSweep.feeSweepReference}: ${feeSweepErrorMessage}`,
-          );
-          await this.databaseService.transaction.update({
-            where: { reference: pendingFeeSweep.feeSweepReference },
-            data: {
-              status: TransactionStatus.FAILED,
-              providerStatus: 'FAILED',
-              providerCallbackReceivedAt: new Date(),
-            },
-          });
-        }
       }
     }
 

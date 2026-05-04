@@ -71,8 +71,60 @@ export class DebitWalletMandateService {
   }
 
   /**
-   * Event spray: deterministic per idempotency key (transactionReference) so retries return consistent mandate.
+   * Inflow admin fee sweep: user VA → org VA via ProcessClientTransfer.
+   * Deterministic per feeSweepReference (same as Transaction.reference for the fee debit).
    */
+  generateInflowFeeSweepMandate(params: {
+    feeSweepReference: string;
+    walletId: string;
+    amountNormalized: string;
+    userVirtualAccount: string;
+    orgVirtualAccount: string;
+    orgBankCode: string;
+  }): { securityInfo: string; securityInfoHash: string } {
+    const { feeSweepReference, walletId, amountNormalized, userVirtualAccount, orgVirtualAccount, orgBankCode } =
+      params;
+    const canonical = [
+      'v1',
+      'inflow_fee_sweep',
+      feeSweepReference,
+      walletId,
+      amountNormalized,
+      userVirtualAccount.trim(),
+      orgVirtualAccount.trim(),
+      orgBankCode.trim(),
+    ].join('|');
+
+    return this.signCanonical(canonical);
+  }
+
+  /**
+   * Payout admin fee sweep: user VA → org VA (same ProcessClientTransfer pattern as inflow fee sweep).
+   */
+  generatePayoutFeeSweepMandate(params: {
+    feeSweepReference: string;
+    walletId: string;
+    amountNormalized: string;
+    userVirtualAccount: string;
+    orgVirtualAccount: string;
+    orgBankCode: string;
+  }): { securityInfo: string; securityInfoHash: string } {
+    const { feeSweepReference, walletId, amountNormalized, userVirtualAccount, orgVirtualAccount, orgBankCode } =
+      params;
+    const canonical = [
+      'v1',
+      'payout_fee_sweep',
+      feeSweepReference,
+      walletId,
+      amountNormalized,
+      userVirtualAccount.trim(),
+      orgVirtualAccount.trim(),
+      orgBankCode.trim(),
+    ].join('|');
+
+    return this.signCanonical(canonical);
+  }
+
   generateEventSprayMandate(params: {
     transactionReference: string;
     eventId: string;

@@ -8,7 +8,13 @@ import { InitiatePayoutDto } from './dto/payout-security.dto.js';
 import { PayoutSecurityService } from './services/payout-security.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
-import { KycTier, TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
+import {
+  KycTier,
+  TransactionType,
+  TransactionDirection,
+  TransactionStatus,
+  PayoutStatus,
+} from '../../generated/prisma/enums.js';
 import { normalizeToKobo, toDisplayAmount } from '../common/utils/money.util.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
@@ -457,7 +463,6 @@ export class WalletmoduleService {
 
     const amount = normalizeToKobo(payoutData.amount as string | number);
     const transactionReference: string = payoutData.transactionReference || `TXN-${randomUUID()}`;
-    const amountNormalized = amount.toFixed(2);
     const narration = (payoutData.description as string) || `Wallet payout to ${payoutData.toAccountNumber}`;
 
     const previewWallet = await this.databaseService.wallet.findFirst({
@@ -473,6 +478,9 @@ export class WalletmoduleService {
     if (previewWallet.customer.userId !== userId) {
       throw new UnauthorizedException('You do not have access to this wallet');
     }
+    if (!previewWallet.virtualAccountNumber) {
+      throw new BadRequestException('Wallet does not have a virtual account number');
+    }
     if (previewWallet.customer.isAmlRestricted) {
       throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
     }
@@ -484,16 +492,42 @@ export class WalletmoduleService {
 
     await this.walletRiskService.checkWalletFreezeStatus(previewWallet.id, false);
 
-    const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generatePayoutMandate({
-      transactionReference,
-      walletId: previewWallet.id,
-      amountNormalized,
-      bankCode: payoutData.bankCode as string,
-      toAccountNumber: payoutData.toAccountNumber as string,
-      mandateNonce: payoutData.mandateNonce as string,
-    });
+    const { fee: payoutFee, netAmount, feePercentage } = await calculatePayoutFee(amount, this.configService);
+    const netAmountKobo = normalizeToKobo(netAmount);
+    const netAmountNormalized = netAmountKobo.toFixed(2);
 
-    await calculatePayoutFee(amount, this.configService);
+    const { securityInfo: netSecurityInfo, securityInfoHash: netSecurityInfoHash } =
+      this.debitWalletMandateService.generatePayoutMandate({
+        transactionReference,
+        walletId: previewWallet.id,
+        amountNormalized: netAmountNormalized,
+        bankCode: payoutData.bankCode as string,
+        toAccountNumber: payoutData.toAccountNumber as string,
+        mandateNonce: payoutData.mandateNonce as string,
+      });
+
+    const feeSweepReference = `FEE-PAYOUT-${transactionReference}`;
+    let feeSweepMandate: { securityInfo: string; securityInfoHash: string } | null = null;
+    let orgVirtualAccount = '';
+    let orgBankCode = DEFAULT_PROVIDER_BANK_CODE;
+    let orgBankName = DEFAULT_PROVIDER_BANK_NAME;
+
+    if (payoutFee.gt(0)) {
+      const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
+      orgVirtualAccount =
+        orgWallet?.virtualAccountNumber || this.organizationWalletService.getAdminWalletAccountNumber();
+      orgBankCode = orgWallet?.virtualBankCode?.trim() || DEFAULT_PROVIDER_BANK_CODE;
+      orgBankName = orgWallet?.virtualBankName?.trim() || DEFAULT_PROVIDER_BANK_NAME;
+      const payoutFeeNorm = normalizeToKobo(payoutFee).toFixed(2);
+      feeSweepMandate = this.debitWalletMandateService.generatePayoutFeeSweepMandate({
+        feeSweepReference,
+        walletId: previewWallet.id,
+        amountNormalized: payoutFeeNorm,
+        userVirtualAccount: previewWallet.virtualAccountNumber,
+        orgVirtualAccount,
+        orgBankCode,
+      });
+    }
 
     if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
       await this.withdrawalLimitService.validatePayoutForTier(
@@ -503,12 +537,20 @@ export class WalletmoduleService {
       );
     }
 
+    const normalizedPayoutFeePct = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
+    const adminWalletAccountNumber = this.organizationWalletService.getAdminWalletAccountNumber();
+
     const initiation = await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
       const fromWallet = await tx.wallet.findFirst({
         where: { virtualAccountNumber: payoutData.fromWalletId },
         include: {
           customer: {
-            select: { isAmlRestricted: true, tier: true, userId: true },
+            select: {
+              isAmlRestricted: true,
+              tier: true,
+              userId: true,
+              id: true,
+            },
           },
         },
       });
@@ -544,13 +586,35 @@ export class WalletmoduleService {
         );
       }
 
-      await tx.transaction.create({
+      const toAccount = (payoutData.toAccountNumber as string).trim();
+      const bankCode = (payoutData.bankCode as string).trim();
+      let bankAccount = await tx.bankAccount.findFirst({
+        where: {
+          customerId: fromWallet.customerId,
+          accountNumber: toAccount,
+          bankCode,
+        },
+      });
+      if (!bankAccount) {
+        bankAccount = await tx.bankAccount.create({
+          data: {
+            customerId: fromWallet.customerId,
+            accountName: (payoutData.recipientName as string) || 'Unknown',
+            accountNumber: toAccount,
+            bankCode,
+            isDefault: false,
+            isVerified: true,
+          },
+        });
+      }
+
+      const payoutTxn = await tx.transaction.create({
         data: {
           walletId: fromWallet.id,
           type: TransactionType.PAYOUT,
           direction: TransactionDirection.DEBIT,
           status: TransactionStatus.PENDING,
-          amount,
+          amount: netAmountKobo,
           currencyId: fromWallet.currencyId,
           reference: transactionReference,
           externalReference: null,
@@ -561,34 +625,136 @@ export class WalletmoduleService {
             destinationBankName: payoutData.destinationBankName ?? null,
             destinationAccountNumber: payoutData.toAccountNumber ?? null,
             destinationAccountName: payoutData.recipientName ?? null,
+            payoutGrossAmount: amount.toString(),
+            payoutFeeAmount: payoutFee.toString(),
+            payoutNetAmount: netAmountKobo.toString(),
+            payoutFeeSweepReference: payoutFee.gt(0) ? feeSweepReference : null,
           },
-          securityInfoHash,
+          securityInfoHash: netSecurityInfoHash,
           destinationAccountNumber: payoutData.toAccountNumber ?? null,
           destinationAccountName: payoutData.recipientName ?? null,
         },
       });
 
-      return { sourceAccountNumber: fromWallet.virtualAccountNumber as string };
+      const payoutRow = await tx.payoutTransaction.create({
+        data: {
+          walletId: fromWallet.id,
+          bankAccountId: bankAccount.id,
+          amount,
+          fee: payoutFee,
+          transactionId: payoutTxn.id,
+          status: PayoutStatus.PROCESSING,
+        },
+      });
+
+      const adminFeeRow = await tx.adminFee.create({
+        data: {
+          walletId: fromWallet.id,
+          customerId: fromWallet.customerId,
+          amount: payoutFee,
+          feeType: 'payout',
+          feePercentage: normalizedPayoutFeePct,
+          relatedTransactionId: payoutTxn.id,
+          payoutTransactionId: payoutRow.id,
+          status: payoutFee.gt(0) ? 'PENDING' : 'COLLECTED',
+          grossAmount: amount,
+          netAmount: netAmountKobo,
+          adminWalletAccountNumber: adminWalletAccountNumber,
+          metadata: {
+            feeSweepReference: payoutFee.gt(0) ? feeSweepReference : null,
+            internalLedger: true,
+          },
+        },
+      });
+
+      if (payoutFee.gt(0) && feeSweepMandate) {
+        await tx.transaction.create({
+          data: {
+            walletId: fromWallet.id,
+            type: TransactionType.ADJUSTMENT,
+            direction: TransactionDirection.DEBIT,
+            status: TransactionStatus.PENDING,
+            amount: payoutFee,
+            currencyId: fromWallet.currencyId,
+            reference: feeSweepReference,
+            externalReference: transactionReference,
+            groupReference: `TRANSFER-${transactionReference}`,
+            securityInfoHash: feeSweepMandate.securityInfoHash,
+            destinationAccountNumber: orgVirtualAccount,
+            destinationAccountName: 'Organization',
+            narration: `Admin payout fee (${transactionReference})`,
+            metadata: {
+              payoutAdminFeeSweep: true,
+              payoutNetTransactionId: payoutTxn.id,
+              adminFeeId: adminFeeRow.id,
+            },
+          },
+        });
+      }
+
+      return {
+        sourceAccountNumber: fromWallet.virtualAccountNumber as string,
+        netSecurityInfo,
+        feeSecurityInfo: feeSweepMandate?.securityInfo ?? null,
+      };
     });
 
-    try {
-      await this.providerService.processClientTransfer({
-        securityInfo,
-        amount: amount.toNumber(),
-        destinationBankCode: payoutData.bankCode,
-        destinationBankName: payoutData.destinationBankName || 'Unknown',
-        destinationAccountNumber: payoutData.toAccountNumber,
-        destinationAccountName: payoutData.recipientName || 'Unknown',
-        sourceAccountNumber: initiation.sourceAccountNumber,
-        narration,
-        transactionReference,
-        useCustomNarration: true,
-      });
-    } catch (error: any) {
+    const markPayoutTxnFailed = async () => {
       await this.databaseService.transaction.update({
         where: { reference: transactionReference },
         data: { status: TransactionStatus.FAILED, providerStatus: 'FAILED', providerCallbackReceivedAt: new Date() },
       });
+    };
+
+    const markFeeTxnFailed = async () => {
+      if (!payoutFee.gt(0)) return;
+      await this.databaseService.transaction.update({
+        where: { reference: feeSweepReference },
+        data: { status: TransactionStatus.FAILED, providerStatus: 'FAILED', providerCallbackReceivedAt: new Date() },
+      });
+    };
+
+    // Net to bank first, then admin fee to org VA — avoids collecting a fee when the bank leg never left the wallet.
+    try {
+      try {
+        await this.providerService.processClientTransfer({
+          securityInfo: initiation.netSecurityInfo,
+          amount: netAmountKobo.toNumber(),
+          destinationBankCode: payoutData.bankCode,
+          destinationBankName: payoutData.destinationBankName || 'Unknown',
+          destinationAccountNumber: payoutData.toAccountNumber,
+          destinationAccountName: payoutData.recipientName || 'Unknown',
+          sourceAccountNumber: initiation.sourceAccountNumber,
+          narration,
+          transactionReference,
+          useCustomNarration: true,
+        });
+      } catch (netErr: unknown) {
+        await markPayoutTxnFailed();
+        await markFeeTxnFailed();
+        throw netErr;
+      }
+
+      if (payoutFee.gt(0) && initiation.feeSecurityInfo) {
+        try {
+          await this.providerService.processClientTransfer({
+            securityInfo: initiation.feeSecurityInfo,
+            amount: normalizeToKobo(payoutFee).toNumber(),
+            destinationBankCode: orgBankCode,
+            destinationBankName: orgBankName,
+            destinationAccountNumber: orgVirtualAccount,
+            destinationAccountName: 'Organization',
+            sourceAccountNumber: initiation.sourceAccountNumber,
+            narration: `Admin payout fee ${feeSweepReference}`,
+            transactionReference: feeSweepReference,
+            useCustomNarration: true,
+          });
+        } catch (feeErr: unknown) {
+          await markFeeTxnFailed();
+          throw feeErr;
+        }
+      }
+    } catch (error: unknown) {
       throw error;
     }
 
