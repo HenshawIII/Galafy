@@ -1,31 +1,17 @@
 /**
  * CI/local check: OpenAPI POST /wallets/transfer/wallet-to-wallet uses InitiateWalletToWalletTransferDto
  * (not ProcessClientTransfer / no securityInfo on client body).
- *
- * Uses a minimal Nest TestingModule (no Redis/DB) — only controller metadata + Swagger.
  */
 import 'reflect-metadata';
+import { config } from 'dotenv';
 import { ValidationPipe } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import { WalletmoduleController } from '../walletmodule/walletmodule.controller.js';
-import { WalletmoduleService } from '../walletmodule/walletmodule.service.js';
-import { WalletExportService } from '../walletmodule/services/wallet-export.service.js';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from '../app.module.js';
 import { createOpenApiDocument } from '../swagger/openapi-document.js';
 
 async function main(): Promise<void> {
-  const moduleRef = await Test.createTestingModule({
-    controllers: [WalletmoduleController],
-    providers: [
-      { provide: WalletmoduleService, useValue: {} },
-      { provide: WalletExportService, useValue: {} },
-    ],
-  })
-    .overrideGuard(JwtAuthGuard)
-    .useValue({ canActivate: () => true })
-    .compile();
-
-  const app = moduleRef.createNestApplication();
+  config();
+  const app = await NestFactory.create(AppModule, { logger: false });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({
