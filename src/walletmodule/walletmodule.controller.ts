@@ -193,8 +193,11 @@ export class WalletmoduleController {
   @Post('transfer/wallet-to-wallet')
   @ApiOperation({
     summary: 'Wallet-to-wallet transfer (single step)',
-    description:
-      'Requires Bearer auth only. Server generates provider `securityInfo`. No OTP, PIN, or initiate/confirm flow.',
+    description: `**Client body:** virtual account numbers and amount only — same shape as other wallet APIs; **do not** send \`securityInfo\` (that is generated server-side for the bank).
+
+**Provider:** Gala calls the debit-wallet **ProcessClientTransfer** endpoint on your behalf. The bank validates each debit via **POST \`/api/provider/transaction-auth-callback\`** (mandate), then posts final status to **POST \`/api/provider/transaction-callback\`**.
+
+**Removed routes:** \`POST .../wallet-to-wallet/initiate\` and \`.../confirm\` return 410 — use this endpoint only (Bearer JWT).`,
   })
   @ApiBody({ type: InitiateWalletToWalletTransferDto })
   @ApiResponse({ status: 200, description: 'Transfer submitted to provider (pending callback)' })
@@ -266,7 +269,11 @@ export class WalletmoduleController {
   }
 
   @Post('payout/initiate')
-  @ApiOperation({ summary: 'Initiate payout - Step 1: Validates request and sends OTP to email' })
+  @ApiOperation({
+    summary: 'Initiate payout - Step 1: Validates request and sends OTP to email',
+    description:
+      'Prepares a bank payout (external account). Does **not** call ProcessClientTransfer yet. After **POST /api/wallets/payout/confirm**, the server debits via ProcessClientTransfer (net to beneficiary bank, then fee sweep to org VA when applicable). Mandate/callbacks: **POST /api/provider/transaction-auth-callback**, **POST /api/provider/transaction-callback**.',
+  })
   @ApiBody({ type: InitiatePayoutDto })
   @ApiResponse({
     status: 200,
@@ -291,7 +298,11 @@ export class WalletmoduleController {
   }
 
   @Post('payout/confirm')
-  @ApiOperation({ summary: 'Confirm payout - Step 2: Verifies OTP and PIN, then executes the payout' })
+  @ApiOperation({
+    summary: 'Confirm payout - Step 2: Verifies OTP and PIN, then executes the payout',
+    description:
+      'Verifies OTP + payout PIN, then submits **ProcessClientTransfer** for the net amount (external bank) and, if a fee applies, a second transfer for the admin fee to the organization virtual account. Server builds **securityInfo** for each leg; bank auth at **POST /api/provider/transaction-auth-callback**, settlement at **POST /api/provider/transaction-callback**.',
+  })
   @ApiBody({ type: ConfirmPayoutDto })
   @ApiResponse({
     status: 200,
