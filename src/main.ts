@@ -1,8 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module.js';
+import { createOpenApiDocument } from './swagger/openapi-document.js';
 import { config } from 'dotenv';
 config();
 
@@ -35,38 +36,9 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3000;
 
-  // Get base URL from environment or default to localhost
   const baseUrl = process.env.API_BASE_URL || process.env.APP_URL || `http://localhost:${port}`;
 
-  // Swagger/OpenAPI documentation setup
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Gala API')
-    .setDescription(
-      `API documentation for Gala payment and event management platform
-
-**📥 Download OpenAPI Spec:** [JSON](/api/docs-json) (for Postman import)`,
-    )
-    .setVersion('1.0')
-    .addServer(baseUrl, 'Current server')
-    .addTag('users', 'User management endpoints')
-    .addTag('auth', 'Authentication endpoints')
-    .addTag('customers', 'Customer and KYC management endpoints')
-    .addTag('wallets', 'Wallet management endpoints')
-    .addTag('payments', 'Payment and payout endpoints')
-    .addTag('notifications', 'Notification management endpoints')
-    .addTag('sprays', 'Live spray  endpoints for events')
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        description: 'Enter JWT token obtained from login endpoint. Format: Bearer <token>',
-      },
-      'bearer', // Security scheme name
-    )
-    .build();
-
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  const document = createOpenApiDocument(app);
   SwaggerModule.setup('api/docs', app, document);
 
   // Expose OpenAPI JSON spec endpoint for Postman import
