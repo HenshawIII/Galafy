@@ -16,6 +16,7 @@ import {
   VerifyAccountDto,
   ResendVerificationDto,
   UpdateUserProfileDto,
+  KycTier,
 } from './dto/create-user-dto.js';
 import { UserSettingsDto, UpdateUserSettingsDto } from './dto/user-settings.dto.js';
 import { SearchUserDto } from './dto/search-user.dto.js';
@@ -674,27 +675,51 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    if (!user.customer) {
-      throw new NotFoundException(`Customer not found for user ${userId}`);
-    }
-
     const customer = user.customer;
 
     // Prepare customer details
-    const customerDetails = {
-      firstName: customer.firstName,
-      lastName: customer.lastName,
-      mobileNumber: customer.mobileNumber,
-      emailAddress: customer.emailAddress,
-      tier: customer.tier,
-      customerId: customer.id,
-      username: user.username,
-    };
+    const customerDetails = customer
+      ? {
+          firstName: customer.firstName,
+          lastName: customer.lastName,
+          mobileNumber: customer.mobileNumber,
+          emailAddress: customer.emailAddress,
+          tier: customer.tier,
+          customerId: customer.id,
+          username: user.username,
+        }
+      : {
+          firstName: user.firstName,
+          lastName: user.lastName,
+          mobileNumber: user.phone,
+          emailAddress: user.email,
+          tier: KycTier.Tier_0,
+          customerId: null,
+          username: user.username,
+        };
 
     // Get KYC status from our local KYC service (enriched with partnership account details)
     let kycStatus: any = null;
     try {
-      kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(userId);
+      if (customer) {
+        kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(userId);
+      } else {
+        // Implicit Tier_0 when user exists but no customer profile has been created yet.
+        kycStatus = {
+          customerId: null,
+          tier: KycTier.Tier_0,
+          providerTierCode: 0,
+          tier1FaceStatus: null,
+          tier1AccountStatus: null,
+          tier1Nuban: null,
+          tier1NubanName: null,
+          tier2TrackingId: null,
+          tier2AddressVerificationStatus: null,
+          hasNin: false,
+          hasBvn: false,
+          hasAddressVerification: false,
+        };
+      }
     } catch (error: any) {
       // Log error but don't fail the request - KYC status will be null
       console.error(`Failed to fetch KYC status for user ${userId}:`, error.message);
@@ -741,7 +766,7 @@ export class UsersService {
     }
 
     // Get banks list and enrich bank accounts with bank names
-    let bankAccounts = customer.bankAccounts || [];
+    let bankAccounts = customer?.bankAccounts || [];
     try {
       const banksList = await this.getBanksList();
 
@@ -786,7 +811,7 @@ export class UsersService {
 
     // Get latest utility bill status
     let utilityBillStatus: string | null = null;
-    if (customer.utilityBillSubmissions && customer.utilityBillSubmissions.length > 0) {
+    if (customer?.utilityBillSubmissions && customer.utilityBillSubmissions.length > 0) {
       utilityBillStatus = customer.utilityBillSubmissions[0].status;
     }
 
@@ -794,7 +819,7 @@ export class UsersService {
       ...customerDetails,
       kycStatus,
       utilityBillStatus,
-      wallets: customer.wallets || [],
+      wallets: customer?.wallets || [],
       bankAccounts,
       settings,
     };
