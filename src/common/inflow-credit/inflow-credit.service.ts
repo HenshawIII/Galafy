@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   forwardRef,
+  HttpException,
   Inject,
   Injectable,
   Logger,
@@ -412,8 +413,22 @@ export class InflowCreditService {
         });
       } catch (e: unknown) {
         const feeSweepErrorMessage = e instanceof Error ? e.message : String(e);
+        const httpStatusSuffix =
+          e instanceof HttpException ? ` httpStatus=${e.getStatus()}` : '';
+        const responsePayloadSuffix = (() => {
+          if (!(e instanceof HttpException)) return '';
+          const r = e.getResponse();
+          if (typeof r === 'string') return '';
+          try {
+            const s = JSON.stringify(r);
+            return s.length > 2000 ? ` response=${s.slice(0, 2000)}...` : ` response=${s}`;
+          } catch {
+            return '';
+          }
+        })();
         this.logger.error(
-          `Inflow fee sweep ProcessClientTransfer failed for ${pendingFeeSweep.feeSweepReference}: ${feeSweepErrorMessage}`,
+          `Inflow fee sweep ProcessClientTransfer failed for ${pendingFeeSweep.feeSweepReference}: ${feeSweepErrorMessage}${httpStatusSuffix}${responsePayloadSuffix}`,
+          e instanceof Error ? e.stack : undefined,
         );
         await this.databaseService.transaction.update({
           where: { reference: pendingFeeSweep.feeSweepReference },
