@@ -184,11 +184,14 @@ export class ProviderService {
       }
 
       if (!response.ok) {
-        const detail = typeof data === 'string' ? this.truncateForLog(data) : this.truncateForLog(JSON.stringify(data));
+        const detail =
+          typeof data === 'string'
+            ? this.truncateForLog(data, 4000)
+            : this.truncateForLog(JSON.stringify(data), 4000);
+        this.logger.error(
+          `${logLabel}: upstream HTTP ${response.status} ${response.statusText || ''}. Provider response body: ${detail}`.trim(),
+        );
         if (response.status >= 500) {
-          this.logger.error(
-            `${logLabel}: upstream HTTP ${response.status} ${response.statusText || ''}. Provider error: ${detail}`.trim(),
-          );
           throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         const msg =
