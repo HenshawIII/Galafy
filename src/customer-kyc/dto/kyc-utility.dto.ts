@@ -92,9 +92,12 @@ export class ResidentialAddressDto {
   postalCode?: string;
 }
 
-/** ALAT Tier 2 submit: NIN + address + live face image (base64). BVN is derived from the stored Tier 1 session. */
+/** ALAT Tier 2 submit: NIN + address + live face image (base64). BVN is optional (not stored after Tier 1). */
 export class StartTier2Dto {
-  @ApiPropertyOptional({ example: '12345678901', description: 'BVN is optional here; backend derives it from Tier 1' })
+  @ApiPropertyOptional({
+    example: '12345678901',
+    description: 'Optional. Omit if Tier 1 BVN was already submitted to the provider.',
+  })
   @IsOptional()
   @IsString()
   bvn?: string;
