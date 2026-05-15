@@ -817,6 +817,7 @@ export class UsersService {
 
     const result = {
       ...customerDetails,
+      profilePicture: user.profilePicture ?? null,
       kycStatus,
       utilityBillStatus,
       wallets: customer?.wallets || [],

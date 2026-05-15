@@ -136,6 +136,8 @@ export class ProviderCallbackService {
         tier1NubanName: nubanName,
         tier1AccountCompletedAt: tier1AccountStatus === 'COMPLETED' ? now : null,
         tier1CompletedAt: tier1AccountStatus === 'COMPLETED' ? now : null,
+        // BVN is only needed locally until Tier 1 account-creation callback settles.
+        tier1PendingBvn: null,
       },
     });
     this.logger.log(
@@ -144,6 +146,12 @@ export class ProviderCallbackService {
 
     // Create/update wallet only when tier1 is successful.
     if (tier1AccountStatus !== 'COMPLETED') return { received: true };
+
+    await this.databaseService.bvnVerification.upsert({
+      where: { customerId: customer.id },
+      create: { customerId: customer.id },
+      update: {},
+    });
 
     // If Tier1 didn't succeed for the customer, avoid creating a wallet.
     // (Wallet creation is logically downstream of successful Tier1.)

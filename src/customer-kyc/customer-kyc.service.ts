@@ -185,16 +185,10 @@ export class CustomerKycService {
           tier: KycTier.Tier_1,
           providerTierCode: 1,
           tier1PendingBvn: bvn,
-          // Wallet/account provisioning is async; callback will update to COMPLETED/FAILED.
+          // Wallet/account provisioning is async; callback clears BVN and sets COMPLETED/FAILED.
           tier1AccountStatus: 'PENDING',
           tier1AccountCompletedAt: null,
         },
-      });
-
-      await this.databaseService.bvnVerification.upsert({
-        where: { customerId: customer.id },
-        create: { customerId: customer.id },
-        update: {},
       });
 
       this.logger.log(
@@ -229,7 +223,8 @@ export class CustomerKycService {
   }
 
   /**
-   * Submit Tier 2 (NIN + address + live face). Uses existing bvn, phone, email from customer.
+   * Submit Tier 2 (NIN + address + live face). Requires Tier 1 account-creation callback (COMPLETED).
+   * BVN in the request body is optional — provider retains it from Tier 1 when already submitted.
    */
   async startTier2(
     userId: string,
@@ -250,19 +245,29 @@ export class CustomerKycService {
       throw new BadRequestException('Customer phone and email are required for Tier 2');
     }
 
-    const hasBvn = await this.databaseService.bvnVerification.findUnique({ where: { customerId: customer.id } });
+    if (customer.tier1AccountStatus !== 'COMPLETED') {
+      throw new BadRequestException(
+        'Complete Tier 1 account setup before upgrading to Tier 2. Wait for your wallet account to be confirmed.',
+      );
+    }
+
+    let hasBvn = await this.databaseService.bvnVerification.findUnique({ where: { customerId: customer.id } });
+    if (!hasBvn) {
+      // Legacy: account callback completed before BVN flag was recorded on callback.
+      await this.databaseService.bvnVerification.upsert({
+        where: { customerId: customer.id },
+        create: { customerId: customer.id },
+        update: {},
+      });
+      hasBvn = await this.databaseService.bvnVerification.findUnique({ where: { customerId: customer.id } });
+    }
     if (!hasBvn) {
       throw new BadRequestException('BVN verification required before Tier 2');
     }
 
-    // Tier 2 BVN is derived from Tier 1 session (tier1PendingBvn is cleared only when Tier 1 face fails).
-    const tier1Bvn = customer.tier1PendingBvn;
-    if (!tier1Bvn) {
-      throw new BadRequestException('BVN is missing for Tier 2 submission');
-    }
     const correlationId = customer.tier1CorrelationId;
     if (!correlationId) {
-      throw new BadRequestException('Tier 1 correlationId is missing; complete Tier 1 face verification first.');
+      throw new BadRequestException('Tier 1 correlationId is missing; complete Tier 1 account setup first.');
     }
 
     const residentialAddress: Record<string, string | undefined> = {
@@ -281,8 +286,10 @@ export class CustomerKycService {
       postalCode: dto.residentialAddress.postalCode,
     };
 
+    const bvn = dto.bvn?.trim() || customer.tier1PendingBvn?.trim() || undefined;
+
     const res = await this.providerService.tier2PartnershipWithoutOtpV2({
-      bvn: tier1Bvn,
+      ...(bvn ? { bvn } : {}),
       nin: dto.nin,
       phoneNumber,
       emailAddress,
