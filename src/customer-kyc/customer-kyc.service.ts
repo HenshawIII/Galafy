@@ -7,6 +7,7 @@ import { GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
 import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 import { Tier1FaceStatus, UtilityBillStatus } from '../../generated/prisma/enums.js';
+import { BvnCryptoService } from '../common/crypto/bvn-crypto.service.js';
 
 @Injectable()
 export class CustomerKycService {
@@ -15,6 +16,7 @@ export class CustomerKycService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly providerService: ProviderService,
+    private readonly bvnCrypto: BvnCryptoService,
   ) {}
 
   /**
@@ -61,8 +63,11 @@ export class CustomerKycService {
       return { received: true };
     }
 
-    const customer = await this.databaseService.customer.findUnique({
-      where: { tier1PendingBvn: body.id },
+    const bvnHash = this.bvnCrypto.hash(body.id);
+    const customer = await this.databaseService.customer.findFirst({
+      where: {
+        OR: [{ tier1BvnHash: bvnHash }, { tier1PendingBvn: body.id }],
+      },
     });
 
     if (!customer) {
@@ -73,7 +78,12 @@ export class CustomerKycService {
     if (!body.success) {
       await this.databaseService.customer.update({
         where: { id: customer.id },
-        data: { tier1FaceStatus: Tier1FaceStatus.FAILED, tier1PendingBvn: null, tier1CompletedAt: null },
+        data: {
+          tier1FaceStatus: Tier1FaceStatus.FAILED,
+          tier1PendingBvn: null,
+          tier1BvnHash: null,
+          tier1CompletedAt: null,
+        },
       });
       this.logger.log(`Face callback: face failed for customer ${customer.id}`);
       return { received: true };
@@ -112,7 +122,9 @@ export class CustomerKycService {
     let customer = await this.databaseService.customer.findUnique({ where: { userId } });
     const phone = dto.phoneNumber?.trim() ?? '';
     const email = dto.email?.trim().toLowerCase() ?? '';
-    const bvn = dto.bvn?.trim() ?? '';
+    const bvn = this.bvnCrypto.normalizeBvn(dto.bvn ?? '');
+    const encryptedBvn = this.bvnCrypto.encrypt(bvn);
+    const bvnHash = this.bvnCrypto.hash(bvn);
     const correlationId = dto.correlationId?.trim() ?? '';
 
     const excludeCurrent = customer ? { id: { not: customer.id } } : {};
@@ -129,7 +141,10 @@ export class CustomerKycService {
       throw new ConflictException('Email address is already registered with another account');
     }
     const existingByBvn = await this.databaseService.customer.findFirst({
-      where: { tier1PendingBvn: bvn, ...excludeCurrent },
+      where: {
+        OR: [{ tier1BvnHash: bvnHash }, { tier1PendingBvn: bvn }],
+        ...excludeCurrent,
+      },
     });
     if (existingByBvn) {
       throw new ConflictException('BVN is already being used by another account');
@@ -150,7 +165,8 @@ export class CustomerKycService {
     await this.databaseService.customer.update({
       where: { id: customer.id },
       data: {
-        tier1PendingBvn: bvn,
+        tier1PendingBvn: encryptedBvn,
+        tier1BvnHash: bvnHash,
         mobileNumber: phone,
         emailAddress: email,
         tier1FaceStatus: Tier1FaceStatus.PENDING,
@@ -184,8 +200,9 @@ export class CustomerKycService {
           tier1CompletedAt: null,
           tier: KycTier.Tier_1,
           providerTierCode: 1,
-          tier1PendingBvn: bvn,
-          // Wallet/account provisioning is async; callback clears BVN and sets COMPLETED/FAILED.
+          tier1PendingBvn: encryptedBvn,
+          tier1BvnHash: bvnHash,
+          // Wallet/account provisioning is async; callback sets COMPLETED/FAILED (BVN retained encrypted).
           tier1AccountStatus: 'PENDING',
           tier1AccountCompletedAt: null,
         },
@@ -211,6 +228,7 @@ export class CustomerKycService {
           providerTierCode: 0,
           tier1FaceStatus: Tier1FaceStatus.FAILED,
           tier1PendingBvn: null,
+          tier1BvnHash: null,
           tier1CompletedAt: null,
           tier1AccountStatus: 'FAILED',
           tier1AccountCompletedAt: null,
@@ -286,10 +304,20 @@ export class CustomerKycService {
       postalCode: dto.residentialAddress.postalCode,
     };
 
-    const bvn = dto.bvn?.trim() || customer.tier1PendingBvn?.trim() || undefined;
+    let bvn: string | null = null;
+    if (dto.bvn?.trim()) {
+      bvn = this.bvnCrypto.normalizeBvn(dto.bvn);
+    } else if (customer.tier1PendingBvn) {
+      bvn = this.bvnCrypto.decrypt(customer.tier1PendingBvn);
+    }
+    if (!bvn) {
+      throw new BadRequestException(
+        'BVN is required for Tier 2. Complete Tier 1 again if your verification was started before encrypted BVN storage.',
+      );
+    }
 
     const res = await this.providerService.tier2PartnershipWithoutOtpV2({
-      ...(bvn ? { bvn } : {}),
+      bvn,
       nin: dto.nin,
       phoneNumber,
       emailAddress,
@@ -300,14 +328,28 @@ export class CustomerKycService {
 
     const trackingId = res.data?.trackingId ?? null;
     const addressStatus = res.data?.addressVerificationStatus ?? null;
+
+    const tier2CustomerUpdate: {
+      tier: KycTier;
+      providerTierCode: number;
+      tier2TrackingId: string | null;
+      tier2AddressVerificationStatus: string | null;
+      tier1PendingBvn?: string;
+      tier1BvnHash?: string;
+    } = {
+      tier: KycTier.Tier_2,
+      providerTierCode: 2,
+      tier2TrackingId: trackingId,
+      tier2AddressVerificationStatus: addressStatus,
+    };
+    if (customer.tier1PendingBvn && this.bvnCrypto.isLegacyPlaintext(customer.tier1PendingBvn)) {
+      tier2CustomerUpdate.tier1PendingBvn = this.bvnCrypto.encrypt(bvn);
+      tier2CustomerUpdate.tier1BvnHash = this.bvnCrypto.hash(bvn);
+    }
+
     await this.databaseService.customer.update({
       where: { id: customer.id },
-      data: {
-        tier: KycTier.Tier_2,
-        providerTierCode: 2,
-        tier2TrackingId: trackingId,
-        tier2AddressVerificationStatus: addressStatus,
-      },
+      data: tier2CustomerUpdate,
     });
 
     await this.databaseService.addressVerification.upsert({
