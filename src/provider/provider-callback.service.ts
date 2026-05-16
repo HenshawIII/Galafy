@@ -136,8 +136,9 @@ export class ProviderCallbackService {
         tier1NubanName: nubanName,
         tier1AccountCompletedAt: tier1AccountStatus === 'COMPLETED' ? now : null,
         tier1CompletedAt: tier1AccountStatus === 'COMPLETED' ? now : null,
-        // BVN is only needed locally until Tier 1 account-creation callback settles.
-        tier1PendingBvn: null,
+        ...(tier1AccountStatus === 'FAILED'
+          ? { tier1PendingBvn: null, tier1BvnHash: null }
+          : {}),
       },
     });
     this.logger.log(

@@ -43,8 +43,7 @@ export interface AlatResidentialAddress {
 }
 
 export interface AlatTier2Request {
-  /** Omitted when Tier 1 was completed on the provider; they retain BVN server-side. */
-  bvn?: string;
+  bvn: string;
   nin: string;
   phoneNumber: string;
   emailAddress: string;

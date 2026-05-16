@@ -270,7 +270,8 @@ model Customer {
 
   // Tier 1 (BVN + face) flow
   tier1CorrelationId       String?         @unique
-  tier1PendingBvn          String?         @unique
+  tier1PendingBvn          String?
+  tier1BvnHash             String?         @unique
   tier1TrackingId          String?
   tier1FaceStatus          Tier1FaceStatus?
   tier1CompletedAt         DateTime?

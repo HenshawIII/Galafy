@@ -20,11 +20,13 @@ import { AdminModule } from './admin/admin.module.js';
 import { EventsModule } from './events/events.module.js';
 import { LiveModule } from './live/live.module.js';
 import { SpraysModule } from './sprays/sprays.module.js';
+import { BvnCryptoModule } from './common/crypto/bvn-crypto.module.js';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(), // Enable scheduled tasks
     CacheModule, // Redis cache module (global)
+    BvnCryptoModule,
     UsersModule,
     DatabaseModule,
     ThrottlerModule.forRootAsync({
