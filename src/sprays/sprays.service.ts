@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { LiveGateway } from '../live/live.gateway.js';
 import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
+import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -54,9 +55,11 @@ export class SpraysService {
       throw new BadRequestException('Idempotency-Key header is required');
     }
 
+    const transactionReference = buildStableProviderRef('SPRAY', idempotencyKey);
+
     // Check idempotency: if transaction with this reference exists, return previous result
     const existingTransaction = await this.databaseService.transaction.findUnique({
-      where: { reference: idempotencyKey },
+      where: { reference: transactionReference },
       include: {
         spray: {
           include: {
@@ -92,7 +95,7 @@ export class SpraysService {
           receiverBalance: spray.receiverWallet.availableBalance,
           eventTotals,
           pending: true,
-          transactionRef: idempotencyKey,
+          transactionRef: transactionReference,
           message: 'Spray transfer is still pending provider confirmation.',
         };
       }
@@ -128,7 +131,7 @@ export class SpraysService {
             receiverBalance: rw!.availableBalance,
             eventTotals,
             pending: true,
-            transactionRef: idempotencyKey,
+            transactionRef: transactionReference,
             message: 'Spray transfer is still pending provider confirmation.',
           };
         }
@@ -301,7 +304,7 @@ export class SpraysService {
     const amountKobo = normalizeToKobo(createSprayDto.amount);
     const amountNormalized = amountKobo.toFixed(2);
     const { securityInfo, securityInfoHash } = this.debitWalletMandateService.generateEventSprayMandate({
-      transactionReference: idempotencyKey,
+      transactionReference,
       eventId,
       sprayerWalletId: sprayerWallet.id,
       receiverWalletId: receiverWallet.id,
@@ -352,7 +355,7 @@ export class SpraysService {
             status: TransactionStatus.PENDING,
             amount: amountKobo,
             currencyId: lockedSprayer.currencyId,
-            reference: idempotencyKey,
+            reference: transactionReference,
             groupReference,
             securityInfoHash,
             destinationAccountNumber: receiverWallet.virtualAccountNumber,
@@ -392,7 +395,7 @@ export class SpraysService {
     );
 
     const sprayWithWallets = await this.databaseService.spray.findFirst({
-      where: { transaction: { reference: idempotencyKey } },
+      where: { transaction: { reference: transactionReference } },
       include: {
         sprayerWallet: { select: { id: true, availableBalance: true } },
         receiverWallet: { select: { id: true, availableBalance: true } },
@@ -436,12 +439,12 @@ export class SpraysService {
         destinationAccountName,
         sourceAccountNumber: sprayerWallet.virtualAccountNumber,
         narration,
-        transactionReference: idempotencyKey,
+        transactionReference,
         useCustomNarration: true,
       });
     } catch (error: any) {
       await this.databaseService.transaction.update({
-        where: { reference: idempotencyKey },
+        where: { reference: transactionReference },
         data: {
           status: TransactionStatus.FAILED,
           providerStatus: 'FAILED',
@@ -449,14 +452,14 @@ export class SpraysService {
         },
       });
       await this.databaseService.spray.updateMany({
-        where: { transaction: { reference: idempotencyKey } },
+        where: { transaction: { reference: transactionReference } },
         data: { status: SprayStatus.FAILED },
       });
       throw error;
     }
 
     this.logger.log(
-      `💰 SPRAY (provider): Amount=${amountKobo.toString()}, EventId=${eventId}, Ref=${idempotencyKey} — pending callback`,
+      `💰 SPRAY (provider): Amount=${amountKobo.toString()}, EventId=${eventId}, Ref=${transactionReference} — pending callback`,
     );
 
     return {
@@ -465,7 +468,7 @@ export class SpraysService {
       receiverBalance: rwAfter!.availableBalance,
       eventTotals,
       pending: true,
-      transactionRef: idempotencyKey,
+      transactionRef: transactionReference,
       message: 'Spray submitted to the payment partner. Balances and live event data update when the transfer succeeds.',
     };
   }

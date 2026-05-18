@@ -1,5 +1,6 @@
 import { BadRequestException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
 import { DatabaseService } from '../database/database.service.js';
 import { TransactionCallbackDto } from './dto/transaction-callback.dto.js';
 import {
@@ -53,7 +54,11 @@ export class ProviderTxnCallbackService {
   private buildTransactionNotificationProviderReference(raw: any): string {
     const explicit = raw?.reference ?? raw?.transactionId ?? raw?.platformTransactionReference;
     if (explicit != null && String(explicit).trim() !== '') {
-      return `TN-${String(explicit).trim()}`;
+      const trimmed = String(explicit).trim();
+      if (trimmed.length <= 24) {
+        return `TN-${trimmed}`;
+      }
+      return buildStableProviderRef('TN', trimmed);
     }
     const accountNumber = String(raw?.accountNumber ?? '').trim();
     const amount = String(raw?.amount ?? '');
@@ -63,8 +68,7 @@ export class ProviderTxnCallbackService {
       td = isNaN(d.getTime()) ? String(raw.transactionDate) : d.toISOString();
     }
     const narration = String(raw?.narration ?? '').trim();
-    const h = createHash('sha256').update(`${accountNumber}|${amount}|${td}|${narration}`, 'utf8').digest('hex');
-    return `NOTIF-${h}`;
+    return buildStableProviderRef('NOTIF', `${accountNumber}|${amount}|${td}|${narration}`);
   }
 
   async handleTransactionAuthCallback(raw: any): Promise<{ transactionReference: string; authorized: boolean }> {
