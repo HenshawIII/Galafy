@@ -1,3 +1,28 @@
+import { TransactionStatus } from '../../generated/prisma/enums.js';
+
+/**
+ * Map ALAT debit-wallet settlement status strings to internal TransactionStatus.
+ * Provider uses "Success" (callback) and sometimes "SUCCESSFUL" in docs/samples.
+ */
+export function mapProviderStatusToTransactionStatus(providerStatus: string | undefined): TransactionStatus {
+  const normalized = (providerStatus ?? '').toString().trim().toUpperCase();
+  if (normalized === 'PENDING' || normalized === 'PROCESSING') {
+    return TransactionStatus.PENDING;
+  }
+  if (
+    normalized === 'SUCCESSFUL' ||
+    normalized === 'SUCCESS' ||
+    normalized === 'COMPLETED' ||
+    normalized === 'APPROVED'
+  ) {
+    return TransactionStatus.SUCCESS;
+  }
+  if (normalized === 'FAILED' || normalized === 'FAILURE' || normalized === 'REJECTED') {
+    return TransactionStatus.FAILED;
+  }
+  return TransactionStatus.PENDING;
+}
+
 /**
  * Sanitize provider webhook bodies for logs (never log securityInfo / full account numbers).
  */
