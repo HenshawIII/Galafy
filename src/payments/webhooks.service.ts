@@ -20,6 +20,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '../config/config.service.js';
 import { InflowCreditService } from '../common/inflow-credit/inflow-credit.service.js';
+import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
 config();
 
 @Injectable()
@@ -313,7 +314,7 @@ export class WebhooksService {
             },
           });
 
-          const refundRef = `REFUND-ORG-${data.paymentReference}`;
+          const refundRef = buildStableProviderRef('REFUND', data.paymentReference);
           const existingProviderRefund = await tx.transaction.findUnique({
             where: { reference: refundRef },
           });

@@ -25,6 +25,11 @@ import { ConfigService } from '../config/config.service.js';
 import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
 import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
 import { ForbiddenException } from '@nestjs/common';
+import {
+  buildStableProviderRef,
+  buildUniqueProviderRef,
+  toProviderTransactionReference,
+} from '../common/utils/provider-transaction-reference.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -191,7 +196,9 @@ export class WalletmoduleService {
       );
     }
 
-    const transactionReference = dto.transactionReference?.trim() || `TXN-${randomUUID()}`;
+    const transactionReference = dto.transactionReference?.trim()
+      ? toProviderTransactionReference(dto.transactionReference.trim(), 'TXN')
+      : buildUniqueProviderRef('TXN');
     const destinationAccountName =
       toWallet.name ||
       [toWallet.customer.firstName, toWallet.customer.lastName].filter(Boolean).join(' ').trim() ||
@@ -387,7 +394,9 @@ export class WalletmoduleService {
       this.logger.warn(`Failed to resolve destination bank name: ${error.message}. Proceeding as 'Unknown'.`);
     }
 
-    const transactionReference = initiateDto.transactionReference?.trim() || `TXN-${randomUUID()}`;
+    const transactionReference = initiateDto.transactionReference?.trim()
+      ? toProviderTransactionReference(initiateDto.transactionReference.trim(), 'TXN')
+      : buildUniqueProviderRef('TXN');
     const mandateNonce = this.debitWalletMandateService.generateNonce();
 
     // Get source account name
@@ -459,7 +468,10 @@ export class WalletmoduleService {
     }
 
     const amount = normalizeToKobo(payoutData.amount as string | number);
-    const transactionReference: string = payoutData.transactionReference || `TXN-${randomUUID()}`;
+    const transactionReference: string =
+      typeof payoutData.transactionReference === 'string' && payoutData.transactionReference.trim()
+        ? toProviderTransactionReference(payoutData.transactionReference.trim(), 'TXN')
+        : buildUniqueProviderRef('TXN');
     const narration = (payoutData.description as string) || `Wallet payout to ${payoutData.toAccountNumber}`;
 
     const previewWallet = await this.databaseService.wallet.findFirst({
@@ -503,7 +515,7 @@ export class WalletmoduleService {
         mandateNonce: payoutData.mandateNonce as string,
       });
 
-    const feeSweepReference = `FEE-PAYOUT-${transactionReference}`;
+    const feeSweepReference = buildStableProviderRef('FEEP', transactionReference);
     let feeSweepMandate: { securityInfo: string; securityInfoHash: string } | null = null;
     let orgVirtualAccount = '';
     let orgBankCode = DEFAULT_PROVIDER_BANK_CODE;

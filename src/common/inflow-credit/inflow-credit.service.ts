@@ -24,6 +24,7 @@ import { OrganizationWalletService } from '../services/organization-wallet.servi
 import { ConfigService } from '../../config/config.service.js';
 import { ProviderService } from '../../provider/provider.service.js';
 import { DebitWalletMandateService } from '../debit-mandate/debit-wallet-mandate.service.js';
+import { buildStableProviderRef } from '../utils/provider-transaction-reference.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -182,7 +183,7 @@ export class InflowCreditService {
           }
 
           const userTransactionRef = `INFLOW-${randomUUID()}`;
-          const feeSweepReference = `FEE-${providerReference}`;
+          const feeSweepReference = buildStableProviderRef('FEE', providerReference);
           const groupReference = `GRP-${randomUUID()}`;
 
           const newUserAvailableBalanceAfterCredit = normalizeToKobo(
