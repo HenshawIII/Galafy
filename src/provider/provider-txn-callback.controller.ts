@@ -2,6 +2,10 @@ import { Body, Controller, HttpCode, HttpStatus, Logger, Post } from '@nestjs/co
 import { ApiExcludeController } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator.js';
 import { ProviderTxnCallbackService } from './provider-txn-callback.service.js';
+import {
+  extractTransactionCallbackFields,
+  sanitizeProviderCallbackForLog,
+} from './provider-callback-payload.util.js';
 
 @ApiExcludeController()
 @Controller('provider')
@@ -39,6 +43,9 @@ export class ProviderTxnCallbackController {
   @Post('transaction-auth-callback')
   @HttpCode(HttpStatus.OK)
   async transactionAuthCallback(@Body() raw: unknown) {
+    this.logger.log(
+      `Provider callback payload [transaction-auth-callback]: ${sanitizeProviderCallbackForLog(raw)}`,
+    );
     const txRef = this.pick(raw, 'transactionReference') ?? this.pick(this.pick(raw, 'data'), 'transactionReference');
     this.logger.log(`Provider callback entry: transaction-auth-callback txRef=${this.mask(txRef)}`);
     const result = await this.providerTxnCallbackService.handleTransactionAuthCallback(raw);
@@ -55,14 +62,12 @@ export class ProviderTxnCallbackController {
   @Post('transaction-callback')
   @HttpCode(HttpStatus.OK)
   async transactionCallback(@Body() raw: unknown) {
-    const txRef =
-      this.pick(this.pick(raw, 'data'), 'transactionReference') ??
-      this.pick(this.pick(this.pick(raw, 'result'), 'data'), 'transactionReference');
-    const platformRef =
-      this.pick(this.pick(raw, 'data'), 'platformTransactionReference') ??
-      this.pick(this.pick(this.pick(raw, 'result'), 'data'), 'platformTransactionReference');
+    this.logger.log(`Provider callback payload [transaction-callback]: ${sanitizeProviderCallbackForLog(raw)}`);
+    const extracted = extractTransactionCallbackFields(raw);
+    const txRef = extracted.transactionReference;
+    const platformRef = extracted.platformTransactionReference;
     this.logger.log(
-      `Provider callback entry: transaction-callback txRef=${this.mask(txRef)} platformRef=${this.mask(platformRef)}`,
+      `Provider callback entry: transaction-callback txRef=${this.mask(txRef)} platformRef=${this.mask(platformRef)} dataSource=${extracted.dataSource}`,
     );
     const result = await this.providerTxnCallbackService.handleTransactionCallback(raw);
     this.logger.log(
@@ -78,6 +83,9 @@ export class ProviderTxnCallbackController {
   @Post('transaction-notification')
   @HttpCode(HttpStatus.OK)
   async transactionNotification(@Body() raw: unknown) {
+    this.logger.log(
+      `Provider callback payload [transaction-notification]: ${sanitizeProviderCallbackForLog(raw)}`,
+    );
     const accountNumber = this.pick(raw, 'accountNumber');
     const txnType = this.pick(raw, 'transactionType');
     this.logger.log(

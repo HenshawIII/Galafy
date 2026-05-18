@@ -1,6 +1,10 @@
 import { BadRequestException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
+import {
+  extractTransactionCallbackFields,
+  sanitizeProviderCallbackForLog,
+} from './provider-callback-payload.util.js';
 import { DatabaseService } from '../database/database.service.js';
 import { TransactionCallbackDto } from './dto/transaction-callback.dto.js';
 import {
@@ -109,21 +113,31 @@ export class ProviderTxnCallbackService {
   }
 
   async handleTransactionCallback(raw: any): Promise<{ received: true }> {
-    const data: TransactionCallbackDto['data'] | undefined = raw?.data ?? raw?.result?.data;
-    const transactionReference = data?.transactionReference;
-    const platformTransactionReference = data?.platformTransactionReference;
-    const providerStatus = data?.status;
+    const extracted = extractTransactionCallbackFields(raw);
+    const transactionReference = extracted.transactionReference;
+    const platformTransactionReference = extracted.platformTransactionReference;
+    const providerStatus = extracted.status;
 
     this.logger.log(
-      `Transaction callback received: txRef=${this.mask(transactionReference)}, platformRef=${this.mask(platformTransactionReference)}, providerStatus=${providerStatus ?? 'n/a'}`,
+      `Transaction callback received: txRef=${this.mask(transactionReference)}, platformRef=${this.mask(platformTransactionReference)}, providerStatus=${providerStatus ?? 'n/a'}, dataSource=${extracted.dataSource}`,
     );
 
     if (!transactionReference || !platformTransactionReference) {
       this.logger.warn(
-        `Transaction callback ignored: missing references txRef=${this.mask(transactionReference)} platformRef=${this.mask(platformTransactionReference)}`,
+        `Transaction callback ignored: missing references txRef=${this.mask(transactionReference)} platformRef=${this.mask(platformTransactionReference)} dataSource=${extracted.dataSource}. Full sanitized payload: ${sanitizeProviderCallbackForLog(raw)}`,
       );
       return { received: true };
     }
+
+    const data = {
+      status: providerStatus ?? 'PENDING',
+      message: extracted.message,
+      narration: extracted.narration,
+      transactionReference,
+      platformTransactionReference,
+      transactionStan: extracted.transactionStan,
+      orinalTxnTransactionDate: extracted.orinalTxnTransactionDate,
+    } satisfies TransactionCallbackDto['data'];
 
     const mappedStatus = this.mapProviderStatusToTransactionStatus(providerStatus);
     this.logger.log(
