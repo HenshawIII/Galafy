@@ -1,4 +1,4 @@
-import { Body, Controller, Logger, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Logger, Post } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator.js';
 import { ProviderCallbackService } from './provider-callback.service.js';
@@ -37,6 +37,7 @@ export class ProviderCallbackController {
    */
   @Public()
   @Post('account-creation-callback')
+  @HttpCode(HttpStatus.OK)
   async accountCreationCallback(@Body() raw: unknown) {
     // Important: provider callbacks may contain extra fields.
     // Your global ValidationPipe is strict (`forbidNonWhitelisted: true`), so we accept raw payloads

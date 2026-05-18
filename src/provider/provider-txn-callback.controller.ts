@@ -1,4 +1,4 @@
-import { Body, Controller, Logger, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Logger, Post } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator.js';
 import { ProviderTxnCallbackService } from './provider-txn-callback.service.js';
@@ -37,6 +37,7 @@ export class ProviderTxnCallbackController {
    */
   @Public()
   @Post('transaction-auth-callback')
+  @HttpCode(HttpStatus.OK)
   async transactionAuthCallback(@Body() raw: unknown) {
     const txRef = this.pick(raw, 'transactionReference') ?? this.pick(this.pick(raw, 'data'), 'transactionReference');
     this.logger.log(`Provider callback entry: transaction-auth-callback txRef=${this.mask(txRef)}`);
@@ -52,6 +53,7 @@ export class ProviderTxnCallbackController {
    */
   @Public()
   @Post('transaction-callback')
+  @HttpCode(HttpStatus.OK)
   async transactionCallback(@Body() raw: unknown) {
     const txRef =
       this.pick(this.pick(raw, 'data'), 'transactionReference') ??
@@ -74,6 +76,7 @@ export class ProviderTxnCallbackController {
    */
   @Public()
   @Post('transaction-notification')
+  @HttpCode(HttpStatus.OK)
   async transactionNotification(@Body() raw: unknown) {
     const accountNumber = this.pick(raw, 'accountNumber');
     const txnType = this.pick(raw, 'transactionType');
