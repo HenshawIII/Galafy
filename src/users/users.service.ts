@@ -339,31 +339,10 @@ export class UsersService {
 
     // Get KYC status if customer exists
     let kycStatus: any = null;
-    let utilityBillStatus: string | null = null;
     try {
       kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(user.id);
-
-      // Get latest utility bill submission status if customer exists
-      const customer = await this.databaseService.customer.findUnique({
-        where: { userId: user.id },
-        include: {
-          utilityBillSubmissions: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            select: {
-              status: true,
-            },
-          },
-        },
-      });
-
-      if (customer && customer.utilityBillSubmissions && customer.utilityBillSubmissions.length > 0) {
-        utilityBillStatus = customer.utilityBillSubmissions[0].status;
-      }
-    } catch (error) {
-      // Customer might not exist yet, which is fine - return null for kycStatus and utilityBillStatus
+    } catch {
       kycStatus = null;
-      utilityBillStatus = null;
     }
 
     return {
@@ -371,7 +350,6 @@ export class UsersService {
       refresh_token: refreshToken,
       user: userWithoutPassword,
       kycStatus,
-      utilityBillStatus,
       isVerified: String(user.isVerified),
     };
   }
@@ -809,17 +787,10 @@ export class UsersService {
       }));
     }
 
-    // Get latest utility bill status
-    let utilityBillStatus: string | null = null;
-    if (customer?.utilityBillSubmissions && customer.utilityBillSubmissions.length > 0) {
-      utilityBillStatus = customer.utilityBillSubmissions[0].status;
-    }
-
     const result = {
       ...customerDetails,
       profilePicture: user.profilePicture ?? null,
       kycStatus,
-      utilityBillStatus,
       wallets: customer?.wallets || [],
       bankAccounts,
       settings,
