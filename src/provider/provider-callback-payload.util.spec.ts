@@ -1,9 +1,30 @@
+import { TransactionStatus } from '../../generated/prisma/enums.js';
 import {
   extractTransactionCallbackFields,
+  mapProviderStatusToTransactionStatus,
   sanitizeProviderCallbackForLog,
 } from './provider-callback-payload.util.js';
 
 describe('provider-callback-payload.util', () => {
+  it('maps ALAT Success to SUCCESS', () => {
+    expect(mapProviderStatusToTransactionStatus('Success')).toBe(TransactionStatus.SUCCESS);
+    expect(mapProviderStatusToTransactionStatus('SUCCESSFUL')).toBe(TransactionStatus.SUCCESS);
+  });
+
+  it('extracts PascalCase Status from data envelope', () => {
+    const fields = extractTransactionCallbackFields({
+      data: {
+        Status: 'Success',
+        TransactionReference: 'FEE-abc',
+        PlatformTransactionReference: '639147319387981870',
+      },
+    });
+    expect(fields.transactionReference).toBe('FEE-abc');
+    expect(fields.platformTransactionReference).toBe('639147319387981870');
+    expect(fields.status).toBe('Success');
+    expect(mapProviderStatusToTransactionStatus(fields.status)).toBe(TransactionStatus.SUCCESS);
+  });
+
   it('extracts from data envelope', () => {
     const fields = extractTransactionCallbackFields({
       data: {

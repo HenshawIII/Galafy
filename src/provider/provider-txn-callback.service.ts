@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
 import {
   extractTransactionCallbackFields,
+  mapProviderStatusToTransactionStatus,
   sanitizeProviderCallbackForLog,
 } from './provider-callback-payload.util.js';
 import { DatabaseService } from '../database/database.service.js';
@@ -42,14 +43,6 @@ export class ProviderTxnCallbackService {
 
   private computeSecurityInfoHash(securityInfo: string): string {
     return createHash('sha256').update(securityInfo).digest('hex');
-  }
-
-  private mapProviderStatusToTransactionStatus(providerStatus: string | undefined): TransactionStatus {
-    const normalized = (providerStatus ?? '').toString().trim().toUpperCase();
-    if (normalized === 'PENDING') return TransactionStatus.PENDING;
-    if (normalized === 'SUCCESSFUL') return TransactionStatus.SUCCESS;
-    if (normalized === 'FAILED') return TransactionStatus.FAILED;
-    return TransactionStatus.PENDING;
   }
 
   /**
