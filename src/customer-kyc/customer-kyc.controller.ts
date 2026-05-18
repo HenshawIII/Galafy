@@ -26,8 +26,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
 import { UpdateCustomerNameDto, UpdateCustomerContactsDto } from './dto/update-customer.dto.js';
 import { GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
-import { StartTier1Dto, StartTier2Dto } from './dto/kyc-utility.dto.js';
-import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
+import { StartTier1Dto, StartTier2Dto, StartTier3Dto } from './dto/kyc-utility.dto.js';
 
 @ApiTags('customers')
 @Controller('customer-kyc')
@@ -223,44 +222,31 @@ export class CustomerKycController {
   }
 
   @Post('kyc/tier2')
-  @ApiOperation({ summary: 'Submit Tier 2 (NIN + address + face)' })
+  @ApiOperation({ summary: 'Submit Tier 2 account upgrade (NIN + face)' })
   @ApiBody({ type: StartTier2Dto })
-  @ApiResponse({ status: 200, description: 'Tier 2 submitted' })
+  @ApiResponse({ status: 200, description: 'Tier 2 upgrade completed' })
   async startTier2(@Request() req: any, @Body(ValidationPipe) dto: StartTier2Dto) {
     const userId = req.user?.id;
     if (!userId) throw new Error('User ID is required. Please ensure you are authenticated.');
     return this.customerKycService.startTier2(userId, {
       nin: dto.nin,
       bvn: dto.bvn,
-      residentialAddress: dto.residentialAddress as Record<string, string | undefined>,
       liveImageOfFace: dto.liveImageOfFace,
     });
   }
 
-  @Post('utility-bill')
-  @ApiExcludeEndpoint()
-  @ApiOperation({ summary: 'Submit utility bill for Tier 2 withdrawal limit increase' })
-  @ApiBody({ type: SubmitUtilityBillDto })
+  @Post('kyc/tier3')
+  @ApiOperation({ summary: 'Submit Tier 3 account upgrade (residential address)' })
+  @ApiBody({ type: StartTier3Dto })
   @ApiResponse({
-    status: 201,
-    description: 'Utility bill submitted successfully',
-    schema: {
-      example: {
-        id: 'submission-uuid',
-        customerId: 'customer-uuid',
-        utilityBillUrl: 'https://example.com/utility-bill.jpg',
-        status: 'PENDING',
-        createdAt: '2025-02-08T12:00:00.000Z',
-      },
-    },
+    status: 200,
+    description: 'Tier 3 submitted; tier3UpgradeStatus PENDING until admin approval',
   })
-  @ApiResponse({ status: 400, description: 'User is not Tier 2 or submission already exists' })
-  @ApiResponse({ status: 404, description: 'Customer not found' })
-  async submitUtilityBill(@Request() req: any, @Body(ValidationPipe) dto: SubmitUtilityBillDto) {
+  async startTier3(@Request() req: any, @Body(ValidationPipe) dto: StartTier3Dto) {
     const userId = req.user?.id;
-    if (!userId) {
-      throw new Error('User ID is required. Please ensure you are authenticated.');
-    }
-    return this.customerKycService.submitUtilityBill(userId, dto);
+    if (!userId) throw new Error('User ID is required. Please ensure you are authenticated.');
+    return this.customerKycService.startTier3(userId, {
+      residentialAddress: dto.residentialAddress as Record<string, string | undefined>,
+    });
   }
 }

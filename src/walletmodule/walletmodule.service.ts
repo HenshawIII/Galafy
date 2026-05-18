@@ -353,17 +353,14 @@ export class WalletmoduleService {
     if (fromWallet.customer.isAmlRestricted) {
       throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
     }
-    if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
+    const payoutCustomer = fromWallet.customer;
+    if (payoutCustomer.tier === KycTier.Tier_0 || payoutCustomer.tier === KycTier.Tier_1) {
       throw new ForbiddenException(
         'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
       );
     }
-    if (fromWallet.customer.tier === KycTier.Tier_2 || fromWallet.customer.tier === KycTier.Tier_3) {
-      await this.withdrawalLimitService.validatePayoutForTier(
-        fromWallet.customer.tier,
-        fromWallet.customer.id,
-        amount,
-      );
+    if (payoutCustomer.tier === KycTier.Tier_2 || payoutCustomer.tier === KycTier.Tier_3) {
+      await this.withdrawalLimitService.validatePayoutForTier(payoutCustomer, payoutCustomer.id, amount);
     }
 
     // Get destination account name if not provided (via name enquiry)
@@ -531,7 +528,7 @@ export class WalletmoduleService {
 
     if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
       await this.withdrawalLimitService.validatePayoutForTier(
-        previewWallet.customer.tier,
+        previewWallet.customer,
         previewWallet.customer.id,
         amount,
       );

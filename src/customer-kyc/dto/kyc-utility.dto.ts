@@ -1,4 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsObject } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEmail, IsObject, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /** ALAT Tier 1 start: phone, email, BVN. Returns correlationId + face URL. */
@@ -92,7 +93,7 @@ export class ResidentialAddressDto {
   postalCode?: string;
 }
 
-/** ALAT Tier 2 submit: NIN + address + live face image (base64). BVN is optional (not stored after Tier 1). */
+/** ALAT Tier 2 account upgrade: NIN + live face image (base64). BVN optional if stored from Tier 1. */
 export class StartTier2Dto {
   @ApiPropertyOptional({
     example: '12345678901',
@@ -107,12 +108,17 @@ export class StartTier2Dto {
   @IsNotEmpty()
   nin: string;
 
-  @ApiProperty({ description: 'Residential address (state, lga, city, etc.)' })
-  @IsObject()
-  residentialAddress: ResidentialAddressDto;
-
   @ApiProperty({ description: 'Base64-encoded live face image' })
   @IsString()
   @IsNotEmpty()
   liveImageOfFace: string;
+}
+
+/** ALAT Tier 3 account upgrade: residential address only (account number resolved server-side). */
+export class StartTier3Dto {
+  @ApiProperty({ description: 'Residential address (state, lga, city, etc.)' })
+  @ValidateNested()
+  @Type(() => ResidentialAddressDto)
+  @IsObject()
+  residentialAddress: ResidentialAddressDto;
 }

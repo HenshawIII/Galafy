@@ -34,8 +34,10 @@ import {
   EventStatus,
   PayoutStatus,
   KycTier,
+  Tier3UpgradeStatus,
   SprayStatus,
 } from '../../generated/prisma/enums.js';
+import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
@@ -65,6 +67,7 @@ export class AdminService {
     private readonly emailService: EmailService,
     private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
+    private readonly customerKycService: CustomerKycService,
   ) {}
 
   /**
@@ -1030,7 +1033,7 @@ export class AdminService {
   }
 
   /**
-   * Manual Tier 3 promotion after off-line verification (e.g. bank address). Customer must already be Tier 2.
+   * Approve Tier 3 after manual address verification. Customer must be Tier_3 with tier3UpgradeStatus PENDING.
    */
   async promoteCustomerToTier3(customerId: string, adminId: string, dto?: ApproveKycDto) {
     const customer = await this.databaseService.customer.findUnique({
@@ -1041,29 +1044,75 @@ export class AdminService {
       throw new NotFoundException('Customer not found');
     }
 
-    if (customer.tier !== KycTier.Tier_2) {
-      throw new BadRequestException('Customer must be Tier 2 to be promoted to Tier 3 via this endpoint');
+    if (customer.tier !== KycTier.Tier_3) {
+      throw new BadRequestException('Customer must have submitted Tier 3 upgrade before approval');
     }
 
-    const previousTier = customer.tier;
+    if (customer.tier3UpgradeStatus === Tier3UpgradeStatus.COMPLETED) {
+      return customer;
+    }
+
+    if (customer.tier3UpgradeStatus !== Tier3UpgradeStatus.PENDING) {
+      throw new BadRequestException('Customer does not have a pending Tier 3 upgrade to approve');
+    }
+
+    let partnerKycAudit: unknown;
+    try {
+      partnerKycAudit = await this.customerKycService.fetchPartnerAccountKycStatus(customerId);
+    } catch (err) {
+      this.logger.warn(
+        `approve-tier-3: partner KYC status fetch failed for ${customerId}: ${(err as Error).message}`,
+      );
+    }
+
+    const now = new Date();
     const updated = await this.databaseService.customer.update({
       where: { id: customerId },
       data: {
-        tier: KycTier.Tier_3,
-        providerTierCode: 3,
+        tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
+        tier2AddressVerificationStatus: 'COMPLETED',
+      },
+    });
+
+    await this.databaseService.addressVerification.upsert({
+      where: { customerId },
+      create: {
+        customerId,
+        verified: true,
+        verifiedAt: now,
+        providerStatus: 'COMPLETED',
+      },
+      update: {
+        verified: true,
+        verifiedAt: now,
+        providerStatus: 'COMPLETED',
       },
     });
 
     await this.logAdminAction(
       adminId,
-      'CUSTOMER_TIER3_PROMOTED',
+      'CUSTOMER_TIER3_APPROVED',
       'CUSTOMER',
       customerId,
-      { previousTier, newTier: KycTier.Tier_3, notes: dto?.notes },
+      {
+        tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
+        partnerKyc: partnerKycAudit,
+        notes: dto?.notes,
+      },
       dto?.notes,
     );
 
+    this.logger.log(`Tier 3 approved adminId=${adminId} customerId=${customerId} PENDING→COMPLETED`);
+
     return updated;
+  }
+
+  async getPartnerKycStatusForCustomer(customerId: string) {
+    const data = await this.customerKycService.fetchPartnerAccountKycStatus(customerId);
+    if (!data) {
+      throw new BadRequestException('Wallet account not found; cannot fetch partner KYC status.');
+    }
+    return { partnerKyc: data };
   }
 
   /**

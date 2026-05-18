@@ -4,10 +4,12 @@ import { ProviderService } from '../provider/provider.service.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
 import { UpdateCustomerNameDto, UpdateCustomerContactsDto } from './dto/update-customer.dto.js';
 import { GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
-import { SubmitUtilityBillDto } from './dto/utility-bill.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
-import { Tier1FaceStatus, UtilityBillStatus } from '../../generated/prisma/enums.js';
+import { Tier1FaceStatus, Tier3UpgradeStatus } from '../../generated/prisma/enums.js';
 import { BvnCryptoService } from '../common/crypto/bvn-crypto.service.js';
+import { resolvePartnershipAccountNumber } from '../common/utils/customer-account.util.js';
+import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
+import type { AlatPartnerAccountKycStatusData } from '../provider/dto/provider-account-upgrade.dto.js';
 
 @Injectable()
 export class CustomerKycService {
@@ -240,27 +242,26 @@ export class CustomerKycService {
     }
   }
 
+  private maskAccountNumber(accountNumber: string): string {
+    const s = accountNumber.trim();
+    if (s.length <= 4) return '****';
+    return `${'*'.repeat(Math.max(0, s.length - 4))}${s.slice(-4)}`;
+  }
+
   /**
-   * Submit Tier 2 (NIN + address + live face). Requires Tier 1 account-creation callback (COMPLETED).
-   * BVN in the request body is optional — provider retains it from Tier 1 when already submitted.
+   * Submit Tier 2 account upgrade (NIN + live face). Requires Tier 1 wallet account (COMPLETED).
    */
-  async startTier2(
-    userId: string,
-    dto: { nin: string; bvn?: string; residentialAddress: Record<string, string | undefined>; liveImageOfFace: string },
-  ) {
+  async startTier2(userId: string, dto: { nin: string; bvn?: string; liveImageOfFace: string }) {
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
-      include: { user: true },
+      include: {
+        user: true,
+        wallets: { select: { virtualAccountNumber: true, isDefault: true } },
+      },
     });
     if (!customer) throw new NotFoundException('Customer not found');
     if (customer.tier !== KycTier.Tier_1) {
       throw new BadRequestException('Customer must complete Tier 1 before Tier 2');
-    }
-
-    const phoneNumber = customer.mobileNumber || customer.user?.phone;
-    const emailAddress = customer.emailAddress || customer.user?.email;
-    if (!phoneNumber || !emailAddress) {
-      throw new BadRequestException('Customer phone and email are required for Tier 2');
     }
 
     if (customer.tier1AccountStatus !== 'COMPLETED') {
@@ -271,7 +272,6 @@ export class CustomerKycService {
 
     let hasBvn = await this.databaseService.bvnVerification.findUnique({ where: { customerId: customer.id } });
     if (!hasBvn) {
-      // Legacy: account callback completed before BVN flag was recorded on callback.
       await this.databaseService.bvnVerification.upsert({
         where: { customerId: customer.id },
         create: { customerId: customer.id },
@@ -283,66 +283,38 @@ export class CustomerKycService {
       throw new BadRequestException('BVN verification required before Tier 2');
     }
 
-    const correlationId = customer.tier1CorrelationId;
-    if (!correlationId) {
-      throw new BadRequestException('Tier 1 correlationId is missing; complete Tier 1 account setup first.');
-    }
+    const accountNumber = resolvePartnershipAccountNumber(customer);
+    const maskedAcct = this.maskAccountNumber(accountNumber);
 
-    const residentialAddress: Record<string, string | undefined> = {
-      buildingNumber: dto.residentialAddress.buildingNumber,
-      apartment: dto.residentialAddress.apartment,
-      street: dto.residentialAddress.street,
-      city: dto.residentialAddress.city,
-      town: dto.residentialAddress.town,
-      state: dto.residentialAddress.state,
-      lga: dto.residentialAddress.lga,
-      lcda: dto.residentialAddress.lcda,
-      landmark: dto.residentialAddress.landmark,
-      additionalInformation: dto.residentialAddress.additionalInformation,
-      country: dto.residentialAddress.country,
-      fullAddress: dto.residentialAddress.fullAddress,
-      postalCode: dto.residentialAddress.postalCode,
-    };
-
-    let bvn: string | null = null;
+    let bvn: string | undefined;
     if (dto.bvn?.trim()) {
       bvn = this.bvnCrypto.normalizeBvn(dto.bvn);
     } else if (customer.tier1PendingBvn) {
-      bvn = this.bvnCrypto.decrypt(customer.tier1PendingBvn);
-    }
-    if (!bvn) {
-      throw new BadRequestException(
-        'BVN is required for Tier 2. Complete Tier 1 again if your verification was started before encrypted BVN storage.',
-      );
+      const decrypted = this.bvnCrypto.decrypt(customer.tier1PendingBvn);
+      if (decrypted) bvn = decrypted;
     }
 
-    const res = await this.providerService.tier2PartnershipWithoutOtpV2({
-      bvn,
+    this.logger.log(
+      `Tier 2 upgrade start customerId=${customer.id} accountNumber=${maskedAcct} nin=present bvnIncluded=${!!bvn}`,
+    );
+
+    await this.providerService.partnerAccountUpgradeTier2({
+      accountNumber,
       nin: dto.nin,
-      phoneNumber,
-      emailAddress,
-      residentialAddress,
       liveImageOfFace: dto.liveImageOfFace,
-      correlationId,
+      ...(bvn ? { bvn } : {}),
     });
-
-    const trackingId = res.data?.trackingId ?? null;
-    const addressStatus = res.data?.addressVerificationStatus ?? null;
 
     const tier2CustomerUpdate: {
       tier: KycTier;
       providerTierCode: number;
-      tier2TrackingId: string | null;
-      tier2AddressVerificationStatus: string | null;
       tier1PendingBvn?: string;
       tier1BvnHash?: string;
     } = {
       tier: KycTier.Tier_2,
       providerTierCode: 2,
-      tier2TrackingId: trackingId,
-      tier2AddressVerificationStatus: addressStatus,
     };
-    if (customer.tier1PendingBvn && this.bvnCrypto.isLegacyPlaintext(customer.tier1PendingBvn)) {
+    if (bvn && customer.tier1PendingBvn && this.bvnCrypto.isLegacyPlaintext(customer.tier1PendingBvn)) {
       tier2CustomerUpdate.tier1PendingBvn = this.bvnCrypto.encrypt(bvn);
       tier2CustomerUpdate.tier1BvnHash = this.bvnCrypto.hash(bvn);
     }
@@ -352,23 +324,137 @@ export class CustomerKycService {
       data: tier2CustomerUpdate,
     });
 
+    await this.databaseService.ninVerification.upsert({
+      where: { customerId: customer.id },
+      create: { customerId: customer.id },
+      update: {},
+    });
+
+    let addressVerificationStatus: string | undefined;
+    try {
+      const kycStatus = await this.providerService.getPartnerAccountKycStatus(accountNumber);
+      addressVerificationStatus = kycStatus.data?.addressVerificationStatus;
+      if (addressVerificationStatus) {
+        await this.databaseService.customer.update({
+          where: { id: customer.id },
+          data: { tier2AddressVerificationStatus: addressVerificationStatus },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Tier 2 upgrade: could not fetch partner KYC status for ${maskedAcct}: ${(err as Error).message}`,
+      );
+    }
+
+    this.logger.log(`Tier 2 upgrade authorized customerId=${customer.id} accountNumber=${maskedAcct}`);
+
+    return {
+      tier: KycTier.Tier_2,
+      message: 'Tier 2 upgrade completed successfully.',
+      addressVerificationStatus,
+    };
+  }
+
+  /**
+   * Submit Tier 3 account upgrade (address). Sets tier Tier_3 + tier3UpgradeStatus PENDING until admin approves.
+   */
+  async startTier3(
+    userId: string,
+    dto: { residentialAddress: Record<string, string | undefined> },
+  ) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { userId },
+      include: { wallets: { select: { virtualAccountNumber: true, isDefault: true } } },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+
+    if (customer.tier !== KycTier.Tier_2) {
+      throw new BadRequestException('Customer must be Tier 2 before applying for Tier 3');
+    }
+    if (customer.tier3UpgradeStatus === Tier3UpgradeStatus.PENDING) {
+      throw new ConflictException('Tier 3 upgrade is already pending address verification.');
+    }
+    if (customer.tier3UpgradeStatus === Tier3UpgradeStatus.COMPLETED) {
+      throw new ConflictException('Tier 3 upgrade is already completed.');
+    }
+    if (customer.tier1AccountStatus !== 'COMPLETED') {
+      throw new BadRequestException('Complete Tier 1 account setup before upgrading to Tier 3.');
+    }
+
+    const accountNumber = resolvePartnershipAccountNumber(customer);
+    const maskedAcct = this.maskAccountNumber(accountNumber);
+    const residentialAddress = { ...dto.residentialAddress };
+
+    await this.providerService.partnerAccountUpgradeTier3({
+      accountNumber,
+      residentialAddress,
+    });
+
+    let providerAddressStatus: string | undefined;
+    try {
+      const kycStatus = await this.providerService.getPartnerAccountKycStatus(accountNumber);
+      providerAddressStatus = kycStatus.data?.addressVerificationStatus;
+    } catch (err) {
+      this.logger.warn(
+        `Tier 3 upgrade: could not fetch partner KYC status for ${maskedAcct}: ${(err as Error).message}`,
+      );
+    }
+
+    await this.databaseService.customer.update({
+      where: { id: customer.id },
+      data: {
+        tier: KycTier.Tier_3,
+        providerTierCode: 3,
+        tier3UpgradeStatus: Tier3UpgradeStatus.PENDING,
+        tier2AddressVerificationStatus: providerAddressStatus ?? 'PENDING',
+      },
+    });
+
     await this.databaseService.addressVerification.upsert({
       where: { customerId: customer.id },
       create: {
         customerId: customer.id,
         verified: false,
-        residentialAddressJson: residentialAddress as any,
+        residentialAddressJson: residentialAddress as object,
+        providerStatus: providerAddressStatus ?? 'PENDING',
       },
       update: {
-        residentialAddressJson: residentialAddress as any,
+        verified: false,
+        residentialAddressJson: residentialAddress as object,
+        providerStatus: providerAddressStatus ?? 'PENDING',
       },
     });
 
+    this.logger.log(
+      `Tier 3 upgrade submitted userId=${userId} accountNumber=${maskedAcct} tier3UpgradeStatus=PENDING`,
+    );
+
     return {
-      trackingId,
-      addressVerificationStatus: addressStatus,
-      tier: KycTier.Tier_2,
+      tier: KycTier.Tier_3,
+      tier3UpgradeStatus: Tier3UpgradeStatus.PENDING,
+      message: 'Tier 3 upgrade submitted. Address verification is pending.',
     };
+  }
+
+  /**
+   * Fetch partner account KYC status from ALAT account-upgrade API (masked logging).
+   */
+  async fetchPartnerAccountKycStatus(customerId: string): Promise<AlatPartnerAccountKycStatusData | null> {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+      include: { wallets: { select: { virtualAccountNumber: true, isDefault: true } } },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+
+    let accountNumber: string;
+    try {
+      accountNumber = resolvePartnershipAccountNumber(customer);
+    } catch {
+      return null;
+    }
+
+    const res = await this.providerService.getPartnerAccountKycStatus(accountNumber);
+    return res.data ?? null;
   }
 
   /**
@@ -666,6 +752,7 @@ export class CustomerKycService {
         bvnVerification: true,
         addressVerification: true,
         user: { select: { phone: true } },
+        wallets: { select: { virtualAccountNumber: true, isDefault: true } },
       },
     });
 
@@ -683,14 +770,27 @@ export class CustomerKycService {
       tier1NubanName: customer.tier1NubanName,
       tier2TrackingId: customer.tier2TrackingId,
       tier2AddressVerificationStatus: customer.tier2AddressVerificationStatus,
+      tier3UpgradeStatus: customer.tier3UpgradeStatus,
+      hasTier3Benefits: hasTier3Benefits(customer),
       hasNin: !!customer.ninVerification,
       hasBvn: !!customer.bvnVerification,
       hasAddressVerification: !!customer.addressVerification,
     };
 
+    let partnerKyc: AlatPartnerAccountKycStatusData | undefined;
+    try {
+      const accountNumber = resolvePartnershipAccountNumber(customer);
+      const res = await this.providerService.getPartnerAccountKycStatus(accountNumber);
+      if (res.data) {
+        partnerKyc = res.data;
+      }
+    } catch (error) {
+      this.logger.warn(`Could not fetch partner KYC status: ${(error as Error).message}`);
+    }
+
     const phone = customer.mobileNumber || customer.user?.phone;
     if (!phone) {
-      return base;
+      return { ...base, ...(partnerKyc ? { partnerKyc } : {}) };
     }
 
     try {
@@ -707,52 +807,11 @@ export class CustomerKycService {
               phoneNumber: accountDetails.phoneNumber,
             }
           : undefined,
+        ...(partnerKyc ? { partnerKyc } : {}),
       };
     } catch (error) {
       this.logger.debug(`Could not fetch partnership account details: ${(error as Error).message}`);
-      return base;
+      return { ...base, ...(partnerKyc ? { partnerKyc } : {}) };
     }
-  }
-
-  /**
-   * Submit utility bill for Tier 2 withdrawal limit increase
-   */
-  async submitUtilityBill(userId: string, dto: SubmitUtilityBillDto) {
-    const customer = await this.databaseService.customer.findUnique({
-      where: { userId },
-      include: {
-        utilityBillSubmissions: {
-          where: {
-            status: UtilityBillStatus.PENDING,
-          },
-        },
-      },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
-    // Validate user is Tier 2
-    if (customer.tier !== KycTier.Tier_2) {
-      throw new BadRequestException('Utility bill submission is only available for Tier 2 users');
-    }
-
-    // Check if there's already a pending submission
-    if (customer.utilityBillSubmissions.length > 0) {
-      throw new ConflictException('You already have a pending utility bill submission. Please wait for review.');
-    }
-
-    // Create submission
-    const submission = await this.databaseService.utilityBillSubmission.create({
-      data: {
-        customerId: customer.id,
-        utilityBillUrl: dto.utilityBillUrl,
-        status: UtilityBillStatus.PENDING,
-      },
-    });
-
-    this.logger.log(`Utility bill submitted for customer ${customer.id} by user ${userId}`);
-    return submission;
   }
 }

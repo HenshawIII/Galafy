@@ -503,26 +503,36 @@ export class AdminController {
     return this.adminService.rejectKycRequest(requestId, adminId, dto);
   }
 
-  @Patch('customers/:customerId/promote-tier-3')
+  @Patch('customers/:customerId/approve-tier-3')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
   @RequirePermission(PERMISSIONS.APPROVE_KYC)
   @ApiOperation({
-    summary: 'Promote customer to Tier 3',
+    summary: 'Approve Tier 3 upgrade',
     description:
-      'Sets customer from Tier 2 to Tier 3 after manual verification (e.g. bank address). Rejects if tier is not Tier 2.',
+      'Sets tier3UpgradeStatus to COMPLETED after manual address verification. Customer must be Tier_3 with PENDING status.',
   })
   @ApiParam({ name: 'customerId', description: 'Customer ID' })
   @ApiBody({ type: ApproveKycDto, required: false })
-  @ApiResponse({ status: 200, description: 'Customer promoted to Tier 3' })
+  @ApiResponse({ status: 200, description: 'Tier 3 upgrade approved; benefits unlocked' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
-  @ApiResponse({ status: 400, description: 'Customer is not Tier 2' })
-  async promoteCustomerToTier3(
+  @ApiResponse({ status: 400, description: 'No pending Tier 3 upgrade' })
+  async approveCustomerTier3(
     @Param('customerId') customerId: string,
     @Body(new ValidationPipe({ skipMissingProperties: true })) dto: ApproveKycDto,
     @Request() req: any,
   ) {
     const adminId = req.admin?.id;
     return this.adminService.promoteCustomerToTier3(customerId, adminId, dto);
+  }
+
+  @Get('customers/:customerId/partner-kyc-status')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
+  @RequirePermission(PERMISSIONS.APPROVE_KYC)
+  @ApiOperation({ summary: 'Get partner account KYC status from ALAT account-upgrade API' })
+  @ApiParam({ name: 'customerId', description: 'Customer ID' })
+  @ApiResponse({ status: 200, description: 'Partner KYC status' })
+  async getPartnerKycStatus(@Param('customerId') customerId: string) {
+    return this.adminService.getPartnerKycStatusForCustomer(customerId);
   }
 
   // =====================

@@ -26,6 +26,11 @@ enum KycTier {
   Tier_3
 }
 
+enum Tier3UpgradeStatus {
+  PENDING
+  COMPLETED
+}
+
 enum TransactionType {
   INFLOW
   SPRAY
@@ -283,8 +288,11 @@ model Customer {
   tier1AccountCompletedAt DateTime?
 
   // Tier 2 flow
-  tier2TrackingId           String?
-  tier2AddressVerificationStatus String?
+  tier2TrackingId                  String?
+  tier2AddressVerificationStatus     String?
+
+  // Tier 3 upgrade (provider account-upgrade API)
+  tier3UpgradeStatus Tier3UpgradeStatus?
 
   // Personal data
   firstName           String?

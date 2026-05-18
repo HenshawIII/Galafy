@@ -3,3 +3,4 @@ export * from './account-creation-callback.dto.js';
 export * from './transaction-auth-callback.dto.js';
 export * from './transaction-callback.dto.js';
 export * from './transaction-notification.dto.js';
+export * from './provider-account-upgrade.dto.js';

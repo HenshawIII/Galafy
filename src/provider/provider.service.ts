@@ -2,8 +2,6 @@ import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } fr
 import type {
   AlatTier1Request,
   AlatTier1Response,
-  AlatTier2Request,
-  AlatTier2Response,
   AlatCountryModel,
   AlatCountryItem,
   AlatStateItem,
@@ -13,6 +11,12 @@ import type {
   AlatPartnershipAccountDetails,
   AlatGetPartnershipAccountDetailsResponse,
 } from './dto/provider-alat.dto.js';
+import type {
+  AlatPartnerAccountUpgradeTier2Request,
+  AlatPartnerAccountUpgradeTier3Request,
+  AlatPartnerAccountUpgradeResponse,
+  AlatPartnerAccountKycStatusResponse,
+} from './dto/provider-account-upgrade.dto.js';
 import { config } from 'dotenv';
 config();
 
@@ -25,6 +29,7 @@ export class ProviderService {
   private readonly apiKey: string;
   private readonly kycBaseUrl: string;
   private readonly debitWalletBaseUrl: string;
+  private readonly accountUpgradeBaseUrl: string;
   private readonly kycSubscriptionKey: string;
   /** Cache for Alat GetDropDownList (countryModel). TTL 1 hour. */
   private dropdownCache: { data: AlatCountryModel; expiresAt: number } | null = null;
@@ -75,6 +80,13 @@ export class ProviderService {
 
     this.kycBaseUrl = kycBaseUrl;
     this.debitWalletBaseUrl = `${gateway}/debit-wallet/api`;
+    const accountUpgradePathSuffix = '/account-upgrade/api';
+    const accountUpgradeEnv = process.env.PROVIDER_ACCOUNT_UPGRADE_BASE_URL?.replace(/\/$/, '');
+    this.accountUpgradeBaseUrl = accountUpgradeEnv
+      ? accountUpgradeEnv.toLowerCase().endsWith(accountUpgradePathSuffix)
+        ? accountUpgradeEnv
+        : `${hostOnly(accountUpgradeEnv)}${accountUpgradePathSuffix}`
+      : `${gateway}${accountUpgradePathSuffix}`;
 
     this.kycSubscriptionKey = process.env.PROVIDER_KYC_SUBSCRIPTION_KEY || '';
 
@@ -99,6 +111,24 @@ export class ProviderService {
     const base = this.debitWalletBaseUrl.replace(/\/$/, '');
     const p = path.startsWith('/') ? path : `/${path}`;
     return `${base}${p}`;
+  }
+
+  private buildAccountUpgradeUrl(path: string): string {
+    const base = this.accountUpgradeBaseUrl.replace(/\/$/, '');
+    const p = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${p}`;
+  }
+
+  private accountUpgradeErrorMessage(parsed: unknown): string {
+    if (typeof parsed !== 'object' || parsed === null) {
+      return 'Account-upgrade request failed';
+    }
+    const o = parsed as { message?: string; errors?: string[] | null };
+    if (typeof o.message === 'string' && o.message.trim()) {
+      return o.message;
+    }
+    const first = o.errors?.find((m) => typeof m === 'string' && m.trim());
+    return first || 'Account-upgrade request failed';
   }
 
   private getDebitWalletAccessKey(): string {
@@ -304,6 +334,136 @@ export class ProviderService {
     }
   }
 
+  /**
+   * ALAT account-upgrade API (partnership tier 2/3 upgrade + KYC status).
+   */
+  private async makeAccountUpgradeRequest<T>(
+    endpoint: string,
+    method: 'GET' | 'POST',
+    options?: { body?: unknown; logLabel?: string; maskAccountNumber?: string },
+  ): Promise<T> {
+    const url = endpoint.startsWith('http') ? endpoint : this.buildAccountUpgradeUrl(endpoint);
+    const logLabel = options?.logLabel ?? 'Account-upgrade API';
+    const maskedAcct = options?.maskAccountNumber ? this.mask(options.maskAccountNumber) : 'n/a';
+    const headers: Record<string, string> = {
+      'x-api-key': this.apiKey,
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Ocp-Apim-Subscription-Key': this.kycSubscriptionKey,
+    };
+
+    try {
+      this.logger.log(`Account-upgrade ${method} ${logLabel}: accountNumber=${maskedAcct}`);
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: method === 'POST' && options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+      });
+
+      const responseText = await response.text();
+      if (!responseText?.trim()) {
+        this.logger.error(
+          `${logLabel}: empty response. HTTP ${response.status} ${response.statusText || ''} accountNumber=${maskedAcct}`.trim(),
+        );
+        if (response.status >= 500) {
+          this.logUpstream5xx(logLabel, response, responseText);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException(`${logLabel} returned an empty response`, response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      let data: unknown;
+      try {
+        data = JSON.parse(responseText) as unknown;
+      } catch {
+        this.logger.error(
+          `${logLabel}: invalid JSON. HTTP ${response.status}. Body: ${this.truncateForLog(responseText)}`.trim(),
+        );
+        if (response.status >= 500) {
+          this.logUpstream5xx(logLabel, response, responseText);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid response from account-upgrade partner', HttpStatus.BAD_REQUEST);
+      }
+
+      const envelope = this.isRecord(data) ? data : {};
+      const success =
+        envelope.status === true || envelope.statusCode === 100 || envelope.statusCode === 200;
+
+      if (!response.ok || !success) {
+        const detail = this.truncateForLog(JSON.stringify(data), 4000);
+        this.logger.error(
+          `${logLabel}: failed HTTP ${response.status} accountNumber=${maskedAcct}. Provider response: ${detail}`.trim(),
+        );
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        const msg = this.accountUpgradeErrorMessage(data);
+        const isDuplicate =
+          typeof msg === 'string' &&
+          (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('already exists'));
+        throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      this.logger.log(
+        `${logLabel}: success HTTP ${response.status} accountNumber=${maskedAcct} statusCode=${String(envelope.statusCode ?? 'n/a')}`.trim(),
+      );
+      return data as T;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`${logLabel}: request failed accountNumber=${maskedAcct}: ${(error as Error)?.message}`);
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+  }
+
+  async partnerAccountUpgradeTier2(
+    body: AlatPartnerAccountUpgradeTier2Request,
+  ): Promise<AlatPartnerAccountUpgradeResponse> {
+    const payload: Record<string, string> = {
+      accountNumber: body.accountNumber,
+      nin: body.nin,
+      liveImageOfFace: body.liveImageOfFace,
+    };
+    if (body.bvn?.trim()) {
+      payload.bvn = body.bvn.trim();
+    }
+    return this.makeAccountUpgradeRequest<AlatPartnerAccountUpgradeResponse>(
+      '/partnership/partner-account-upgrade-tier2',
+      'POST',
+      {
+        body: payload,
+        logLabel: 'partner-account-upgrade-tier2',
+        maskAccountNumber: body.accountNumber,
+      },
+    );
+  }
+
+  async partnerAccountUpgradeTier3(
+    body: AlatPartnerAccountUpgradeTier3Request,
+  ): Promise<AlatPartnerAccountUpgradeResponse> {
+    return this.makeAccountUpgradeRequest<AlatPartnerAccountUpgradeResponse>(
+      '/partnership/partner-account-upgrade-tier3',
+      'POST',
+      {
+        body,
+        logLabel: 'partner-account-upgrade-tier3',
+        maskAccountNumber: body.accountNumber,
+      },
+    );
+  }
+
+  async getPartnerAccountKycStatus(accountNumber: string): Promise<AlatPartnerAccountKycStatusResponse> {
+    const ref = encodeURIComponent(accountNumber);
+    return this.makeAccountUpgradeRequest<AlatPartnerAccountKycStatusResponse>(
+      `/partnership/partner-account-kyc-status?accountNumber=${ref}`,
+      'GET',
+      {
+        logLabel: 'partner-account-kyc-status',
+        maskAccountNumber: accountNumber,
+      },
+    );
+  }
+
   // ==================== ALAT KYC (create-account-face) ====================
 
   /**
@@ -311,13 +471,6 @@ export class ProviderService {
    */
   async tier1BvnWithoutOtpV2(body: AlatTier1Request): Promise<AlatTier1Response> {
     return this.makeKycRequest<AlatTier1Response>('/partnership/tier1-bvn-withoutOtp-v2', 'POST', body);
-  }
-
-  /**
-   * Tier 2: Partnership account with NIN + address + live face image.
-   */
-  async tier2PartnershipWithoutOtpV2(body: AlatTier2Request): Promise<AlatTier2Response> {
-    return this.makeKycRequest<AlatTier2Response>('/partnership/tier2-partnershipaccount-withoutOtp-v2', 'POST', body);
   }
 
   /**

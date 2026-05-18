@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { getCurrentWATAsUTC } from '../../common/utils/timezone.util.js';
-import { KycTier } from '../../../generated/prisma/enums.js';
+import { KycTier, Tier3UpgradeStatus } from '../../../generated/prisma/enums.js';
+import { hasTier3Benefits } from '../../common/utils/kyc-tier.util.js';
 
 @Injectable()
 export class WithdrawalLimitService {
@@ -68,8 +69,12 @@ export class WithdrawalLimitService {
    * Tier 2: enforces daily withdrawal total from WithdrawalLimit.
    * Tier 3: enforces max 10M NGN per transaction only (multiple withdrawals per day allowed).
    */
-  async validatePayoutForTier(tier: KycTier, customerId: string, amount: Decimal): Promise<void> {
-    if (tier === KycTier.Tier_3) {
+  async validatePayoutForTier(
+    customer: { tier: KycTier; tier3UpgradeStatus?: Tier3UpgradeStatus | null },
+    customerId: string,
+    amount: Decimal,
+  ): Promise<void> {
+    if (hasTier3Benefits(customer)) {
       if (amount.gt(this.TIER_3_MAX_SINGLE_WITHDRAWAL)) {
         throw new BadRequestException({
           message:
@@ -80,7 +85,7 @@ export class WithdrawalLimitService {
       return;
     }
 
-    if (tier === KycTier.Tier_2) {
+    if (customer.tier === KycTier.Tier_2 || customer.tier === KycTier.Tier_3) {
       const limitCheck = await this.checkDailyLimit(customerId, amount);
       if (!limitCheck.allowed) {
         throw new BadRequestException({

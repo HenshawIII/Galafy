@@ -8,6 +8,7 @@ import { CacheModule } from '../cache/cache.module.js';
 import { UsersModule } from '../users/users.module.js';
 import { WalletmoduleModule } from '../walletmodule/walletmodule.module.js';
 import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.module.js';
+import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.
     UsersModule, // Import UsersModule to access EmailService
     WalletmoduleModule, // Exports OrganizationWalletService for AdminService
     InternalLedgerModule,
+    CustomerKycModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

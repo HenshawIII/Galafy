@@ -13,6 +13,7 @@ import { CacheService } from '../cache/cache.service.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
 import { SearchEventDto } from './dto/search-event.dto.js';
 import { EventStatus, EventRole, EventVisibility, KycTier, SprayStatus } from '../../generated/prisma/enums.js';
+import { isTier2OrTier3WithBenefits } from '../common/utils/kyc-tier.util.js';
 import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -274,7 +275,7 @@ export class EventsService {
       // Check if performer has required KYC tier
       const performerCustomer = await this.databaseService.customer.findUnique({
         where: { userId: performerUser.id },
-        select: { tier: true },
+        select: { tier: true, tier3UpgradeStatus: true },
       });
 
       if (!performerCustomer) {
@@ -283,9 +284,9 @@ export class EventsService {
         );
       }
 
-      if (performerCustomer.tier !== KycTier.Tier_2 && performerCustomer.tier !== KycTier.Tier_3) {
+      if (!isTier2OrTier3WithBenefits(performerCustomer)) {
         throw new BadRequestException(
-          `Tagged performer (${performerIdentifier}) must have at least KYC Tier_2. Their current tier is ${performerCustomer.tier}.`,
+          `Tagged performer (${performerIdentifier}) must have at least KYC Tier_2 (or approved Tier 3). Their current tier is ${performerCustomer.tier}.`,
         );
       }
     }
@@ -293,17 +294,16 @@ export class EventsService {
     // Check KYC tier from customer table
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
-      select: { tier: true },
+      select: { tier: true, tier3UpgradeStatus: true },
     });
 
     if (!customer) {
       throw new NotFoundException('Customer not found for this user');
     }
 
-    // Only Tier_2 and Tier_3 users can create events (same requirement for both PERFORMER and CELEBRANT)
-    if (customer.tier !== KycTier.Tier_2 && customer.tier !== KycTier.Tier_3) {
+    if (!isTier2OrTier3WithBenefits(customer)) {
       throw new ForbiddenException(
-        `You need at least KYC Tier_2 to create events. Your current tier is ${customer.tier}. Please complete your KYC verification to upgrade.`,
+        `You need at least KYC Tier_2 to create events (Tier 3 requires admin address approval). Your current tier is ${customer.tier}.`,
       );
     }
 
@@ -1445,7 +1445,7 @@ export class EventsService {
     // Get customer to check KYC tier
     const customer = await this.databaseService.customer.findUnique({
       where: { userId: user.id },
-      select: { tier: true },
+      select: { tier: true, tier3UpgradeStatus: true },
     });
 
     if (!customer) {
@@ -1461,14 +1461,13 @@ export class EventsService {
       };
     }
 
-    // Check if tier is Tier_2 or Tier_3
-    const isEligible = customer.tier === KycTier.Tier_2 || customer.tier === KycTier.Tier_3;
+    const isEligible = isTier2OrTier3WithBenefits(customer);
 
     return {
       eligible: isEligible,
       reason: isEligible
         ? 'User is eligible to be a performer'
-        : `User has KYC Tier ${customer.tier}. Performer role requires Tier_2 or Tier_3.`,
+        : `User has KYC Tier ${customer.tier}. Performer role requires Tier_2 or approved Tier_3.`,
       user: {
         id: user.id,
         email: user.email,
