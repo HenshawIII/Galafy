@@ -132,7 +132,7 @@ export class ProviderTxnCallbackService {
       orinalTxnTransactionDate: extracted.orinalTxnTransactionDate,
     } satisfies TransactionCallbackDto['data'];
 
-    const mappedStatus = this.mapProviderStatusToTransactionStatus(providerStatus);
+    const mappedStatus = mapProviderStatusToTransactionStatus(providerStatus);
     this.logger.log(
       `Transaction callback normalized: txRef=${this.mask(transactionReference)} platformRef=${this.mask(platformTransactionReference)} mappedStatus=${mappedStatus}`,
     );
