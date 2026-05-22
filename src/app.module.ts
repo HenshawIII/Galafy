@@ -21,12 +21,14 @@ import { EventsModule } from './events/events.module.js';
 import { LiveModule } from './live/live.module.js';
 import { SpraysModule } from './sprays/sprays.module.js';
 import { BvnCryptoModule } from './common/crypto/bvn-crypto.module.js';
+import { TierLimitModule } from './common/tier-limit/tier-limit.module.js';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(), // Enable scheduled tasks
     CacheModule, // Redis cache module (global)
     BvnCryptoModule,
+    TierLimitModule,
     UsersModule,
     DatabaseModule,
     ThrottlerModule.forRootAsync({

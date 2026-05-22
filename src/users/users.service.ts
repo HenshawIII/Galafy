@@ -23,6 +23,8 @@ import { SearchUserDto } from './dto/search-user.dto.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { CacheService } from '../cache/cache.service.js';
+import { TierLimitService } from '../common/services/tier-limit.service.js';
+import type { AccountLimitsSnapshot } from '../common/services/tier-limit.service.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
@@ -37,7 +39,19 @@ export class UsersService {
     private readonly providerService: ProviderService,
     private readonly cacheService: CacheService,
     private readonly customerKycService: CustomerKycService,
+    private readonly tierLimitService: TierLimitService,
   ) {}
+
+  private async buildAccountLimitsForUser(
+    customerId: string | null,
+    isPinSet: boolean,
+  ): Promise<(AccountLimitsSnapshot & { isPinSet: boolean }) | null> {
+    if (!customerId) {
+      return null;
+    }
+    const snapshot = await this.tierLimitService.getLimitSnapshot(customerId);
+    return { ...snapshot, isPinSet };
+  }
 
   /**
    * Helper method to find user by email (case-insensitive)
@@ -345,11 +359,20 @@ export class UsersService {
       kycStatus = null;
     }
 
+    const customerRow = await this.databaseService.customer.findUnique({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    const isPinSet = !!user.payoutPin;
+    const accountLimits = await this.buildAccountLimitsForUser(customerRow?.id ?? null, isPinSet);
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
       user: userWithoutPassword,
       kycStatus,
+      isPinSet,
+      accountLimits,
       isVerified: String(user.isVerified),
     };
   }
@@ -638,7 +661,7 @@ export class UsersService {
             bankAccounts: true,
             utilityBillSubmissions: {
               orderBy: { createdAt: 'desc' },
-              take: 1, // Get only the latest submission
+              take: 1,
               select: {
                 status: true,
               },
@@ -787,10 +810,15 @@ export class UsersService {
       }));
     }
 
+    const isPinSet = !!user.payoutPin;
+    const accountLimits = await this.buildAccountLimitsForUser(customer?.id ?? null, isPinSet);
+
     const result = {
       ...customerDetails,
       profilePicture: user.profilePicture ?? null,
       kycStatus,
+      isPinSet,
+      accountLimits,
       wallets: customer?.wallets || [],
       bankAccounts,
       settings,
