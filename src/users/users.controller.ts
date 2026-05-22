@@ -96,7 +96,7 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description:
-      'Login successful, returns access token, refresh token, user details, KYC status, and verification status',
+      'Login successful, returns access token, refresh token, user details, KYC status, isPinSet, accountLimits, and verification status',
     schema: {
       example: {
         access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -114,6 +114,15 @@ export class UsersController {
           hasNin: false,
           hasBvn: true,
           hasAddressVerification: false,
+        },
+        isPinSet: true,
+        accountLimits: {
+          tier: 'Tier_1',
+          maxCumulativeBalance: '300000.00',
+          currentBalance: '15000.00',
+          dailySpendLimit: '30000.00',
+          dailySpendUsed: '5000.00',
+          isBalanceRestricted: false,
         },
         isVerified: 'true',
       },
@@ -176,7 +185,7 @@ export class UsersController {
   }
 
   @Get(':id/details')
-  @ApiOperation({ summary: 'Get user details with customer information and KYC status' })
+  @ApiOperation({ summary: 'Get user details with KYC status, isPinSet, and accountLimits' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User details retrieved successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden - You can only access your own user details' })

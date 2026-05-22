@@ -270,14 +270,14 @@ export class WalletmoduleController {
 
   @Post('payout/initiate')
   @ApiOperation({
-    summary: 'Initiate payout - Step 1: Validates request and sends OTP to email',
+    summary: 'Initiate payout - Step 1: Validates request and stores pending payout',
     description:
-      'Prepares a bank payout (external account). Does **not** call ProcessClientTransfer yet. After **POST /api/wallets/payout/confirm**, the server debits via ProcessClientTransfer (net to beneficiary bank, then fee sweep to org VA when applicable). Mandate/callbacks: **POST /api/provider/transaction-auth-callback**, **POST /api/provider/transaction-callback**.',
+      'Prepares a bank payout (external account). Does **not** call ProcessClientTransfer yet. After **POST /api/wallets/payout/confirm** with your payout PIN, the server debits via ProcessClientTransfer (net to beneficiary bank, then fee sweep to org VA when applicable). Mandate/callbacks: **POST /api/provider/transaction-auth-callback**, **POST /api/provider/transaction-callback**.',
   })
   @ApiBody({ type: InitiatePayoutDto })
   @ApiResponse({
     status: 200,
-    description: 'OTP sent successfully. Use the OTP and PIN to confirm the payout.',
+    description: 'Payout prepared. Confirm with your payout PIN within 10 minutes.',
     schema: {
       type: 'object',
       properties: {
@@ -299,9 +299,9 @@ export class WalletmoduleController {
 
   @Post('payout/confirm')
   @ApiOperation({
-    summary: 'Confirm payout - Step 2: Verifies OTP and PIN, then executes the payout',
+    summary: 'Confirm payout - Step 2: Verifies PIN and executes the payout',
     description:
-      'Verifies OTP + payout PIN, then submits **ProcessClientTransfer** for the net amount (external bank) and, if a fee applies, a second transfer for the admin fee to the organization virtual account. Server builds **securityInfo** for each leg; bank auth at **POST /api/provider/transaction-auth-callback**, settlement at **POST /api/provider/transaction-callback**.',
+      'Verifies payout PIN only (no email OTP), then submits **ProcessClientTransfer** for the net amount (external bank) and, if a fee applies, a second transfer for the admin fee to the organization virtual account. Server builds **securityInfo** for each leg; bank auth at **POST /api/provider/transaction-auth-callback**, settlement at **POST /api/provider/transaction-callback**.',
   })
   @ApiBody({ type: ConfirmPayoutDto })
   @ApiResponse({
@@ -319,15 +319,15 @@ export class WalletmoduleController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Invalid OTP, expired OTP, or no pending payout found' })
-  @ApiResponse({ status: 401, description: 'Invalid PIN or OTP' })
+  @ApiResponse({ status: 400, description: 'No pending payout found or payout expired' })
+  @ApiResponse({ status: 401, description: 'Invalid PIN' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async confirmPayout(@Request() req: any, @Body(ValidationPipe) confirmDto: ConfirmPayoutDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
-    return this.walletmoduleService.confirmPayout(userId, confirmDto.otp, confirmDto.pin);
+    return this.walletmoduleService.confirmPayout(userId, confirmDto.pin);
   }
 
   @Put('bank-account')

@@ -9,7 +9,6 @@ import { PayoutSecurityService } from './services/payout-security.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import {
-  KycTier,
   TransactionType,
   TransactionDirection,
   TransactionStatus,
@@ -187,14 +186,11 @@ export class WalletmoduleService {
 
     await this.walletRiskService.checkWalletFreezeStatus(fromWallet.id, true);
 
-    if (fromWallet.customer.isAmlRestricted) {
-      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-    }
-    if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
-      throw new ForbiddenException(
-        'Transfers are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-      );
-    }
+    await this.withdrawalLimitService.validatePayoutForTier(
+      fromWallet.customer,
+      fromWallet.customerId,
+      amount,
+    );
 
     const transactionReference = dto.transactionReference?.trim()
       ? toProviderTransactionReference(dto.transactionReference.trim(), 'TXN')
@@ -306,6 +302,8 @@ export class WalletmoduleService {
       throw error;
     }
 
+    await this.withdrawalLimitService.recordWithdrawal(fromWallet.customerId, amount);
+
     this.logger.log(
       `W2W submitted via provider: ref=${transactionReference}, from=${dto.fromWalletId}, to=${dto.toWalletId}, amount=${amount.toString()}`,
     );
@@ -321,7 +319,7 @@ export class WalletmoduleService {
   }
 
   /**
-   * Initiate payout - Step 1: Validate request, send OTP
+   * Initiate payout - Step 1: Validate request and store pending payout for PIN confirmation.
    */
   async initiatePayout(userId: string, initiateDto: InitiatePayoutDto) {
     // Find wallet and verify ownership
@@ -357,18 +355,8 @@ export class WalletmoduleService {
       throw new BadRequestException('Insufficient balance');
     }
 
-    if (fromWallet.customer.isAmlRestricted) {
-      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-    }
     const payoutCustomer = fromWallet.customer;
-    if (payoutCustomer.tier === KycTier.Tier_0 || payoutCustomer.tier === KycTier.Tier_1) {
-      throw new ForbiddenException(
-        'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-      );
-    }
-    if (payoutCustomer.tier === KycTier.Tier_2 || payoutCustomer.tier === KycTier.Tier_3) {
-      await this.withdrawalLimitService.validatePayoutForTier(payoutCustomer, payoutCustomer.id, amount);
-    }
+    await this.withdrawalLimitService.validatePayoutForTier(payoutCustomer, payoutCustomer.id, amount);
 
     // Get destination account name if not provided (via name enquiry)
     let destinationAccountName = initiateDto.recipientName;
@@ -427,25 +415,19 @@ export class WalletmoduleService {
       walletId: fromWallet.id,
     };
 
-    // Store pending payout data
     await this.payoutSecurityService.storePendingPayout(userId, payoutData);
-
-    // Generate and send OTP
-    await this.payoutSecurityService.generateAndSendOtp(userId);
 
     return {
       success: true,
-      message: 'OTP sent to your email. Please confirm the payout with the OTP and your PIN.',
+      message: 'Payout prepared. Confirm with your payout PIN.',
       expiresIn: '10 minutes',
     };
   }
 
   /**
-   * Confirm payout - Step 2: Verify OTP and PIN, execute payout (debit-wallet + callbacks only).
+   * Confirm payout - Step 2: Verify PIN and execute payout (debit-wallet + callbacks only).
    */
-  async confirmPayout(userId: string, otp: string, pin: string) {
-    await this.payoutSecurityService.verifyOtp(userId, otp);
-
+  async confirmPayout(userId: string, pin: string) {
     const isPinValid = await this.payoutSecurityService.verifyPayoutPin(userId, pin);
     if (!isPinValid) {
       throw new UnauthorizedException('Invalid PIN');
@@ -490,14 +472,11 @@ export class WalletmoduleService {
     if (!previewWallet.virtualAccountNumber) {
       throw new BadRequestException('Wallet does not have a virtual account number');
     }
-    if (previewWallet.customer.isAmlRestricted) {
-      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-    }
-    if (previewWallet.customer.tier === KycTier.Tier_0 || previewWallet.customer.tier === KycTier.Tier_1) {
-      throw new ForbiddenException(
-        'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-      );
-    }
+    await this.withdrawalLimitService.validatePayoutForTier(
+      previewWallet.customer,
+      previewWallet.customerId,
+      amount,
+    );
 
     await this.walletRiskService.checkWalletFreezeStatus(previewWallet.id, false);
 
@@ -536,14 +515,6 @@ export class WalletmoduleService {
         orgVirtualAccount,
         orgBankCode,
       });
-    }
-
-    if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
-      await this.withdrawalLimitService.validatePayoutForTier(
-        previewWallet.customer,
-        previewWallet.customer.id,
-        amount,
-      );
     }
 
     const normalizedPayoutFeePct = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
@@ -766,6 +737,8 @@ export class WalletmoduleService {
     } catch (error: unknown) {
       throw error;
     }
+
+    await this.withdrawalLimitService.recordWithdrawal(previewWallet.customerId, amount);
 
     return {
       success: true,

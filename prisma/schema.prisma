@@ -329,6 +329,12 @@ model Customer {
   // Withdrawal limit
   withdrawalLimit WithdrawalLimit?
 
+  // Balance cap (tier cumulative max exceeded — blocks outflows; inflows still allowed)
+  isBalanceRestricted       Boolean   @default(false)
+  balanceRestrictedAt       DateTime?
+  balanceRestrictionReason  String?
+  providerRestrictionStatus String?
+
   // AML restriction
   isAmlRestricted    Boolean   @default(false)
   amlRestrictedAt    DateTime?

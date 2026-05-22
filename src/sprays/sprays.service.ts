@@ -11,6 +11,7 @@ import { LiveGateway } from '../live/live.gateway.js';
 import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
+import { TierLimitService } from '../common/services/tier-limit.service.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -38,6 +39,7 @@ export class SpraysService {
     private readonly providerService: ProviderService,
     private readonly liveGateway: LiveGateway,
     private readonly debitWalletMandateService: DebitWalletMandateService,
+    private readonly tierLimitService: TierLimitService,
   ) {}
 
   /**
@@ -314,6 +316,10 @@ export class SpraysService {
     });
     const narration = createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`;
 
+    await this.tierLimitService.assertDailySpendAllowed(sprayerWallet.customerId, amountKobo);
+    const sprayerCustomer = await this.tierLimitService.getCustomerForLimits(sprayerWallet.customerId);
+    this.tierLimitService.assertOutboundAllowed(sprayerCustomer);
+
     await this.databaseService.$transaction(
       async (tx: Prisma.TransactionClient) => {
         await tx.$queryRaw`
@@ -457,6 +463,8 @@ export class SpraysService {
       });
       throw error;
     }
+
+    await this.tierLimitService.recordDailySpend(sprayerWallet.customerId, amountKobo);
 
     this.logger.log(
       `💰 SPRAY (provider): Amount=${amountKobo.toString()}, EventId=${eventId}, Ref=${transactionReference} — pending callback`,

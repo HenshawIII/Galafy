@@ -13,7 +13,7 @@ import { CacheService } from '../cache/cache.service.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
 import { SearchEventDto } from './dto/search-event.dto.js';
 import { EventStatus, EventRole, EventVisibility, KycTier, SprayStatus } from '../../generated/prisma/enums.js';
-import { isTier2OrTier3WithBenefits } from '../common/utils/kyc-tier.util.js';
+import { canHostEvents, isTier2OrTier3WithBenefits } from '../common/utils/kyc-tier.util.js';
 import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -218,7 +218,7 @@ export class EventsService {
 
   /**
    * Create a new event
-   * Only users with Tier_2 or Tier_3 can create events
+   * Only users with approved Tier_3 (COMPLETED) can host (create) events
    */
   async createEvent(userId: string, createEventDto: CreateEventDto) {
     // Verify user exists
@@ -301,9 +301,9 @@ export class EventsService {
       throw new NotFoundException('Customer not found for this user');
     }
 
-    if (!isTier2OrTier3WithBenefits(customer)) {
+    if (!canHostEvents(customer)) {
       throw new ForbiddenException(
-        `You need at least KYC Tier_2 to create events (Tier 3 requires admin address approval). Your current tier is ${customer.tier}.`,
+        `You need approved KYC Tier 3 to host events. Your current tier is ${customer.tier}.`,
       );
     }
 
