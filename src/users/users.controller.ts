@@ -185,9 +185,21 @@ export class UsersController {
   }
 
   @Get(':id/details')
-  @ApiOperation({ summary: 'Get user details with KYC status, isPinSet, and accountLimits' })
+  @ApiOperation({ summary: 'Get user details with KYC status, isPinSet, accountLimits, and walletStatus' })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiResponse({ status: 200, description: 'User details retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'User details retrieved successfully',
+    schema: {
+      example: {
+        firstName: 'John',
+        lastName: 'Doe',
+        walletStatus: 'active',
+        isPinSet: true,
+        kycStatus: { tier: 'Tier_1' },
+      },
+    },
+  })
   @ApiResponse({ status: 403, description: 'Forbidden - You can only access your own user details' })
   @ApiResponse({ status: 404, description: 'User or customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })

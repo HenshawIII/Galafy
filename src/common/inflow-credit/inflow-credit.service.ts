@@ -193,9 +193,9 @@ export class InflowCreditService {
           const groupReference = `GRP-${randomUUID()}`;
 
           const newUserAvailableBalanceAfterCredit = normalizeToKobo(
-            lockedUserWallet.availableBalance.plus(grossAmount),
+            lockedUserWallet.availableBalance.plus(netAmount),
           );
-          const newUserLedgerBalanceAfterCredit = normalizeToKobo(lockedUserWallet.ledgerBalance.plus(grossAmount));
+          const newUserLedgerBalanceAfterCredit = normalizeToKobo(lockedUserWallet.ledgerBalance.plus(netAmount));
 
           await tx.wallet.update({
             where: { id: w.id },
@@ -205,7 +205,7 @@ export class InflowCreditService {
             },
           });
           this.logger.log(
-            `INFLOW wallet balances credited: walletId=${w.id}, providerReference=${providerReference}, creditedGross=${grossAmount.toString()}`,
+            `INFLOW wallet balances credited: walletId=${w.id}, providerReference=${providerReference}, creditedNet=${netAmount.toString()}, gross=${grossAmount.toString()}, adminFee=${adminFee.toString()}`,
           );
 
           const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
@@ -247,6 +247,7 @@ export class InflowCreditService {
                 providerFee: providerFee.toString(),
                 adminFee: adminFee.toString(),
                 grossAmount: grossAmount.toString(),
+                intendedAmount: netAmount.toString(),
                 feePercentage: feePercentage.toString(),
                 feeType: 'funding',
                 feeTransferReference: feeSweepReference,

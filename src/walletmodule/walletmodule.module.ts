@@ -13,6 +13,7 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { ConfigModule } from '../config/config.module.js';
 import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
 import { DebitMandateModule } from '../common/debit-mandate/debit-mandate.module.js';
+import { NipChargesService } from './services/nip-charges.service.js';
 
 @Module({
   imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule, ConfigModule, DebitMandateModule],
@@ -25,6 +26,7 @@ import { DebitMandateModule } from '../common/debit-mandate/debit-mandate.module
     WalletRiskService,
     AmlLoggingService,
     WithdrawalLimitService,
+    NipChargesService,
   ],
   exports: [WalletmoduleService, WithdrawalLimitService, OrganizationWalletService],
 })

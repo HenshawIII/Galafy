@@ -45,16 +45,21 @@ export interface FeeCalculationResult {
   fee: Decimal;
   netAmount: Decimal;
   feePercentage: Decimal;
+  /** Set for inclusive funding fee calculation */
+  grossAmount?: Decimal;
 }
 
 /**
- * Calculate funding fee based on amount threshold
- * - ≤100,000: Use ADMIN_FUNDING_FEE (10%)
- * - >100,000: Use ADMIN_FUNDING_FEE_100KABOVE (7%)
+ * Calculate funding fee from gross inflow (fee-inclusive transfer).
+ * User sends gross = intended wallet credit × (1 + rate). E.g. ₦1,100 at 10% → ₦1,000 credit + ₦100 fee.
  *
- * @param amount - The gross funding amount
+ * Tier by gross received:
+ * - ≤100,000: ADMIN_FUNDING_FEE (default 10%)
+ * - >100,000: ADMIN_FUNDING_FEE_100KABOVE (default 7%)
+ *
+ * @param amount - Gross amount received from the bank
  * @param configService - Optional ConfigService instance (for async config access)
- * @returns Object containing fee, netAmount (amount - fee), and feePercentage used
+ * @returns fee, netAmount (intended credit), feePercentage, grossAmount
  */
 export async function calculateFundingFee(
   amount: Decimal | string | number,
@@ -95,28 +100,29 @@ export async function calculateFundingFee(
       fundingThreshold = FALLBACK_FUNDING_THRESHOLD;
     }
 
-    // Determine fee percentage based on threshold
+    // Determine fee percentage based on threshold (applied to gross wire amount)
     const feePercentage = grossAmount.lte(fundingThreshold) ? fundingFee : fundingFee100KAbove;
 
-    // Calculate fee: amount * feePercentage
-    const fee = normalizeToKobo(grossAmount.times(feePercentage));
-
-    // Calculate net amount: amount - fee
-    const netAmount = normalizeToKobo(grossAmount.minus(fee));
+    const divisor = new Decimal(1).plus(feePercentage);
+    const netAmount = normalizeToKobo(grossAmount.div(divisor));
+    const fee = normalizeToKobo(grossAmount.minus(netAmount));
 
     return {
       fee,
       netAmount,
       feePercentage,
+      grossAmount: normalizeToKobo(grossAmount),
     };
   } catch (error) {
     logger.error(`Error calculating funding fee: ${error.message}`, error.stack);
     // Fallback: return zero fee on error
     const grossAmount = typeof amount === 'string' || typeof amount === 'number' ? new Decimal(amount) : amount;
+    const normalizedGross = normalizeToKobo(grossAmount);
     return {
       fee: normalizeToKobo(0),
-      netAmount: normalizeToKobo(grossAmount),
+      netAmount: normalizedGross,
       feePercentage: new Decimal(0),
+      grossAmount: normalizedGross,
     };
   }
 }

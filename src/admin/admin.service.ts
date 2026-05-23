@@ -850,6 +850,8 @@ export class AdminService {
       dto.reason,
     );
 
+    await this.cacheService.invalidateUserCache(userId);
+
     // Send email notification to user (handle failures gracefully)
     if (user.isVerified && user.email) {
       try {
@@ -895,6 +897,8 @@ export class AdminService {
     });
 
     await this.logAdminAction(adminId, 'USER_UNRESTRICTED', 'CUSTOMER', customer.id, { userId });
+
+    await this.cacheService.invalidateUserCache(userId);
 
     return customer;
   }
