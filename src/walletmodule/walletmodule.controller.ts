@@ -40,6 +40,7 @@ import {
   ConfirmPayoutDto,
   ResetPayoutPinDto,
 } from './dto/payout-security.dto.js';
+import { PayoutFeePreviewQueryDto } from './dto/payout-preview.dto.js';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto.js';
 
 @ApiTags('wallets')
@@ -268,6 +269,24 @@ export class WalletmoduleController {
     return { success: true, message: 'Payout PIN updated successfully' };
   }
 
+  @Get('payout/nip-charges')
+  @ApiOperation({ summary: 'ALAT NIP interbank charge bands and terms (cached 1h)' })
+  @ApiResponse({ status: 200, description: 'NIP charge fee bands' })
+  async getNipCharges() {
+    return this.walletmoduleService.getNipCharges();
+  }
+
+  @Get('payout/fee-preview')
+  @ApiOperation({
+    summary: 'Estimate Gala admin fee and NIP transfer charge for an external payout',
+    description:
+      'NIP fee is based on net amount after Gala admin fee. Same-bank (WEMA 035) payouts have no NIP fee. Bank posts COMM and VAT as separate debits.',
+  })
+  @ApiResponse({ status: 200, description: 'Fee breakdown' })
+  async getPayoutFeePreview(@Query(ValidationPipe) query: PayoutFeePreviewQueryDto) {
+    return this.walletmoduleService.getPayoutFeePreview(query.amount, query.bankCode);
+  }
+
   @Post('payout/initiate')
   @ApiOperation({
     summary: 'Initiate payout - Step 1: Validates request and stores pending payout',
@@ -284,6 +303,12 @@ export class WalletmoduleController {
         success: { type: 'boolean' },
         message: { type: 'string' },
         expiresIn: { type: 'string' },
+        amount: { type: 'string' },
+        destinationAccountNumber: { type: 'string' },
+        galaAdminFee: { type: 'string' },
+        netToBeneficiary: { type: 'string' },
+        nipTransferFee: { type: 'string', nullable: true },
+        estimatedTotalDebit: { type: 'string' },
       },
     },
   })
@@ -313,9 +338,15 @@ export class WalletmoduleController {
         success: { type: 'boolean' },
         message: { type: 'string' },
         transactionRef: { type: 'string' },
-        fromWalletId: { type: 'string' },
-        toAccountNumber: { type: 'string' },
-        amount: { type: 'number' },
+        status: { type: 'string' },
+        amount: { type: 'string' },
+        destinationAccountNumber: { type: 'string' },
+        destinationAccountName: { type: 'string' },
+        destinationBankCode: { type: 'string' },
+        galaAdminFee: { type: 'string' },
+        netToBeneficiary: { type: 'string' },
+        nipTransferFee: { type: 'string', nullable: true },
+        estimatedTotalDebit: { type: 'string' },
       },
     },
   })

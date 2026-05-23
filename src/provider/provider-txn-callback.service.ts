@@ -1,6 +1,9 @@
 import { BadRequestException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
+import { buildTransactionNotificationProviderReference } from '../common/utils/provider-transaction-notification-reference.util.js';
+import { classifyTransactionNotification } from './provider-notification-classifier.util.js';
+import { ProviderNotificationLedgerService } from '../common/provider-notification/provider-notification-ledger.service.js';
 import {
   extractTransactionCallbackFields,
   mapProviderStatusToTransactionStatus,
@@ -32,6 +35,7 @@ export class ProviderTxnCallbackService {
     private readonly emailService: EmailService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly notificationLedger: ProviderNotificationLedgerService,
   ) {}
 
   private mask(value: unknown, visibleTail = 4): string {
@@ -43,29 +47,6 @@ export class ProviderTxnCallbackService {
 
   private computeSecurityInfoHash(securityInfo: string): string {
     return createHash('sha256').update(securityInfo).digest('hex');
-  }
-
-  /**
-   * Stable idempotency key for transaction-notification credits when the provider omits a unique reference.
-   */
-  private buildTransactionNotificationProviderReference(raw: any): string {
-    const explicit = raw?.reference ?? raw?.transactionId ?? raw?.platformTransactionReference;
-    if (explicit != null && String(explicit).trim() !== '') {
-      const trimmed = String(explicit).trim();
-      if (trimmed.length <= 24) {
-        return `TN-${trimmed}`;
-      }
-      return buildStableProviderRef('TN', trimmed);
-    }
-    const accountNumber = String(raw?.accountNumber ?? '').trim();
-    const amount = String(raw?.amount ?? '');
-    let td = '';
-    if (raw?.transactionDate != null && raw?.transactionDate !== '') {
-      const d = new Date(raw.transactionDate);
-      td = isNaN(d.getTime()) ? String(raw.transactionDate) : d.toISOString();
-    }
-    const narration = String(raw?.narration ?? '').trim();
-    return buildStableProviderRef('NOTIF', `${accountNumber}|${amount}|${td}|${narration}`);
   }
 
   async handleTransactionAuthCallback(raw: any): Promise<{ transactionReference: string; authorized: boolean }> {
@@ -305,13 +286,23 @@ export class ProviderTxnCallbackService {
           throw new BadRequestException(`Source wallet not found for transaction=${transactionReference}`);
         }
 
-        await tx.wallet.update({
-          where: { id: sourceWallet.id },
-          data: {
-            availableBalance: sourceWallet.availableBalance.minus(amount),
-            ledgerBalance: sourceWallet.ledgerBalance.minus(amount),
-          },
-        });
+        const isInflowAdminFeeSweep =
+          txnDebitMeta?.inflowAdminFeeSweep === true;
+
+        // Inclusive funding: user wallet was credited net only; fee sweep moves bank funds without a second ledger debit.
+        if (!isInflowAdminFeeSweep) {
+          await tx.wallet.update({
+            where: { id: sourceWallet.id },
+            data: {
+              availableBalance: sourceWallet.availableBalance.minus(amount),
+              ledgerBalance: sourceWallet.ledgerBalance.minus(amount),
+            },
+          });
+        } else {
+          this.logger.log(
+            `Transaction callback: inflow admin fee sweep settled without wallet debit txRef=${this.mask(transactionReference)} amount=${amount.toString()}`,
+          );
+        }
 
         if (destinationWalletId) {
           this.logger.log(
@@ -591,14 +582,35 @@ export class ProviderTxnCallbackService {
     return { received: true };
   }
 
+  private async persistGenericNotification(
+    raw: Record<string, unknown>,
+    accountNumber: string | undefined,
+    walletId: string | null | undefined,
+    transactionTypeRaw: string | undefined,
+  ): Promise<void> {
+    await this.databaseService.providerWebhookEvent.create({
+      data: {
+        event: 'transaction-notification',
+        paymentReference: accountNumber ? `notif-${accountNumber}-${raw?.transactionDate ?? ''}` : undefined,
+        payload: {
+          ...raw,
+          walletId: walletId ?? null,
+          virtualAccountNumber: accountNumber ?? null,
+          transactionType: transactionTypeRaw ?? null,
+        },
+        processingStatus: 'PROCESSED',
+      },
+    });
+  }
+
   async handleTransactionNotification(raw: any): Promise<{ received: true }> {
     this.logger.log(`Transaction notification received: account=${this.mask(raw?.accountNumber)} transactionType=${raw?.transactionType ?? 'n/a'}`);
 
     const accountNumber: string | undefined = raw?.accountNumber?.toString()?.trim() || undefined;
     const transactionTypeRaw: string | undefined = raw?.transactionType?.toString();
-    const transactionTypeNorm = transactionTypeRaw?.trim().toLowerCase();
+    const kind = classifyTransactionNotification(raw);
     this.logger.log(
-      `Transaction notification classified: account=${this.mask(accountNumber)} direction=${transactionTypeNorm === 'credit' ? 'INFLOW' : 'NON-INFLOW'} transactionType=${transactionTypeNorm ?? 'n/a'}`,
+      `Transaction notification classified: account=${this.mask(accountNumber)} kind=${kind} transactionType=${transactionTypeRaw ?? 'n/a'}`,
     );
 
     const wallet = accountNumber
@@ -607,7 +619,57 @@ export class ProviderTxnCallbackService {
         })
       : null;
 
-    if (transactionTypeNorm === 'credit') {
+    if (kind === 'nip_commission' || kind === 'nip_vat' || kind === 'unclassified_debit') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for debit transaction notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for debit transaction notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : kind === 'unclassified_debit'
+            ? 'Provider debit'
+            : 'NIP transfer fee';
+      const ledgerResult = await this.notificationLedger.recordNotificationDebit({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Debit notification ledger: kind=${kind} walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'nip_reversal') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for NIP reversal notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for NIP reversal notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim() ? raw.narration.trim() : 'NIP transfer reversal';
+      const ledgerResult = await this.notificationLedger.recordNipReversalCredit({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `NIP reversal notification ledger: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'bank_inflow') {
       this.logger.log(
         `Transaction notification inflow path entered: account=${this.mask(accountNumber)} rawAmount=${raw?.amount != null ? String(raw.amount) : 'n/a'}`,
       );
@@ -625,7 +687,7 @@ export class ProviderTxnCallbackService {
 
       const grossAmount = normalizeToKobo(amountRaw);
       const providerFee = normalizeToKobo(0);
-      const providerReference = this.buildTransactionNotificationProviderReference(raw);
+      const providerReference = buildTransactionNotificationProviderReference(raw);
       const narration =
         typeof raw?.narration === 'string' && raw.narration.trim() ? raw.narration.trim() : 'Inflow payment';
 
@@ -735,24 +797,18 @@ export class ProviderTxnCallbackService {
       return { received: true };
     }
 
-    this.logger.log(
-      `Transaction notification persisted as generic provider event: account=${this.mask(accountNumber)} transactionType=${transactionTypeNorm ?? 'n/a'}`,
+    if (kind === 'unknown_notification') {
+      this.logger.warn(
+        `Unknown transaction-notification (missing or invalid transactionType): account=${this.mask(accountNumber)} transactionType=${transactionTypeRaw ?? 'n/a'}`,
+      );
+      await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
+      return { received: true };
+    }
+
+    this.logger.warn(
+      `Unhandled transaction-notification kind=${kind} account=${this.mask(accountNumber)} — persisting generic event`,
     );
-
-    await this.databaseService.providerWebhookEvent.create({
-      data: {
-        event: 'transaction-notification',
-        paymentReference: accountNumber ? `notif-${accountNumber}-${raw?.transactionDate ?? ''}` : undefined,
-        payload: {
-          ...raw,
-          walletId: wallet?.id ?? null,
-          virtualAccountNumber: accountNumber ?? null,
-          transactionType: transactionTypeRaw ?? null,
-        },
-        processingStatus: 'PROCESSED',
-      },
-    });
-
+    await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
     return { received: true };
   }
 }

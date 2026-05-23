@@ -29,6 +29,12 @@ import {
   buildUniqueProviderRef,
   toProviderTransactionReference,
 } from '../common/utils/provider-transaction-reference.util.js';
+import {
+  isNipChargeApplicable,
+  lookupNipCharge,
+  nipChargeAmountFromBand,
+} from '../common/utils/nip-charges.util.js';
+import { NipChargesService } from './services/nip-charges.service.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -49,7 +55,94 @@ export class WalletmoduleService {
     private readonly configService: ConfigService,
     private readonly withdrawalLimitService: WithdrawalLimitService,
     private readonly debitWalletMandateService: DebitWalletMandateService,
+    private readonly nipChargesService: NipChargesService,
   ) {}
+
+  async getNipCharges() {
+    return this.nipChargesService.getNipChargesCached();
+  }
+
+  async getPayoutFeePreview(amount: string, bankCode: string) {
+    const grossAmount = normalizeToKobo(amount);
+    const { fee: galaAdminFee, netAmount } = await calculatePayoutFee(grossAmount, this.configService);
+    const netKobo = normalizeToKobo(netAmount);
+    const quote = await this.buildPayoutQuote({
+      grossAmount,
+      bankCode,
+      destinationAccountNumber: '',
+      destinationAccountName: '',
+      destinationBankName: '',
+    });
+    return {
+      galaAdminFee: galaAdminFee.toFixed(2),
+      netToBeneficiary: netKobo.toFixed(2),
+      nipTransferFee: quote.nipTransferFee,
+      estimatedTotalDebit: quote.estimatedTotalDebit,
+      nipChargeBand: quote.nipChargeBand,
+      termsAndConditionsUrl: quote.termsAndConditionsUrl,
+      nipFeeNote:
+        quote.nipTransferFee != null
+          ? 'Bank posts NIP commission and VAT as separate debits on your virtual account.'
+          : null,
+    };
+  }
+
+  private async buildPayoutQuote(params: {
+    grossAmount: Decimal;
+    bankCode: string;
+    destinationAccountNumber: string;
+    destinationAccountName: string;
+    destinationBankName: string;
+    transactionRef?: string;
+    status?: TransactionStatus;
+  }) {
+    const { fee: galaAdminFee, netAmount } = await calculatePayoutFee(params.grossAmount, this.configService);
+    const netKobo = normalizeToKobo(netAmount);
+
+    let nipTransferFee: string | null = null;
+    let nipChargeBand: {
+      chargeFeeName: string;
+      charge: string;
+      lower: string;
+      upper: string;
+    } | null = null;
+    let termsAndConditionsUrl: string | undefined;
+
+    if (isNipChargeApplicable(params.bankCode)) {
+      const nipData = await this.nipChargesService.getNipChargesCached();
+      termsAndConditionsUrl = nipData.termsAndConditionsUrl;
+      const band = lookupNipCharge(netKobo, nipData.chargeFees);
+      const nipAmount = nipChargeAmountFromBand(band);
+      if (nipAmount) {
+        nipTransferFee = nipAmount.toFixed(2);
+        nipChargeBand = {
+          chargeFeeName: band!.chargeFeeName,
+          charge: nipAmount.toFixed(2),
+          lower: new Decimal(band!.lower).toFixed(2),
+          upper: new Decimal(band!.upper).toFixed(2),
+        };
+      }
+    }
+
+    const nipDecimal = nipTransferFee ? new Decimal(nipTransferFee) : new Decimal(0);
+    const estimatedTotalDebit = params.grossAmount.plus(nipDecimal).toFixed(2);
+
+    return {
+      amount: params.grossAmount.toFixed(2),
+      destinationAccountNumber: params.destinationAccountNumber,
+      destinationAccountName: params.destinationAccountName,
+      destinationBankCode: params.bankCode,
+      destinationBankName: params.destinationBankName,
+      galaAdminFee: galaAdminFee.toFixed(2),
+      netToBeneficiary: netKobo.toFixed(2),
+      nipTransferFee,
+      estimatedTotalDebit,
+      nipChargeBand,
+      termsAndConditionsUrl,
+      transactionRef: params.transactionRef,
+      status: params.status,
+    };
+  }
 
   /**
    * Get wallet by ID
@@ -417,10 +510,20 @@ export class WalletmoduleService {
 
     await this.payoutSecurityService.storePendingPayout(userId, payoutData);
 
+    const quote = await this.buildPayoutQuote({
+      grossAmount: amount,
+      bankCode: initiateDto.bankCode,
+      destinationAccountNumber: initiateDto.toAccountNumber,
+      destinationAccountName: destinationAccountName,
+      destinationBankName,
+      transactionRef: transactionReference,
+    });
+
     return {
       success: true,
       message: 'Payout prepared. Confirm with your payout PIN.',
       expiresIn: '10 minutes',
+      ...quote,
     };
   }
 
@@ -740,11 +843,20 @@ export class WalletmoduleService {
 
     await this.withdrawalLimitService.recordWithdrawal(previewWallet.customerId, amount);
 
+    const quote = await this.buildPayoutQuote({
+      grossAmount: amount,
+      bankCode: payoutData.bankCode as string,
+      destinationAccountNumber: payoutData.toAccountNumber as string,
+      destinationAccountName: (payoutData.recipientName as string) || 'Unknown',
+      destinationBankName: (payoutData.destinationBankName as string) || 'Unknown',
+      transactionRef: transactionReference,
+      status: TransactionStatus.PENDING,
+    });
+
     return {
       success: true,
       message: 'Transfer submitted and pending authorization/processing',
-      transactionRef: transactionReference,
-      status: TransactionStatus.PENDING,
+      ...quote,
     };
   }
 

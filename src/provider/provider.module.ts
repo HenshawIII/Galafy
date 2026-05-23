@@ -11,6 +11,7 @@ import { UsersModule } from '../users/users.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
+import { ProviderNotificationModule } from '../common/provider-notification/provider-notification.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
     ConfigModule,
     forwardRef(() => UsersModule),
     NotificationsModule,
+    ProviderNotificationModule,
   ],
   controllers: [ProviderCallbackController, ProviderTxnCallbackController],
   providers: [
