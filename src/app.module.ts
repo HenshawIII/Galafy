@@ -22,12 +22,14 @@ import { LiveModule } from './live/live.module.js';
 import { SpraysModule } from './sprays/sprays.module.js';
 import { BvnCryptoModule } from './common/crypto/bvn-crypto.module.js';
 import { TierLimitModule } from './common/tier-limit/tier-limit.module.js';
+import { EmailModule } from './users/email.module.js';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(), // Enable scheduled tasks
     CacheModule, // Redis cache module (global)
     BvnCryptoModule,
+    EmailModule,
     TierLimitModule,
     UsersModule,
     DatabaseModule,
