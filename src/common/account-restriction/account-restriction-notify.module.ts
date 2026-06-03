@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../../database/database.module.js';
-import { UsersModule } from '../../users/users.module.js';
+import { EmailModule } from '../../users/email.module.js';
 import { AccountRestrictionNotifyService } from './account-restriction-notify.service.js';
 
 @Module({
-  imports: [DatabaseModule, UsersModule],
+  imports: [DatabaseModule, EmailModule],
   providers: [AccountRestrictionNotifyService],
   exports: [AccountRestrictionNotifyService],
 })
