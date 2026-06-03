@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import sgMail from '@sendgrid/mail';
 import { config } from 'dotenv';
+import {
+  AccountRestrictionKind,
+  getAccountRestrictionEmailCopy,
+} from '../common/utils/account-restriction-email-copy.util.js';
 config();
+
+export type { AccountRestrictionKind };
 
 @Injectable()
 export class EmailService {
@@ -1071,8 +1077,11 @@ If you did not expect this invitation, please ignore this email.`,
       username?: string | null;
     },
     restrictionReason?: string,
+    kind: AccountRestrictionKind = 'aml',
   ): Promise<void> {
-    // Get user's display name: prefer firstName, then username, then lastName, then default
+    const copy = getAccountRestrictionEmailCopy(kind);
+
+    // Get user's display name: prefer firstName, then username, then lastName, or default
     let userName = 'there';
     if (userData?.firstName && userData.firstName.trim()) {
       userName = userData.firstName.trim();
@@ -1084,12 +1093,16 @@ If you did not expect this invitation, please ignore this email.`,
 
     const supportEmail = process.env.SUPPORT_EMAIL || 'support@galafy.com';
     const supportUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL}/support` : '#';
+    const reasonSuffix = restrictionReason ? ` Reason: ${restrictionReason}` : '';
+    const bulletHtml = copy.bullets
+      .map((item) => `<li>${item}</li>`)
+      .join('\n                  ');
 
     const msg = {
       to: email,
       from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
-      subject: 'Important: Your Account Has Been Restricted - Galafy',
-      text: `Hello ${userName}, Your Galafy account has been restricted due to compliance reasons. ${restrictionReason ? `Reason: ${restrictionReason}` : ''} Please contact our support team at ${supportEmail} for more information and assistance.`,
+      subject: copy.subject,
+      text: `Hello ${userName}, ${copy.textIntro}${reasonSuffix} Please contact our support team at ${supportEmail} for more information and assistance.`,
       html: `
         <!DOCTYPE html>
         <html>
@@ -1117,17 +1130,17 @@ If you did not expect this invitation, please ignore this email.`,
                 Hello ${userName},
               </p>
               <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
-                We are writing to inform you that your <strong>Galafy account has been restricted</strong> due to compliance and security reasons.
+                ${copy.htmlIntro}
               </p>
               
               <!-- Warning Box (Red/Orange) -->
               <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <div style="display: flex; align-items: center; margin-bottom: 15px;">
                   <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
-                  <h3 style="color: #721c24; font-size: 18px; font-weight: bold; margin: 0;">Account Restriction</h3>
+                  <h3 style="color: #721c24; font-size: 18px; font-weight: bold; margin: 0;">${copy.warningTitle}</h3>
                 </div>
                 <p style="color: #721c24; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
-                  Your account has been flagged for review under our Anti-Money Laundering (AML) compliance policies.
+                  ${copy.warningBody}
                 </p>
                 ${
                   restrictionReason
@@ -1146,9 +1159,7 @@ If you did not expect this invitation, please ignore this email.`,
               <div style="background-color: #fff3cd; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="color: #856404; font-size: 16px; font-weight: bold; margin: 0 0 15px 0;">What This Means</h3>
                 <ul style="color: #856404; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
-                  <li>Certain account features may be temporarily unavailable</li>
-                  <li>Withdrawal and transaction capabilities may be limited</li>
-                  <li>Your account is under review by our compliance team</li>
+                  ${bulletHtml}
                 </ul>
               </div>
               
@@ -1187,7 +1198,7 @@ If you did not expect this invitation, please ignore this email.`,
               </p>
               <p style="color: #333333; font-size: 14px; margin: 20px 0 0 0;">
                 Best regards,<br>
-                The Galafy Compliance Team
+                ${copy.signOffTeam}
               </p>
             </div>
           </div>

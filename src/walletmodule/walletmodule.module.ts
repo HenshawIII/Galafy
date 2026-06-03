@@ -14,9 +14,18 @@ import { ConfigModule } from '../config/config.module.js';
 import { WithdrawalLimitService } from './services/withdrawal-limit.service.js';
 import { DebitMandateModule } from '../common/debit-mandate/debit-mandate.module.js';
 import { NipChargesService } from './services/nip-charges.service.js';
+import { AccountRestrictionNotifyModule } from '../common/account-restriction/account-restriction-notify.module.js';
 
 @Module({
-  imports: [DatabaseModule, ProviderModule, UsersModule, CacheModule, ConfigModule, DebitMandateModule],
+  imports: [
+    DatabaseModule,
+    ProviderModule,
+    UsersModule,
+    CacheModule,
+    ConfigModule,
+    DebitMandateModule,
+    AccountRestrictionNotifyModule,
+  ],
   controllers: [WalletmoduleController],
   providers: [
     WalletmoduleService,
