@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { config } from 'dotenv';
 import { AmlLoggingService } from './aml-logging.service.js';
 import { ConfigService } from '../../config/config.service.js';
+import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
 config();
 
 export type RiskStatus = 'NORMAL' | 'SOFT_FREEZE' | 'HARD_FREEZE';
@@ -38,6 +39,7 @@ export class WalletRiskService {
     private readonly databaseService: DatabaseService,
     private readonly amlLoggingService: AmlLoggingService,
     private readonly configService: ConfigService,
+    private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
   ) {
     // Config will be loaded lazily on first use
   }
@@ -342,6 +344,14 @@ export class WalletRiskService {
         } catch (logError) {
           // Log the logging error but don't block risk status update
           this.logger.error(`AML logging failed for risk status change: ${logError.message}`);
+        }
+
+        if (wallet?.customerId && riskStatus === 'HARD_FREEZE') {
+          const reason = `Risk score ${components.finalScore.toFixed(2)} exceeds hard freeze threshold (${config.RISK_HARD_FREEZE_THRESHOLD}). Outbound transfers and payouts are blocked.`;
+          void this.accountRestrictionNotify.notifyCustomerById(wallet.customerId, 'risk_hard', reason);
+        } else if (wallet?.customerId && riskStatus === 'SOFT_FREEZE') {
+          const reason = `Risk score ${components.finalScore.toFixed(2)} exceeds soft freeze threshold (${config.RISK_SOFT_FREEZE_THRESHOLD}). Payouts and outbound transfers are temporarily blocked.`;
+          void this.accountRestrictionNotify.notifyCustomerById(wallet.customerId, 'risk_soft', reason);
         }
       }
 

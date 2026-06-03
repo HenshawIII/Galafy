@@ -48,6 +48,7 @@ import * as crypto from 'crypto';
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { EmailService } from '../users/email.service.js';
+import { AccountRestrictionNotifyService } from '../common/account-restriction/account-restriction-notify.service.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { Prisma } from '@prisma/client';
@@ -65,6 +66,7 @@ export class AdminService {
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
+    private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
     private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
     private readonly customerKycService: CustomerKycService,
@@ -852,24 +854,7 @@ export class AdminService {
 
     await this.cacheService.invalidateUserCache(userId);
 
-    // Send email notification to user (handle failures gracefully)
-    if (user.isVerified && user.email) {
-      try {
-        await this.emailService.sendAccountRestrictionEmail(
-          user.email,
-          {
-            firstName: user.firstName,
-            lastName: user.lastName,
-            username: user.username,
-          },
-          dto.reason,
-        );
-        this.logger.log(`Account restriction email sent to ${user.email}`);
-      } catch (error: any) {
-        // Log error but don't fail the restriction operation
-        this.logger.error(`Failed to send restriction email to ${user.email}:`, error.message);
-      }
-    }
+    await this.accountRestrictionNotify.notifyUserById(userId, 'aml', dto.reason);
 
     return customer;
   }

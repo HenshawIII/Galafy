@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { Decimal } from '@prisma/client/runtime/library';
 import { DatabaseService } from '../../database/database.service.js';
 import { CacheService } from '../../cache/cache.service.js';
+import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
 import { getCurrentWATAsUTC } from '../utils/timezone.util.js';
 import { formatLimitAmount, getTierLimits, isUnlimitedTier } from '../utils/tier-transaction-limits.util.js';
 import { KycTier, Tier3UpgradeStatus } from '../../../generated/prisma/enums.js';
@@ -38,6 +39,7 @@ export class TierLimitService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
+    private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
   ) {}
 
   async getCustomerForLimits(customerId: string): Promise<CustomerLimitRow> {
@@ -184,6 +186,10 @@ export class TierLimitService {
       return false;
     }
 
+    if (customer.isBalanceRestricted) {
+      return false;
+    }
+
     const reason = `Wallet balance (${balance.toFixed(2)} NGN) exceeds the maximum allowed (${profile.maxCumulativeBalance.toFixed(2)} NGN) for ${customer.tier}. Outbound transfers are restricted.`;
     const updated = await this.databaseService.customer.update({
       where: { id: customerId },
@@ -197,6 +203,7 @@ export class TierLimitService {
     this.logger.warn(`Balance restriction applied: customerId=${customerId} ${reason}`);
     if (updated.userId) {
       await this.cacheService.invalidateUserCache(updated.userId);
+      await this.accountRestrictionNotify.notifyUserById(updated.userId, 'balance', reason);
     }
     return true;
   }

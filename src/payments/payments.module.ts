@@ -10,6 +10,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConfigModule } from '../config/config.module.js';
 import { InflowCreditModule } from '../common/inflow-credit/inflow-credit.module.js';
 import { ProviderModule } from '../provider/provider.module.js';
+import { AccountRestrictionNotifyModule } from '../common/account-restriction/account-restriction-notify.module.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { ProviderModule } from '../provider/provider.module.js';
     ProviderModule,
     InflowCreditModule,
     UsersModule,
+    AccountRestrictionNotifyModule,
     forwardRef(() => NotificationsModule),
     ConfigModule,
   ],

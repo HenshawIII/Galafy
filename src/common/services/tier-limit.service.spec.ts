@@ -5,6 +5,7 @@ import { KycTier, Tier3UpgradeStatus } from '../../../generated/prisma/enums.js'
 import { TierLimitService } from './tier-limit.service.js';
 import { DatabaseService } from '../../database/database.service.js';
 import { CacheService } from '../../cache/cache.service.js';
+import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
 
 function mockFn<T extends (...args: unknown[]) => unknown>(impl?: T) {
   const fn = (...args: Parameters<T>) => {
@@ -31,18 +32,21 @@ describe('TierLimitService', () => {
     withdrawalLimit: { findUnique: mockFn(), create: mockFn(), update: mockFn() },
   };
   const cache = { invalidateUserCache: mockFn(async () => undefined) };
+  const accountRestrictionNotify = { notifyUserById: mockFn(async () => undefined) };
 
   beforeEach(async () => {
     db.customer.findUnique.calls = [];
     db.customer.update.calls = [];
     db.wallet.findFirst.calls = [];
     cache.invalidateUserCache.calls = [];
+    accountRestrictionNotify.notifyUserById.calls = [];
 
     const module = await Test.createTestingModule({
       providers: [
         TierLimitService,
         { provide: DatabaseService, useValue: db },
         { provide: CacheService, useValue: cache },
+        { provide: AccountRestrictionNotifyService, useValue: accountRestrictionNotify },
       ],
     }).compile();
     service = module.get(TierLimitService);
@@ -79,6 +83,26 @@ describe('TierLimitService', () => {
     expect(restricted).toBe(true);
     expect(db.customer.update.calls.length).toBe(1);
     expect(cache.invalidateUserCache.calls).toEqual([['u1']]);
+    expect(accountRestrictionNotify.notifyUserById.calls.length).toBe(1);
+    expect(accountRestrictionNotify.notifyUserById.calls[0][1]).toBe('balance');
+  });
+
+  it('evaluateBalanceAfterInflow does not re-notify when already restricted', async () => {
+    db.customer.findUnique = mockFn(async () => ({
+      id: 'c1',
+      tier: KycTier.Tier_1,
+      tier3UpgradeStatus: null,
+      isBalanceRestricted: true,
+      balanceRestrictionReason: 'Already restricted',
+      providerRestrictionStatus: null,
+      isAmlRestricted: false,
+    }));
+    db.wallet.findFirst = mockFn(async () => ({ availableBalance: new Decimal(350000) }));
+
+    const restricted = await service.evaluateBalanceAfterInflow('c1');
+    expect(restricted).toBe(false);
+    expect(db.customer.update.calls.length).toBe(0);
+    expect(accountRestrictionNotify.notifyUserById.calls.length).toBe(0);
   });
 
   it('assertDailySpendAllowed skips unlimited Tier_3 COMPLETED', async () => {
