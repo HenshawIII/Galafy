@@ -45,4 +45,13 @@ describe('provider-notification-classifier.util', () => {
       }),
     ).toBe('unclassified_debit');
   });
+
+  it('classifies inflow admin fee debit without treating as unclassified', () => {
+    expect(
+      classifyTransactionNotification({
+        transactionType: 'Debit',
+        narration: 'Admin funding fee FEE-784e8f5e060732d56e',
+      }),
+    ).toBe('inflow_admin_fee');
+  });
 });

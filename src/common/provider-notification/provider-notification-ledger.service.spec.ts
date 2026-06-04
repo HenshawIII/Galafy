@@ -76,6 +76,55 @@ describe('ProviderNotificationLedgerService', () => {
     expect(db.$transaction.calls.length).toBe(1);
   });
 
+  it('links inflow admin fee notification without debiting wallet', async () => {
+    const feeTxn = {
+      id: 'fee-tx-1',
+      walletId: 'w1',
+      status: 'PENDING',
+      amount: new Decimal(10),
+      metadata: { inflowAdminFeeSweep: true, adminFeeId: 'af1', inflowTransactionId: 'inflow-1' },
+      reference: 'FEE-abc123',
+    };
+    db.transaction.findUnique = mockFn(async (args: { where: { reference?: string } }) => {
+      if (args?.where?.reference === 'FEE-abc123') return feeTxn;
+      return null;
+    });
+    let walletUpdated = false;
+    db.$transaction = mockFn(async (cb: (tx: typeof db) => Promise<unknown>) => {
+      const tx = {
+        transaction: {
+          update: mockFn(async () => feeTxn),
+          findUnique: mockFn(async () => ({ id: 'inflow-1', metadata: { feeSweepPending: true } })),
+        },
+        adminFee: { update: mockFn(async () => ({})) },
+      };
+      return cb(tx as unknown as typeof db);
+    });
+    db.wallet.findFirst = mockFn(async () => ({ id: 'w1' }));
+    db.wallet.update = mockFn(async () => {
+      walletUpdated = true;
+      return wallet;
+    });
+
+    const result = await service.recordInflowAdminFeeNotification({
+      accountNumber: '1234567890',
+      amount: new Decimal(10),
+      narration: 'Admin funding fee FEE-abc123',
+      kind: 'inflow_admin_fee',
+      raw: {
+        accountNumber: '1234567890',
+        amount: 10,
+        transactionType: 'Debit',
+        narration: 'Admin funding fee FEE-abc123',
+        transactionDate: '2026-06-04T12:00:00',
+      },
+    });
+
+    expect(result.transactionId).toBe('fee-tx-1');
+    expect(result.isDuplicate).toBe(false);
+    expect(walletUpdated).toBe(false);
+  });
+
   it('records unclassified provider debit on wallet', async () => {
     const result = await service.recordNotificationDebit({
       accountNumber: '1234567890',

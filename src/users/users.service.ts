@@ -26,6 +26,7 @@ import { CacheService } from '../cache/cache.service.js';
 import { TierLimitService } from '../common/services/tier-limit.service.js';
 import type { AccountLimitsSnapshot } from '../common/services/tier-limit.service.js';
 import { pickPrimaryWallet, resolveWalletStatus } from '../common/utils/wallet-status.util.js';
+import { authConflictMessage } from '../common/utils/auth-conflict-messages.util.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
@@ -108,14 +109,15 @@ export class UsersService {
     });
 
     if (existingPhone) {
-      throw new ConflictException(
-        'An account with those details already exists. Please log in or reset your password if you’ve forgotten it.',
-      );
+      throw new ConflictException(authConflictMessage({ field: 'phone' }));
     }
 
     if (existingUser) {
       throw new ConflictException(
-        'An account with those details already exists. Please log in or reset your password if you’ve forgotten it.',
+        authConflictMessage({
+          field: 'email',
+          method: existingUser.password ? 'credentials' : 'google',
+        }),
       );
     }
 
@@ -131,7 +133,7 @@ export class UsersService {
     });
 
     if (existingUsername) {
-      throw new ConflictException('User with this username already exists');
+      throw new ConflictException(authConflictMessage({ field: 'username' }));
     }
 
     // Create user with unverified status (store email in lowercase)
@@ -297,17 +299,27 @@ export class UsersService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Rotate session:
-    // - Allow login even if another refresh token is active
-    // - Overwrite stored refresh token so old refresh tokens stop working
-    // - Bump authSessionVersion so old access tokens are rejected immediately on next request
+    return this.issueLoginSession(user.id);
+  }
+
+  /**
+   * Issue access/refresh tokens and return the standard login payload (email + Google login).
+   */
+  async issueLoginSession(userId: string) {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
     const updatedUser = await this.databaseService.user.update({
       where: { id: user.id },
       data: { authSessionVersion: { increment: 1 } },
     });
     const authSessionVersion = updatedUser.authSessionVersion;
 
-    // Generate access token (short-lived: 15 minutes)
     const accessToken = this.jwtService.sign(
       {
         sub: user.id,
@@ -317,12 +329,9 @@ export class UsersService {
         type: 'access',
         authSessionVersion,
       },
-      {
-        expiresIn: '15m', // Access token expires in 15 minutes
-      },
+      { expiresIn: '15m' },
     );
 
-    // Generate refresh token (long-lived: 7 days)
     const refreshToken = this.jwtService.sign(
       {
         sub: user.id,
@@ -331,29 +340,22 @@ export class UsersService {
         authSessionVersion,
       },
       {
-        expiresIn: '7d', // Refresh token expires in 7 days
-        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, // Use separate secret if available
+        expiresIn: '7d',
+        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
       },
     );
 
-    // Calculate refresh token expiration date
     const refreshTokenExpiresAt = new Date();
-    refreshTokenExpiresAt.setDate(refreshTokenExpiresAt.getDate() + 7); // 7 days from now
+    refreshTokenExpiresAt.setDate(refreshTokenExpiresAt.getDate() + 7);
 
-    // Store refresh token in database
     await this.databaseService.user.update({
       where: { id: user.id },
-      data: {
-        refreshToken,
-        refreshTokenExpiresAt,
-      },
+      data: { refreshToken, refreshTokenExpiresAt },
     });
 
-    // Remove sensitive data from response
     const { password, refreshToken: _, refreshTokenExpiresAt: __, ...userWithoutPassword } = user;
 
-    // Get KYC status if customer exists
-    let kycStatus: any = null;
+    let kycStatus: unknown = null;
     try {
       kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(user.id);
     } catch {
@@ -460,7 +462,12 @@ export class UsersService {
       const normalizedEmail = createUserDto.email.toLowerCase().trim();
       const existingUser = await this.findUserByEmailCaseInsensitive(normalizedEmail);
       if (existingUser) {
-        throw new ConflictException('User with this email already exists');
+        throw new ConflictException(
+          authConflictMessage({
+            field: 'email',
+            method: existingUser.password ? 'credentials' : 'google',
+          }),
+        );
       }
     }
 

@@ -1,8 +1,11 @@
+import { isInflowAdminFeeDebitNarration } from '../common/utils/inflow-admin-fee-notification.util.js';
+
 export type ProviderNotificationKind =
   | 'bank_inflow'
   | 'nip_commission'
   | 'nip_vat'
   | 'nip_reversal'
+  | 'inflow_admin_fee'
   | 'unclassified_debit'
   | 'unknown_notification';
 
@@ -30,6 +33,9 @@ export function classifyTransactionNotification(raw: {
     }
     if (narration.includes('VAT ALAT NIP TRANSFER')) {
       return 'nip_vat';
+    }
+    if (isInflowAdminFeeDebitNarration(raw?.narration)) {
+      return 'inflow_admin_fee';
     }
     return 'unclassified_debit';
   }

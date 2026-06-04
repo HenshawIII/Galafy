@@ -29,7 +29,8 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 401, description: 'Invalid token or user already exists' })
+  @ApiResponse({ status: 409, description: 'An account with this email already exists' })
+  @ApiResponse({ status: 401, description: 'Invalid Google token' })
   googleSignUp(@Body() body: { idtoken: string }) {
     return this.authService.googleSignUp(body.idtoken);
   }
@@ -41,7 +42,7 @@ export class AuthController {
   @ApiResponse({
     status: 200,
     description:
-      'Login successful, returns access token, refresh token, user details, KYC status, and verification status',
+      'Login successful, returns access token, refresh token, user details, KYC status, isPinSet, accountLimits, and verification status',
     schema: {
       example: {
         access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -60,11 +61,24 @@ export class AuthController {
           hasBvn: true,
           hasAddressVerification: false,
         },
+        isPinSet: true,
+        accountLimits: {
+          tier: 'Tier_1',
+          maxCumulativeBalance: '300000.00',
+          currentBalance: '15000.00',
+          dailySpendLimit: '30000.00',
+          dailySpendUsed: '5000.00',
+          isBalanceRestricted: false,
+        },
         isVerified: 'true',
       },
     },
   })
-  @ApiResponse({ status: 401, description: 'Invalid token or user not found' })
+  @ApiResponse({
+    status: 401,
+    description:
+      'Invalid token, no account (sign up), or email/password account exists (use credentials login)',
+  })
   @ApiResponse({ status: 409, description: 'User already logged in on another device. Please log out first.' })
   googleLogin(@Body() body: { idtoken: string }) {
     return this.authService.googleLogin(body.idtoken);
