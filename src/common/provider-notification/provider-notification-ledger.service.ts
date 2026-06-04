@@ -186,7 +186,7 @@ export class ProviderNotificationLedgerService {
         where: { id: feeTxn!.id },
         data: {
           status: nextStatus,
-          metadata: mergedMeta as Prisma.InputJsonValue,
+          metadata: mergedMeta as any,
         },
       });
 
@@ -213,7 +213,7 @@ export class ProviderNotificationLedgerService {
             where: { id: inflowTxId },
             data: {
               status: TransactionStatus.SUCCESS,
-              metadata: im as Prisma.InputJsonValue,
+              metadata: im as any,
             },
           });
         }
