@@ -9,6 +9,7 @@ import {
 } from '../../../generated/prisma/enums.js';
 import { normalizeToKobo } from '../utils/money.util.js';
 import { buildTransactionNotificationProviderReference } from '../utils/provider-transaction-notification-reference.util.js';
+import { parseFeeSweepReferenceFromNotification } from '../utils/inflow-admin-fee-notification.util.js';
 import type { ProviderNotificationKind } from '../../provider/provider-notification-classifier.util.js';
 
 export type NotificationLedgerInput = {
@@ -63,6 +64,172 @@ export class ProviderNotificationLedgerService {
 
   async recordNipFeeDebit(input: NotificationLedgerInput): Promise<NotificationLedgerResult> {
     return this.recordNotificationDebit(input);
+  }
+
+  /**
+   * Bank debit notification for an inflow admin fee sweep (ProcessClientTransfer to org VA).
+   * Links to the existing FEE-* Transaction from InflowCreditService — no second wallet debit.
+   */
+  async recordInflowAdminFeeNotification(input: NotificationLedgerInput): Promise<NotificationLedgerResult> {
+    const providerReference = this.buildProviderReference(input.raw);
+    const amount = normalizeToKobo(input.amount);
+
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: input.accountNumber },
+      select: { id: true },
+    });
+    if (!wallet) {
+      throw new NotFoundException(`Wallet not found for account number: ${input.accountNumber}`);
+    }
+
+    const feeSweepRef = parseFeeSweepReferenceFromNotification({
+      narration: input.narration,
+      reference: input.raw.reference,
+      transactionReference: input.raw.transactionReference,
+      platformTransactionReference: input.raw.platformTransactionReference,
+    });
+
+    let feeTxn = feeSweepRef
+      ? await this.databaseService.transaction.findUnique({
+          where: { reference: feeSweepRef },
+          select: {
+            id: true,
+            walletId: true,
+            status: true,
+            amount: true,
+            metadata: true,
+            reference: true,
+          },
+        })
+      : null;
+
+    if (feeTxn && feeTxn.walletId !== wallet.id) {
+      this.logger.warn(
+        `Inflow admin fee notification: FEE ref ${feeSweepRef} belongs to another wallet; falling back to amount match`,
+      );
+      feeTxn = null;
+    }
+
+    if (!feeTxn) {
+      feeTxn = await this.databaseService.transaction.findFirst({
+        where: {
+          walletId: wallet.id,
+          type: TransactionType.ADJUSTMENT,
+          direction: TransactionDirection.DEBIT,
+          amount,
+          reference: { startsWith: 'FEE-' },
+          status: { in: [TransactionStatus.PENDING, TransactionStatus.PROCESSING] },
+          metadata: {
+            path: ['inflowAdminFeeSweep'],
+            equals: true,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          walletId: true,
+          status: true,
+          amount: true,
+          metadata: true,
+          reference: true,
+        },
+      });
+    }
+
+    if (!feeTxn) {
+      this.logger.warn(
+        `Inflow admin fee notification: no matching FEE sweep for wallet=${wallet.id} amount=${amount.toFixed(2)} ref=${providerReference}; skipping wallet debit`,
+      );
+      return {
+        walletId: wallet.id,
+        transactionId: '',
+        providerReference,
+        isDuplicate: false,
+      };
+    }
+
+    const existingMeta =
+      typeof feeTxn.metadata === 'object' && feeTxn.metadata !== null
+        ? (feeTxn.metadata as Record<string, unknown>)
+        : {};
+
+    const priorNotifRef =
+      typeof existingMeta.providerNotificationReference === 'string'
+        ? existingMeta.providerNotificationReference
+        : null;
+
+    if (priorNotifRef === providerReference) {
+      return {
+        walletId: feeTxn.walletId,
+        transactionId: feeTxn.id,
+        providerReference,
+        isDuplicate: true,
+      };
+    }
+
+    const mergedMeta: Record<string, unknown> = {
+      ...existingMeta,
+      providerNotification: true,
+      notificationKind: 'inflow_admin_fee',
+      providerNotificationReference: providerReference,
+      providerNotificationLinkedAt: new Date().toISOString(),
+      linkedWithoutWalletDebit: true,
+    };
+
+    await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
+      const nextStatus =
+        feeTxn!.status === TransactionStatus.PENDING || feeTxn!.status === TransactionStatus.PROCESSING
+          ? TransactionStatus.SUCCESS
+          : feeTxn!.status;
+
+      await tx.transaction.update({
+        where: { id: feeTxn!.id },
+        data: {
+          status: nextStatus,
+          metadata: mergedMeta as Prisma.InputJsonValue,
+        },
+      });
+
+      const adminFeeId =
+        typeof existingMeta.adminFeeId === 'string' ? (existingMeta.adminFeeId as string) : null;
+      if (adminFeeId) {
+        await tx.adminFee.update({
+          where: { id: adminFeeId },
+          data: { status: 'COLLECTED' },
+        });
+      }
+
+      const inflowTxId =
+        typeof existingMeta.inflowTransactionId === 'string' ? (existingMeta.inflowTransactionId as string) : null;
+      if (inflowTxId) {
+        const inflowTxn = await tx.transaction.findUnique({ where: { id: inflowTxId } });
+        if (inflowTxn) {
+          const im =
+            typeof inflowTxn.metadata === 'object' && inflowTxn.metadata !== null
+              ? { ...(inflowTxn.metadata as Record<string, unknown>) }
+              : {};
+          im.feeSweepPending = false;
+          await tx.transaction.update({
+            where: { id: inflowTxId },
+            data: {
+              status: TransactionStatus.SUCCESS,
+              metadata: im as Prisma.InputJsonValue,
+            },
+          });
+        }
+      }
+    });
+
+    this.logger.log(
+      `Inflow admin fee notification linked (no wallet debit): feeTx=${feeTxn.reference} walletId=${wallet.id} notifRef=${providerReference} amount=${amount.toFixed(2)}`,
+    );
+
+    return {
+      walletId: feeTxn.walletId,
+      transactionId: feeTxn.id,
+      providerReference,
+      isDuplicate: false,
+    };
   }
 
   async recordNipReversalCredit(input: NotificationLedgerInput): Promise<NotificationLedgerResult> {

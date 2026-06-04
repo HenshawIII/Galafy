@@ -619,6 +619,31 @@ export class ProviderTxnCallbackService {
         })
       : null;
 
+    if (kind === 'inflow_admin_fee') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for inflow admin fee debit notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for inflow admin fee debit notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : 'Admin funding fee';
+      const ledgerResult = await this.notificationLedger.recordInflowAdminFeeNotification({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Inflow admin fee notification linked: walletId=${ledgerResult.walletId} feeTxId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
     if (kind === 'nip_commission' || kind === 'nip_vat' || kind === 'unclassified_debit') {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for debit transaction notifications');
