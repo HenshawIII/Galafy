@@ -697,7 +697,8 @@ export class WalletmoduleService {
           type: TransactionType.PAYOUT,
           direction: TransactionDirection.DEBIT,
           status: TransactionStatus.PENDING,
-          amount: netAmountKobo,
+          // Inclusive payout: ledger debits gross once; net + fee are separate bank legs.
+          amount,
           currencyId: fromWallet.currencyId,
           reference: transactionReference,
           externalReference: null,

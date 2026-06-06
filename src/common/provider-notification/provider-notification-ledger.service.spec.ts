@@ -125,6 +125,96 @@ describe('ProviderNotificationLedgerService', () => {
     expect(walletUpdated).toBe(false);
   });
 
+  it('links payout admin fee notification without debiting wallet', async () => {
+    const feeTxn = {
+      id: 'fee-tx-payout',
+      walletId: 'w1',
+      status: 'PENDING',
+      amount: new Decimal(30),
+      metadata: { payoutAdminFeeSweep: true, adminFeeId: 'af1' },
+      reference: 'FEEP-abc123',
+      type: 'ADJUSTMENT',
+    };
+    db.transaction.findUnique = mockFn(async (args: { where: { reference?: string } }) => {
+      if (args?.where?.reference === 'FEEP-abc123') return feeTxn;
+      return null;
+    });
+    let walletUpdated = false;
+    db.$transaction = mockFn(async (cb: (tx: typeof db) => Promise<unknown>) => {
+      const tx = {
+        transaction: { update: mockFn(async () => feeTxn) },
+        adminFee: { update: mockFn(async () => ({})) },
+      };
+      return cb(tx as unknown as typeof db);
+    });
+    db.wallet.findFirst = mockFn(async () => ({ id: 'w1' }));
+    db.wallet.update = mockFn(async () => {
+      walletUpdated = true;
+      return wallet;
+    });
+
+    const result = await service.recordPayoutAdminFeeNotification({
+      accountNumber: '1234567890',
+      amount: new Decimal(30),
+      narration: 'Admin payout fee FEEP-abc123',
+      kind: 'payout_admin_fee',
+      raw: {
+        accountNumber: '1234567890',
+        amount: 30,
+        transactionType: 'Debit',
+        narration: 'Admin payout fee FEEP-abc123',
+      },
+    });
+
+    expect(result.transactionId).toBe('fee-tx-payout');
+    expect(walletUpdated).toBe(false);
+  });
+
+  it('links payout settlement notification without debiting wallet', async () => {
+    const payoutTxn = {
+      id: 'payout-tx-1',
+      walletId: 'w1',
+      status: 'SUCCESS',
+      amount: new Decimal(1000),
+      metadata: { payoutNetAmount: '970.00', payoutGrossAmount: '1000.00' },
+      reference: 'TXN-abc123',
+      type: 'PAYOUT',
+      direction: 'DEBIT',
+    };
+    db.transaction.findUnique = mockFn(async (args: { where: { reference?: string } }) => {
+      if (args?.where?.reference === 'TXN-abc123') return payoutTxn;
+      return null;
+    });
+    db.transaction.findMany = mockFn(async () => []);
+    let walletUpdated = false;
+    db.$transaction = mockFn(async (cb: (tx: typeof db) => Promise<unknown>) => {
+      const tx = { transaction: { update: mockFn(async () => payoutTxn) } };
+      return cb(tx as unknown as typeof db);
+    });
+    db.wallet.findFirst = mockFn(async () => ({ id: 'w1' }));
+    db.wallet.update = mockFn(async () => {
+      walletUpdated = true;
+      return wallet;
+    });
+
+    const result = await service.recordPayoutSettlementNotification({
+      accountNumber: '1234567890',
+      amount: new Decimal(970),
+      narration: 'Wallet payout to 0123456789',
+      kind: 'payout_settlement',
+      raw: {
+        accountNumber: '1234567890',
+        amount: 970,
+        transactionType: 'Debit',
+        narration: 'Wallet payout to 0123456789',
+        transactionReference: 'TXN-abc123',
+      },
+    });
+
+    expect(result.transactionId).toBe('payout-tx-1');
+    expect(walletUpdated).toBe(false);
+  });
+
   it('records unclassified provider debit on wallet', async () => {
     const result = await service.recordNotificationDebit({
       accountNumber: '1234567890',

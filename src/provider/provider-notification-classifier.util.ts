@@ -1,4 +1,9 @@
 import { isInflowAdminFeeDebitNarration } from '../common/utils/inflow-admin-fee-notification.util.js';
+import {
+  isPayoutAdminFeeDebitNarration,
+  isPayoutSettlementDebitNarration,
+  parsePayoutTransactionReferenceFromNotification,
+} from '../common/utils/payout-notification.util.js';
 
 export type ProviderNotificationKind =
   | 'bank_inflow'
@@ -6,6 +11,8 @@ export type ProviderNotificationKind =
   | 'nip_vat'
   | 'nip_reversal'
   | 'inflow_admin_fee'
+  | 'payout_admin_fee'
+  | 'payout_settlement'
   | 'unclassified_debit'
   | 'unknown_notification';
 
@@ -36,6 +43,15 @@ export function classifyTransactionNotification(raw: {
     }
     if (isInflowAdminFeeDebitNarration(raw?.narration)) {
       return 'inflow_admin_fee';
+    }
+    if (isPayoutAdminFeeDebitNarration(raw?.narration)) {
+      return 'payout_admin_fee';
+    }
+    if (
+      isPayoutSettlementDebitNarration(raw?.narration) ||
+      parsePayoutTransactionReferenceFromNotification(raw) !== null
+    ) {
+      return 'payout_settlement';
     }
     return 'unclassified_debit';
   }

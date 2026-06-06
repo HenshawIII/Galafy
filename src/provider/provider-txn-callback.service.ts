@@ -239,11 +239,46 @@ export class ProviderTxnCallbackService {
             });
           }
         }
-        if (failMeta?.payoutAdminFeeSweep === true && typeof failMeta.adminFeeId === 'string') {
-          await tx.adminFee.update({
-            where: { id: failMeta.adminFeeId },
-            data: { status: 'REVERSED' },
-          });
+        if (failMeta?.payoutAdminFeeSweep === true) {
+          const payoutNetTxId =
+            typeof failMeta.payoutNetTransactionId === 'string' ? failMeta.payoutNetTransactionId : null;
+          if (payoutNetTxId) {
+            const payoutTxn = await tx.transaction.findUnique({
+              where: { id: payoutNetTxId },
+              select: { id: true, status: true, metadata: true },
+            });
+            if (payoutTxn?.status === TransactionStatus.SUCCESS) {
+              const feeAmount = txn.amount;
+              const sourceWallet = await tx.wallet.findUnique({
+                where: { id: txn.walletId },
+                select: { id: true, availableBalance: true, ledgerBalance: true },
+              });
+              if (sourceWallet) {
+                await tx.wallet.update({
+                  where: { id: sourceWallet.id },
+                  data: {
+                    availableBalance: sourceWallet.availableBalance.plus(feeAmount),
+                    ledgerBalance: sourceWallet.ledgerBalance.plus(feeAmount),
+                  },
+                });
+              }
+              const payoutMeta =
+                typeof payoutTxn.metadata === 'object' && payoutTxn.metadata !== null
+                  ? { ...(payoutTxn.metadata as Record<string, unknown>) }
+                  : {};
+              payoutMeta.feeSweepFailed = true;
+              await tx.transaction.update({
+                where: { id: payoutTxn.id },
+                data: { metadata: payoutMeta as any },
+              });
+            }
+          }
+          if (typeof failMeta.adminFeeId === 'string') {
+            await tx.adminFee.update({
+              where: { id: failMeta.adminFeeId },
+              data: { status: 'REVERSED' },
+            });
+          }
         }
       }
 
@@ -286,11 +321,11 @@ export class ProviderTxnCallbackService {
           throw new BadRequestException(`Source wallet not found for transaction=${transactionReference}`);
         }
 
-        const isInflowAdminFeeSweep =
-          txnDebitMeta?.inflowAdminFeeSweep === true;
+        const skipLedgerDebit =
+          txnDebitMeta?.inflowAdminFeeSweep === true || txnDebitMeta?.payoutAdminFeeSweep === true;
 
-        // Inclusive funding: user wallet was credited net only; fee sweep moves bank funds without a second ledger debit.
-        if (!isInflowAdminFeeSweep) {
+        // Inclusive inflow: credit net only. Inclusive payout: debit gross once. Fee sweeps are bank legs only.
+        if (!skipLedgerDebit) {
           await tx.wallet.update({
             where: { id: sourceWallet.id },
             data: {
@@ -299,8 +334,9 @@ export class ProviderTxnCallbackService {
             },
           });
         } else {
+          const sweepKind = txnDebitMeta?.payoutAdminFeeSweep === true ? 'payout' : 'inflow';
           this.logger.log(
-            `Transaction callback: inflow admin fee sweep settled without wallet debit txRef=${this.mask(transactionReference)} amount=${amount.toString()}`,
+            `Transaction callback: ${sweepKind} admin fee sweep settled without wallet debit txRef=${this.mask(transactionReference)} amount=${amount.toString()}`,
           );
         }
 
@@ -644,6 +680,56 @@ export class ProviderTxnCallbackService {
       return { received: true };
     }
 
+    if (kind === 'payout_admin_fee') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for payout admin fee debit notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for payout admin fee debit notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : 'Admin payout fee';
+      const ledgerResult = await this.notificationLedger.recordPayoutAdminFeeNotification({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Payout admin fee notification linked: walletId=${ledgerResult.walletId} feeTxId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'payout_settlement') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for payout settlement debit notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for payout settlement debit notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : 'Payout settlement';
+      const ledgerResult = await this.notificationLedger.recordPayoutSettlementNotification({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Payout settlement notification linked: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
     if (kind === 'nip_commission' || kind === 'nip_vat' || kind === 'unclassified_debit') {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for debit transaction notifications');
@@ -658,6 +744,23 @@ export class ProviderTxnCallbackService {
           : kind === 'unclassified_debit'
             ? 'Provider debit'
             : 'NIP transfer fee';
+
+      if (kind === 'unclassified_debit') {
+        const linked = await this.notificationLedger.tryLinkUnclassifiedProcessClientTransfer({
+          accountNumber,
+          amount: normalizeToKobo(amountRaw),
+          narration,
+          kind,
+          raw: raw as Record<string, unknown>,
+        });
+        if (linked) {
+          this.logger.log(
+            `Unclassified debit linked to internal transfer: walletId=${linked.walletId} txId=${linked.transactionId} ref=${this.mask(linked.providerReference)} duplicate=${linked.isDuplicate}`,
+          );
+          return { received: true };
+        }
+      }
+
       const ledgerResult = await this.notificationLedger.recordNotificationDebit({
         accountNumber,
         amount: normalizeToKobo(amountRaw),

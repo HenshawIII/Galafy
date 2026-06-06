@@ -10,7 +10,21 @@ import {
 import { normalizeToKobo } from '../utils/money.util.js';
 import { buildTransactionNotificationProviderReference } from '../utils/provider-transaction-notification-reference.util.js';
 import { parseFeeSweepReferenceFromNotification } from '../utils/inflow-admin-fee-notification.util.js';
+import {
+  parsePayoutFeeSweepReferenceFromNotification,
+  parsePayoutTransactionReferenceFromNotification,
+} from '../utils/payout-notification.util.js';
 import type { ProviderNotificationKind } from '../../provider/provider-notification-classifier.util.js';
+
+type LinkableTxnRow = {
+  id: string;
+  walletId: string;
+  status: TransactionStatus;
+  amount: Decimal;
+  metadata: unknown;
+  reference: string | null;
+  type: TransactionType;
+};
 
 export type NotificationLedgerInput = {
   accountNumber: string;
@@ -228,6 +242,356 @@ export class ProviderNotificationLedgerService {
       walletId: feeTxn.walletId,
       transactionId: feeTxn.id,
       providerReference,
+      isDuplicate: false,
+    };
+  }
+
+  /**
+   * Bank debit notification for a payout admin fee sweep (FEEP-* ProcessClientTransfer).
+   * Links to existing FEEP ADJUSTMENT — no second wallet debit (callback already debited).
+   */
+  async recordPayoutAdminFeeNotification(input: NotificationLedgerInput): Promise<NotificationLedgerResult> {
+    const providerReference = this.buildProviderReference(input.raw);
+    const amount = normalizeToKobo(input.amount);
+
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: input.accountNumber },
+      select: { id: true },
+    });
+    if (!wallet) {
+      throw new NotFoundException(`Wallet not found for account number: ${input.accountNumber}`);
+    }
+
+    const feeSweepRef = parsePayoutFeeSweepReferenceFromNotification({
+      narration: input.narration,
+      reference: input.raw.reference,
+      transactionReference: input.raw.transactionReference,
+      platformTransactionReference: input.raw.platformTransactionReference,
+    });
+
+    let feeTxn = await this.findPayoutAdminFeeSweepTxn(wallet.id, amount, feeSweepRef);
+    if (!feeTxn) {
+      this.logger.warn(
+        `Payout admin fee notification: no matching FEEP sweep for wallet=${wallet.id} amount=${amount.toFixed(2)} ref=${providerReference}; skipping wallet debit`,
+      );
+      return {
+        walletId: wallet.id,
+        transactionId: '',
+        providerReference,
+        isDuplicate: false,
+      };
+    }
+
+    return this.linkProviderNotificationToTxn({
+      txn: feeTxn,
+      providerReference,
+      notificationKind: 'payout_admin_fee',
+      markSuccessIfPending: true,
+      collectAdminFee: true,
+    });
+  }
+
+  /**
+   * Bank debit notification for main payout / wallet-to-wallet ProcessClientTransfer (TXN-*).
+   * Links to existing PAYOUT or SPRAY debit — no second wallet debit (callback already debited).
+   */
+  async recordPayoutSettlementNotification(input: NotificationLedgerInput): Promise<NotificationLedgerResult> {
+    const providerReference = this.buildProviderReference(input.raw);
+    const amount = normalizeToKobo(input.amount);
+
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: input.accountNumber },
+      select: { id: true },
+    });
+    if (!wallet) {
+      throw new NotFoundException(`Wallet not found for account number: ${input.accountNumber}`);
+    }
+
+    const settlementTxn = await this.findPayoutSettlementTxn(wallet.id, amount, input.raw);
+    if (!settlementTxn) {
+      this.logger.warn(
+        `Payout settlement notification: no matching TXN transfer for wallet=${wallet.id} amount=${amount.toFixed(2)} ref=${providerReference}; skipping wallet debit`,
+      );
+      return {
+        walletId: wallet.id,
+        transactionId: '',
+        providerReference,
+        isDuplicate: false,
+      };
+    }
+
+    return this.linkProviderNotificationToTxn({
+      txn: settlementTxn,
+      providerReference,
+      notificationKind: 'payout_settlement',
+      markSuccessIfPending: false,
+      collectAdminFee: false,
+    });
+  }
+
+  /**
+   * Before treating a debit as unclassified, try to link it to an internal ProcessClientTransfer leg.
+   */
+  async tryLinkUnclassifiedProcessClientTransfer(
+    input: NotificationLedgerInput,
+  ): Promise<NotificationLedgerResult | null> {
+    const providerReference = this.buildProviderReference(input.raw);
+    const amount = normalizeToKobo(input.amount);
+
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: input.accountNumber },
+      select: { id: true },
+    });
+    if (!wallet) {
+      return null;
+    }
+
+    const feeSweepRef = parsePayoutFeeSweepReferenceFromNotification({
+      narration: input.narration,
+      reference: input.raw.reference,
+      transactionReference: input.raw.transactionReference,
+      platformTransactionReference: input.raw.platformTransactionReference,
+    });
+    const feeTxn = await this.findPayoutAdminFeeSweepTxn(wallet.id, amount, feeSweepRef);
+    if (feeTxn) {
+      return this.linkProviderNotificationToTxn({
+        txn: feeTxn,
+        providerReference,
+        notificationKind: 'payout_admin_fee',
+        markSuccessIfPending: true,
+        collectAdminFee: true,
+      });
+    }
+
+    const settlementTxn = await this.findPayoutSettlementTxn(wallet.id, amount, input.raw);
+    if (settlementTxn) {
+      return this.linkProviderNotificationToTxn({
+        txn: settlementTxn,
+        providerReference,
+        notificationKind: 'payout_settlement',
+        markSuccessIfPending: false,
+        collectAdminFee: false,
+      });
+    }
+
+    return null;
+  }
+
+  private getTxnMetadata(metadata: unknown): Record<string, unknown> {
+    return typeof metadata === 'object' && metadata !== null ? (metadata as Record<string, unknown>) : {};
+  }
+
+  private hasLinkedNotification(metadata: Record<string, unknown>, providerReference: string): boolean {
+    return metadata.providerNotificationReference === providerReference;
+  }
+
+  private async findPayoutAdminFeeSweepTxn(
+    walletId: string,
+    amount: Decimal,
+    feeSweepRef: string | null,
+  ): Promise<LinkableTxnRow | null> {
+    let feeTxn: LinkableTxnRow | null = null;
+
+    if (feeSweepRef) {
+      const row = await this.databaseService.transaction.findUnique({
+        where: { reference: feeSweepRef },
+        select: {
+          id: true,
+          walletId: true,
+          status: true,
+          amount: true,
+          metadata: true,
+          reference: true,
+          type: true,
+        },
+      });
+      if (row && row.walletId === walletId) {
+        feeTxn = row;
+      } else if (row) {
+        this.logger.warn(`Payout admin fee notification: FEEP ref ${feeSweepRef} belongs to another wallet`);
+      }
+    }
+
+    if (!feeTxn) {
+      feeTxn = await this.databaseService.transaction.findFirst({
+        where: {
+          walletId,
+          type: TransactionType.ADJUSTMENT,
+          direction: TransactionDirection.DEBIT,
+          amount,
+          reference: { startsWith: 'FEEP-' },
+          status: { in: [TransactionStatus.PENDING, TransactionStatus.PROCESSING, TransactionStatus.SUCCESS] },
+          metadata: {
+            path: ['payoutAdminFeeSweep'],
+            equals: true,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          walletId: true,
+          status: true,
+          amount: true,
+          metadata: true,
+          reference: true,
+          type: true,
+        },
+      });
+    }
+
+    return feeTxn;
+  }
+
+  private async findPayoutSettlementTxn(
+    walletId: string,
+    amount: Decimal,
+    raw: Record<string, unknown>,
+  ): Promise<LinkableTxnRow | null> {
+    const txnRef = parsePayoutTransactionReferenceFromNotification({
+      narration: raw.narration,
+      reference: raw.reference,
+      transactionReference: raw.transactionReference,
+      platformTransactionReference: raw.platformTransactionReference,
+    });
+
+    if (txnRef) {
+      const row = await this.databaseService.transaction.findUnique({
+        where: { reference: txnRef },
+        select: {
+          id: true,
+          walletId: true,
+          status: true,
+          amount: true,
+          metadata: true,
+          reference: true,
+          type: true,
+          direction: true,
+        },
+      });
+      if (
+        row &&
+        row.walletId === walletId &&
+        row.direction === TransactionDirection.DEBIT &&
+        (row.type === TransactionType.PAYOUT || row.type === TransactionType.SPRAY)
+      ) {
+        return {
+          id: row.id,
+          walletId: row.walletId,
+          status: row.status,
+          amount: row.amount,
+          metadata: row.metadata,
+          reference: row.reference,
+          type: row.type,
+        };
+      }
+      if (row && row.walletId !== walletId) {
+        this.logger.warn(`Payout settlement notification: TXN ref ${txnRef} belongs to another wallet`);
+      }
+    }
+
+    const candidates = await this.databaseService.transaction.findMany({
+      where: {
+        walletId,
+        direction: TransactionDirection.DEBIT,
+        type: { in: [TransactionType.PAYOUT, TransactionType.SPRAY] },
+        status: { in: [TransactionStatus.PENDING, TransactionStatus.PROCESSING, TransactionStatus.SUCCESS] },
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        walletId: true,
+        status: true,
+        amount: true,
+        metadata: true,
+        reference: true,
+        type: true,
+      },
+    });
+
+    for (const candidate of candidates) {
+      const meta = this.getTxnMetadata(candidate.metadata);
+      if (typeof meta.providerNotificationReference === 'string') {
+        continue;
+      }
+      if (candidate.amount.equals(amount)) {
+        return candidate;
+      }
+      const payoutNetAmount = meta.payoutNetAmount;
+      if (
+        typeof payoutNetAmount === 'string' &&
+        normalizeToKobo(payoutNetAmount).equals(amount)
+      ) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private async linkProviderNotificationToTxn(params: {
+    txn: LinkableTxnRow;
+    providerReference: string;
+    notificationKind: string;
+    markSuccessIfPending: boolean;
+    collectAdminFee: boolean;
+  }): Promise<NotificationLedgerResult> {
+    const existingMeta = this.getTxnMetadata(params.txn.metadata);
+
+    if (this.hasLinkedNotification(existingMeta, params.providerReference)) {
+      return {
+        walletId: params.txn.walletId,
+        transactionId: params.txn.id,
+        providerReference: params.providerReference,
+        isDuplicate: true,
+      };
+    }
+
+    const mergedMeta: Record<string, unknown> = {
+      ...existingMeta,
+      providerNotification: true,
+      notificationKind: params.notificationKind,
+      providerNotificationReference: params.providerReference,
+      providerNotificationLinkedAt: new Date().toISOString(),
+      linkedWithoutWalletDebit: true,
+    };
+
+    await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
+      const nextStatus =
+        params.markSuccessIfPending &&
+        (params.txn.status === TransactionStatus.PENDING || params.txn.status === TransactionStatus.PROCESSING)
+          ? TransactionStatus.SUCCESS
+          : params.txn.status;
+
+      await tx.transaction.update({
+        where: { id: params.txn.id },
+        data: {
+          status: nextStatus,
+          metadata: mergedMeta as any,
+        },
+      });
+
+      if (params.collectAdminFee) {
+        const adminFeeId =
+          typeof existingMeta.adminFeeId === 'string' ? (existingMeta.adminFeeId as string) : null;
+        if (adminFeeId) {
+          await tx.adminFee.update({
+            where: { id: adminFeeId },
+            data: { status: 'COLLECTED' },
+          });
+        }
+      }
+    });
+
+    this.logger.log(
+      `Provider notification linked (no wallet debit): kind=${params.notificationKind} tx=${params.txn.reference ?? params.txn.id} walletId=${params.txn.walletId} notifRef=${params.providerReference}`,
+    );
+
+    return {
+      walletId: params.txn.walletId,
+      transactionId: params.txn.id,
+      providerReference: params.providerReference,
       isDuplicate: false,
     };
   }
