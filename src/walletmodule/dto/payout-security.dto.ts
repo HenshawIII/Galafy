@@ -120,13 +120,6 @@ export class InitiatePayoutDto {
 }
 
 export class ConfirmPayoutDto {
-  @ApiProperty({ description: 'OTP sent to user email', example: '123456' })
-  @IsString()
-  @IsNotEmpty()
-  @Length(6, 6, { message: 'OTP must be exactly 6 digits' })
-  @Matches(/^\d+$/, { message: 'OTP must contain only digits' })
-  otp: string;
-
   @ApiProperty({
     description: '4-digit PIN for payout verification',
     example: '1234',

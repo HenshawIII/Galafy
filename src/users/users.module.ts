@@ -2,7 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { UsersService } from './users.service.js';
 import { UsersController } from './users.controller.js';
 import { DatabaseModule } from '../database/database.module.js';
-import { EmailService } from './email.service.js';
+import { EmailModule } from './email.module.js';
 import { ProviderModule } from '../provider/provider.module.js';
 import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 import { JwtModule } from '@nestjs/jwt';
@@ -13,6 +13,7 @@ config();
 @Module({
   imports: [
     DatabaseModule,
+    EmailModule,
     forwardRef(() => ProviderModule),
     CustomerKycModule,
     CacheModule,
@@ -22,7 +23,7 @@ config();
     }),
   ],
   controllers: [UsersController],
-  providers: [UsersService, EmailService],
-  exports: [UsersService, EmailService],
+  providers: [UsersService],
+  exports: [UsersService, EmailModule],
 })
 export class UsersModule {}

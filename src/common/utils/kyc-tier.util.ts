@@ -14,3 +14,8 @@ export function hasTier3Benefits(customer: CustomerTierFields): boolean {
 export function isTier2OrTier3WithBenefits(customer: CustomerTierFields): boolean {
   return customer.tier === KycTier.Tier_2 || hasTier3Benefits(customer);
 }
+
+/** Only approved Tier 3 users can host (create) events. */
+export function canHostEvents(customer: CustomerTierFields): boolean {
+  return hasTier3Benefits(customer);
+}

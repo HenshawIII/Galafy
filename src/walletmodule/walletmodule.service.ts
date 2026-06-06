@@ -9,7 +9,6 @@ import { PayoutSecurityService } from './services/payout-security.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import {
-  KycTier,
   TransactionType,
   TransactionDirection,
   TransactionStatus,
@@ -30,6 +29,12 @@ import {
   buildUniqueProviderRef,
   toProviderTransactionReference,
 } from '../common/utils/provider-transaction-reference.util.js';
+import {
+  isNipChargeApplicable,
+  lookupNipCharge,
+  nipChargeAmountFromBand,
+} from '../common/utils/nip-charges.util.js';
+import { NipChargesService } from './services/nip-charges.service.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -50,7 +55,94 @@ export class WalletmoduleService {
     private readonly configService: ConfigService,
     private readonly withdrawalLimitService: WithdrawalLimitService,
     private readonly debitWalletMandateService: DebitWalletMandateService,
+    private readonly nipChargesService: NipChargesService,
   ) {}
+
+  async getNipCharges() {
+    return this.nipChargesService.getNipChargesCached();
+  }
+
+  async getPayoutFeePreview(amount: string, bankCode: string) {
+    const grossAmount = normalizeToKobo(amount);
+    const { fee: galaAdminFee, netAmount } = await calculatePayoutFee(grossAmount, this.configService);
+    const netKobo = normalizeToKobo(netAmount);
+    const quote = await this.buildPayoutQuote({
+      grossAmount,
+      bankCode,
+      destinationAccountNumber: '',
+      destinationAccountName: '',
+      destinationBankName: '',
+    });
+    return {
+      galaAdminFee: galaAdminFee.toFixed(2),
+      netToBeneficiary: netKobo.toFixed(2),
+      nipTransferFee: quote.nipTransferFee,
+      estimatedTotalDebit: quote.estimatedTotalDebit,
+      nipChargeBand: quote.nipChargeBand,
+      termsAndConditionsUrl: quote.termsAndConditionsUrl,
+      nipFeeNote:
+        quote.nipTransferFee != null
+          ? 'Bank posts NIP commission and VAT as separate debits on your virtual account.'
+          : null,
+    };
+  }
+
+  private async buildPayoutQuote(params: {
+    grossAmount: Decimal;
+    bankCode: string;
+    destinationAccountNumber: string;
+    destinationAccountName: string;
+    destinationBankName: string;
+    transactionRef?: string;
+    status?: TransactionStatus;
+  }) {
+    const { fee: galaAdminFee, netAmount } = await calculatePayoutFee(params.grossAmount, this.configService);
+    const netKobo = normalizeToKobo(netAmount);
+
+    let nipTransferFee: string | null = null;
+    let nipChargeBand: {
+      chargeFeeName: string;
+      charge: string;
+      lower: string;
+      upper: string;
+    } | null = null;
+    let termsAndConditionsUrl: string | undefined;
+
+    if (isNipChargeApplicable(params.bankCode)) {
+      const nipData = await this.nipChargesService.getNipChargesCached();
+      termsAndConditionsUrl = nipData.termsAndConditionsUrl;
+      const band = lookupNipCharge(netKobo, nipData.chargeFees);
+      const nipAmount = nipChargeAmountFromBand(band);
+      if (nipAmount) {
+        nipTransferFee = nipAmount.toFixed(2);
+        nipChargeBand = {
+          chargeFeeName: band!.chargeFeeName,
+          charge: nipAmount.toFixed(2),
+          lower: new Decimal(band!.lower).toFixed(2),
+          upper: new Decimal(band!.upper).toFixed(2),
+        };
+      }
+    }
+
+    const nipDecimal = nipTransferFee ? new Decimal(nipTransferFee) : new Decimal(0);
+    const estimatedTotalDebit = params.grossAmount.plus(nipDecimal).toFixed(2);
+
+    return {
+      amount: params.grossAmount.toFixed(2),
+      destinationAccountNumber: params.destinationAccountNumber,
+      destinationAccountName: params.destinationAccountName,
+      destinationBankCode: params.bankCode,
+      destinationBankName: params.destinationBankName,
+      galaAdminFee: galaAdminFee.toFixed(2),
+      netToBeneficiary: netKobo.toFixed(2),
+      nipTransferFee,
+      estimatedTotalDebit,
+      nipChargeBand,
+      termsAndConditionsUrl,
+      transactionRef: params.transactionRef,
+      status: params.status,
+    };
+  }
 
   /**
    * Get wallet by ID
@@ -187,14 +279,11 @@ export class WalletmoduleService {
 
     await this.walletRiskService.checkWalletFreezeStatus(fromWallet.id, true);
 
-    if (fromWallet.customer.isAmlRestricted) {
-      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-    }
-    if (fromWallet.customer.tier === KycTier.Tier_0 || fromWallet.customer.tier === KycTier.Tier_1) {
-      throw new ForbiddenException(
-        'Transfers are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-      );
-    }
+    await this.withdrawalLimitService.validatePayoutForTier(
+      fromWallet.customer,
+      fromWallet.customerId,
+      amount,
+    );
 
     const transactionReference = dto.transactionReference?.trim()
       ? toProviderTransactionReference(dto.transactionReference.trim(), 'TXN')
@@ -306,6 +395,8 @@ export class WalletmoduleService {
       throw error;
     }
 
+    await this.withdrawalLimitService.recordWithdrawal(fromWallet.customerId, amount);
+
     this.logger.log(
       `W2W submitted via provider: ref=${transactionReference}, from=${dto.fromWalletId}, to=${dto.toWalletId}, amount=${amount.toString()}`,
     );
@@ -321,7 +412,7 @@ export class WalletmoduleService {
   }
 
   /**
-   * Initiate payout - Step 1: Validate request, send OTP
+   * Initiate payout - Step 1: Validate request and store pending payout for PIN confirmation.
    */
   async initiatePayout(userId: string, initiateDto: InitiatePayoutDto) {
     // Find wallet and verify ownership
@@ -357,18 +448,8 @@ export class WalletmoduleService {
       throw new BadRequestException('Insufficient balance');
     }
 
-    if (fromWallet.customer.isAmlRestricted) {
-      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-    }
     const payoutCustomer = fromWallet.customer;
-    if (payoutCustomer.tier === KycTier.Tier_0 || payoutCustomer.tier === KycTier.Tier_1) {
-      throw new ForbiddenException(
-        'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-      );
-    }
-    if (payoutCustomer.tier === KycTier.Tier_2 || payoutCustomer.tier === KycTier.Tier_3) {
-      await this.withdrawalLimitService.validatePayoutForTier(payoutCustomer, payoutCustomer.id, amount);
-    }
+    await this.withdrawalLimitService.validatePayoutForTier(payoutCustomer, payoutCustomer.id, amount);
 
     // Get destination account name if not provided (via name enquiry)
     let destinationAccountName = initiateDto.recipientName;
@@ -427,25 +508,29 @@ export class WalletmoduleService {
       walletId: fromWallet.id,
     };
 
-    // Store pending payout data
     await this.payoutSecurityService.storePendingPayout(userId, payoutData);
 
-    // Generate and send OTP
-    await this.payoutSecurityService.generateAndSendOtp(userId);
+    const quote = await this.buildPayoutQuote({
+      grossAmount: amount,
+      bankCode: initiateDto.bankCode,
+      destinationAccountNumber: initiateDto.toAccountNumber,
+      destinationAccountName: destinationAccountName,
+      destinationBankName,
+      transactionRef: transactionReference,
+    });
 
     return {
       success: true,
-      message: 'OTP sent to your email. Please confirm the payout with the OTP and your PIN.',
+      message: 'Payout prepared. Confirm with your payout PIN.',
       expiresIn: '10 minutes',
+      ...quote,
     };
   }
 
   /**
-   * Confirm payout - Step 2: Verify OTP and PIN, execute payout (debit-wallet + callbacks only).
+   * Confirm payout - Step 2: Verify PIN and execute payout (debit-wallet + callbacks only).
    */
-  async confirmPayout(userId: string, otp: string, pin: string) {
-    await this.payoutSecurityService.verifyOtp(userId, otp);
-
+  async confirmPayout(userId: string, pin: string) {
     const isPinValid = await this.payoutSecurityService.verifyPayoutPin(userId, pin);
     if (!isPinValid) {
       throw new UnauthorizedException('Invalid PIN');
@@ -490,14 +575,11 @@ export class WalletmoduleService {
     if (!previewWallet.virtualAccountNumber) {
       throw new BadRequestException('Wallet does not have a virtual account number');
     }
-    if (previewWallet.customer.isAmlRestricted) {
-      throw new ForbiddenException('User account is restricted due to AML compliance. Contact support.');
-    }
-    if (previewWallet.customer.tier === KycTier.Tier_0 || previewWallet.customer.tier === KycTier.Tier_1) {
-      throw new ForbiddenException(
-        'Withdrawals are only available for Tier 2 and Tier 3 users. Please complete your KYC verification to upgrade your tier.',
-      );
-    }
+    await this.withdrawalLimitService.validatePayoutForTier(
+      previewWallet.customer,
+      previewWallet.customerId,
+      amount,
+    );
 
     await this.walletRiskService.checkWalletFreezeStatus(previewWallet.id, false);
 
@@ -536,14 +618,6 @@ export class WalletmoduleService {
         orgVirtualAccount,
         orgBankCode,
       });
-    }
-
-    if (previewWallet.customer.tier === KycTier.Tier_2 || previewWallet.customer.tier === KycTier.Tier_3) {
-      await this.withdrawalLimitService.validatePayoutForTier(
-        previewWallet.customer,
-        previewWallet.customer.id,
-        amount,
-      );
     }
 
     const normalizedPayoutFeePct = feePercentage.toDecimalPlaces(4, Decimal.ROUND_HALF_EVEN);
@@ -623,7 +697,8 @@ export class WalletmoduleService {
           type: TransactionType.PAYOUT,
           direction: TransactionDirection.DEBIT,
           status: TransactionStatus.PENDING,
-          amount: netAmountKobo,
+          // Inclusive payout: ledger debits gross once; net + fee are separate bank legs.
+          amount,
           currencyId: fromWallet.currencyId,
           reference: transactionReference,
           externalReference: null,
@@ -767,11 +842,22 @@ export class WalletmoduleService {
       throw error;
     }
 
+    await this.withdrawalLimitService.recordWithdrawal(previewWallet.customerId, amount);
+
+    const quote = await this.buildPayoutQuote({
+      grossAmount: amount,
+      bankCode: payoutData.bankCode as string,
+      destinationAccountNumber: payoutData.toAccountNumber as string,
+      destinationAccountName: (payoutData.recipientName as string) || 'Unknown',
+      destinationBankName: (payoutData.destinationBankName as string) || 'Unknown',
+      transactionRef: transactionReference,
+      status: TransactionStatus.PENDING,
+    });
+
     return {
       success: true,
       message: 'Transfer submitted and pending authorization/processing',
-      transactionRef: transactionReference,
-      status: TransactionStatus.PENDING,
+      ...quote,
     };
   }
 

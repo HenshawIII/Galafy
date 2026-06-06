@@ -25,6 +25,7 @@ import { ConfigService } from '../../config/config.service.js';
 import { ProviderService } from '../../provider/provider.service.js';
 import { DebitWalletMandateService } from '../debit-mandate/debit-wallet-mandate.service.js';
 import { buildStableProviderRef } from '../utils/provider-transaction-reference.util.js';
+import { TierLimitService } from '../services/tier-limit.service.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -61,6 +62,7 @@ export class InflowCreditService {
     private readonly debitWalletMandateService: DebitWalletMandateService,
     @Inject(forwardRef(() => ProviderService))
     private readonly providerService: ProviderService,
+    private readonly tierLimitService: TierLimitService,
   ) {}
 
   async processBankInflow(input: BankInflowProcessInput): Promise<BankInflowProcessResult> {
@@ -90,6 +92,10 @@ export class InflowCreditService {
       );
       throw new NotFoundException(`Wallet not found for account number: ${accountNumber}`);
     }
+
+    const customerForInflow = await this.tierLimitService.getCustomerForLimits(wallet.customerId);
+    this.tierLimitService.warnIfSingleInflowExceedsLimit(customerForInflow, grossAmount);
+
     this.logger.log(
       `INFLOW wallet resolved: account=${accountNumber}, walletId=${wallet.id}, providerReference=${providerReference}`,
     );
@@ -187,9 +193,9 @@ export class InflowCreditService {
           const groupReference = `GRP-${randomUUID()}`;
 
           const newUserAvailableBalanceAfterCredit = normalizeToKobo(
-            lockedUserWallet.availableBalance.plus(grossAmount),
+            lockedUserWallet.availableBalance.plus(netAmount),
           );
-          const newUserLedgerBalanceAfterCredit = normalizeToKobo(lockedUserWallet.ledgerBalance.plus(grossAmount));
+          const newUserLedgerBalanceAfterCredit = normalizeToKobo(lockedUserWallet.ledgerBalance.plus(netAmount));
 
           await tx.wallet.update({
             where: { id: w.id },
@@ -199,7 +205,7 @@ export class InflowCreditService {
             },
           });
           this.logger.log(
-            `INFLOW wallet balances credited: walletId=${w.id}, providerReference=${providerReference}, creditedGross=${grossAmount.toString()}`,
+            `INFLOW wallet balances credited: walletId=${w.id}, providerReference=${providerReference}, creditedNet=${netAmount.toString()}, gross=${grossAmount.toString()}, adminFee=${adminFee.toString()}`,
           );
 
           const orgWallet = await this.organizationWalletService.getAdminWalletRecord();
@@ -241,6 +247,7 @@ export class InflowCreditService {
                 providerFee: providerFee.toString(),
                 adminFee: adminFee.toString(),
                 grossAmount: grossAmount.toString(),
+                intendedAmount: netAmount.toString(),
                 feePercentage: feePercentage.toString(),
                 feeType: 'funding',
                 feeTransferReference: feeSweepReference,
@@ -397,6 +404,10 @@ export class InflowCreditService {
     }
 
     const { pendingFeeSweep, ...clientResult } = result;
+
+    if (!clientResult.isDuplicate) {
+      await this.tierLimitService.evaluateBalanceAfterInflow(wallet.customerId);
+    }
 
     if (pendingFeeSweep && !clientResult.isDuplicate) {
       try {

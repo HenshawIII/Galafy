@@ -9,6 +9,7 @@ import { UsersModule } from '../users/users.module.js';
 import { WalletmoduleModule } from '../walletmodule/walletmodule.module.js';
 import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.module.js';
 import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
+import { AccountRestrictionNotifyModule } from '../common/account-restriction/account-restriction-notify.module.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
     AdminAuthModule,
     CacheModule,
     UsersModule, // Import UsersModule to access EmailService
+    AccountRestrictionNotifyModule,
     WalletmoduleModule, // Exports OrganizationWalletService for AdminService
     InternalLedgerModule,
     CustomerKycModule,

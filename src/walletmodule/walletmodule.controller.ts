@@ -40,6 +40,7 @@ import {
   ConfirmPayoutDto,
   ResetPayoutPinDto,
 } from './dto/payout-security.dto.js';
+import { PayoutFeePreviewQueryDto } from './dto/payout-preview.dto.js';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto.js';
 
 @ApiTags('wallets')
@@ -268,22 +269,46 @@ export class WalletmoduleController {
     return { success: true, message: 'Payout PIN updated successfully' };
   }
 
+  @Get('payout/nip-charges')
+  @ApiOperation({ summary: 'ALAT NIP interbank charge bands and terms (cached 1h)' })
+  @ApiResponse({ status: 200, description: 'NIP charge fee bands' })
+  async getNipCharges() {
+    return this.walletmoduleService.getNipCharges();
+  }
+
+  @Get('payout/fee-preview')
+  @ApiOperation({
+    summary: 'Estimate Gala admin fee and NIP transfer charge for an external payout',
+    description:
+      'NIP fee is based on net amount after Gala admin fee. Same-bank (WEMA 035) payouts have no NIP fee. Bank posts COMM and VAT as separate debits.',
+  })
+  @ApiResponse({ status: 200, description: 'Fee breakdown' })
+  async getPayoutFeePreview(@Query(ValidationPipe) query: PayoutFeePreviewQueryDto) {
+    return this.walletmoduleService.getPayoutFeePreview(query.amount, query.bankCode);
+  }
+
   @Post('payout/initiate')
   @ApiOperation({
-    summary: 'Initiate payout - Step 1: Validates request and sends OTP to email',
+    summary: 'Initiate payout - Step 1: Validates request and stores pending payout',
     description:
-      'Prepares a bank payout (external account). Does **not** call ProcessClientTransfer yet. After **POST /api/wallets/payout/confirm**, the server debits via ProcessClientTransfer (net to beneficiary bank, then fee sweep to org VA when applicable). Mandate/callbacks: **POST /api/provider/transaction-auth-callback**, **POST /api/provider/transaction-callback**.',
+      'Prepares a bank payout (external account). Does **not** call ProcessClientTransfer yet. After **POST /api/wallets/payout/confirm** with your payout PIN, the server debits via ProcessClientTransfer (net to beneficiary bank, then fee sweep to org VA when applicable). Mandate/callbacks: **POST /api/provider/transaction-auth-callback**, **POST /api/provider/transaction-callback**.',
   })
   @ApiBody({ type: InitiatePayoutDto })
   @ApiResponse({
     status: 200,
-    description: 'OTP sent successfully. Use the OTP and PIN to confirm the payout.',
+    description: 'Payout prepared. Confirm with your payout PIN within 10 minutes.',
     schema: {
       type: 'object',
       properties: {
         success: { type: 'boolean' },
         message: { type: 'string' },
         expiresIn: { type: 'string' },
+        amount: { type: 'string' },
+        destinationAccountNumber: { type: 'string' },
+        galaAdminFee: { type: 'string' },
+        netToBeneficiary: { type: 'string' },
+        nipTransferFee: { type: 'string', nullable: true },
+        estimatedTotalDebit: { type: 'string' },
       },
     },
   })
@@ -299,9 +324,9 @@ export class WalletmoduleController {
 
   @Post('payout/confirm')
   @ApiOperation({
-    summary: 'Confirm payout - Step 2: Verifies OTP and PIN, then executes the payout',
+    summary: 'Confirm payout - Step 2: Verifies PIN and executes the payout',
     description:
-      'Verifies OTP + payout PIN, then submits **ProcessClientTransfer** for the net amount (external bank) and, if a fee applies, a second transfer for the admin fee to the organization virtual account. Server builds **securityInfo** for each leg; bank auth at **POST /api/provider/transaction-auth-callback**, settlement at **POST /api/provider/transaction-callback**.',
+      'Verifies payout PIN only (no email OTP), then submits **ProcessClientTransfer** for the net amount (external bank) and, if a fee applies, a second transfer for the admin fee to the organization virtual account. Server builds **securityInfo** for each leg; bank auth at **POST /api/provider/transaction-auth-callback**, settlement at **POST /api/provider/transaction-callback**.',
   })
   @ApiBody({ type: ConfirmPayoutDto })
   @ApiResponse({
@@ -313,21 +338,27 @@ export class WalletmoduleController {
         success: { type: 'boolean' },
         message: { type: 'string' },
         transactionRef: { type: 'string' },
-        fromWalletId: { type: 'string' },
-        toAccountNumber: { type: 'string' },
-        amount: { type: 'number' },
+        status: { type: 'string' },
+        amount: { type: 'string' },
+        destinationAccountNumber: { type: 'string' },
+        destinationAccountName: { type: 'string' },
+        destinationBankCode: { type: 'string' },
+        galaAdminFee: { type: 'string' },
+        netToBeneficiary: { type: 'string' },
+        nipTransferFee: { type: 'string', nullable: true },
+        estimatedTotalDebit: { type: 'string' },
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Invalid OTP, expired OTP, or no pending payout found' })
-  @ApiResponse({ status: 401, description: 'Invalid PIN or OTP' })
+  @ApiResponse({ status: 400, description: 'No pending payout found or payout expired' })
+  @ApiResponse({ status: 401, description: 'Invalid PIN' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async confirmPayout(@Request() req: any, @Body(ValidationPipe) confirmDto: ConfirmPayoutDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
-    return this.walletmoduleService.confirmPayout(userId, confirmDto.otp, confirmDto.pin);
+    return this.walletmoduleService.confirmPayout(userId, confirmDto.pin);
   }
 
   @Put('bank-account')

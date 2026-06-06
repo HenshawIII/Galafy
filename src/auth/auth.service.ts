@@ -1,4 +1,9 @@
 import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import {
+  authConflictMessage,
+  googleLoginCredentialsConflictMessage,
+  googleLoginSignUpPromptMessage,
+} from '../common/utils/auth-conflict-messages.util.js';
 import { UsersService } from '../users/users.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { EmailService } from '../users/email.service.js';
@@ -134,7 +139,12 @@ export class AuthService {
     // Check if user already exists
     const existingUser = await this.usersService.findByEmail(user.email);
     if (existingUser) {
-      throw new UnauthorizedException('User already exists. Please use the login endpoint instead.');
+      throw new ConflictException(
+        authConflictMessage({
+          field: 'email',
+          method: existingUser.password ? 'credentials' : 'google',
+        }),
+      );
     }
 
     // Generate username from email prefix (part before @)
@@ -226,77 +236,14 @@ export class AuthService {
     // Check if user exists
     const dbUser = await this.usersService.findByEmail(user.email);
     if (!dbUser) {
-      throw new UnauthorizedException('User not found. Please use the sign up endpoint to create an account.');
+      throw new UnauthorizedException(googleLoginSignUpPromptMessage());
     }
 
-    // Rotate session:
-    // - Always allow login
-    // - Overwrite stored refresh token (old refresh tokens stop working)
-    // - Bump authSessionVersion so old access tokens are rejected immediately
-    const updatedUser = await this.databaseService.user.update({
-      where: { id: dbUser.id },
-      data: { authSessionVersion: { increment: 1 } },
-    });
-    const authSessionVersion = updatedUser.authSessionVersion;
-
-    // Remove password from response for security
-    const { password, ...userWithoutPassword } = dbUser as any;
-
-    // Generate access token (short-lived: 15 minutes)
-    const accessToken = this.jwtService.sign(
-      {
-        sub: dbUser.id,
-        email: dbUser.email,
-        firstName: dbUser.firstName || null,
-        lastName: dbUser.lastName || null,
-        type: 'access',
-        authSessionVersion,
-      },
-      {
-        expiresIn: '15m', // Access token expires in 15 minutes
-      },
-    );
-
-    // Generate refresh token (long-lived: 7 days)
-    const refreshToken = this.jwtService.sign(
-      {
-        sub: dbUser.id,
-        email: dbUser.email,
-        type: 'refresh',
-        authSessionVersion,
-      },
-      {
-        expiresIn: '7d', // Refresh token expires in 7 days
-        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, // Use separate secret if available
-      },
-    );
-
-    // Calculate refresh token expiration date
-    const refreshTokenExpiresAt = new Date();
-    refreshTokenExpiresAt.setDate(refreshTokenExpiresAt.getDate() + 7); // 7 days from now
-
-    // Store refresh token in database
-    await this.databaseService.user.update({
-      where: { id: dbUser.id },
-      data: { refreshToken, refreshTokenExpiresAt },
-    });
-
-    // Get KYC status if customer exists
-    let kycStatus: any = null;
-    try {
-      kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(dbUser.id);
-    } catch (error) {
-      // Customer might not exist yet, which is fine - return null for kycStatus
-      kycStatus = null;
+    if (dbUser.password) {
+      throw new UnauthorizedException(googleLoginCredentialsConflictMessage());
     }
 
-    return {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      user: userWithoutPassword,
-      kycStatus,
-      isVerified: String(dbUser.isVerified),
-    };
+    return this.usersService.issueLoginSession(dbUser.id);
   }
 
   /**

@@ -1,5 +1,5 @@
 import { KycTier, Tier3UpgradeStatus } from '../../../generated/prisma/enums.js';
-import { hasTier3Benefits, isTier2OrTier3WithBenefits } from './kyc-tier.util.js';
+import { canHostEvents, hasTier3Benefits, isTier2OrTier3WithBenefits } from './kyc-tier.util.js';
 
 describe('kyc-tier.util', () => {
   it('hasTier3Benefits only when tier is Tier_3 and status COMPLETED', () => {
@@ -27,6 +27,16 @@ describe('kyc-tier.util', () => {
         tier: KycTier.Tier_3,
         tier3UpgradeStatus: Tier3UpgradeStatus.PENDING,
       }),
+    ).toBe(false);
+  });
+
+  it('canHostEvents matches hasTier3Benefits', () => {
+    expect(
+      canHostEvents({ tier: KycTier.Tier_3, tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED }),
+    ).toBe(true);
+    expect(canHostEvents({ tier: KycTier.Tier_2 })).toBe(false);
+    expect(
+      canHostEvents({ tier: KycTier.Tier_3, tier3UpgradeStatus: Tier3UpgradeStatus.PENDING }),
     ).toBe(false);
   });
 });

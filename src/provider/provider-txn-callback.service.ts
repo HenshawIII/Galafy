@@ -1,6 +1,9 @@
 import { BadRequestException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
+import { buildTransactionNotificationProviderReference } from '../common/utils/provider-transaction-notification-reference.util.js';
+import { classifyTransactionNotification } from './provider-notification-classifier.util.js';
+import { ProviderNotificationLedgerService } from '../common/provider-notification/provider-notification-ledger.service.js';
 import {
   extractTransactionCallbackFields,
   mapProviderStatusToTransactionStatus,
@@ -32,6 +35,7 @@ export class ProviderTxnCallbackService {
     private readonly emailService: EmailService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly notificationLedger: ProviderNotificationLedgerService,
   ) {}
 
   private mask(value: unknown, visibleTail = 4): string {
@@ -43,29 +47,6 @@ export class ProviderTxnCallbackService {
 
   private computeSecurityInfoHash(securityInfo: string): string {
     return createHash('sha256').update(securityInfo).digest('hex');
-  }
-
-  /**
-   * Stable idempotency key for transaction-notification credits when the provider omits a unique reference.
-   */
-  private buildTransactionNotificationProviderReference(raw: any): string {
-    const explicit = raw?.reference ?? raw?.transactionId ?? raw?.platformTransactionReference;
-    if (explicit != null && String(explicit).trim() !== '') {
-      const trimmed = String(explicit).trim();
-      if (trimmed.length <= 24) {
-        return `TN-${trimmed}`;
-      }
-      return buildStableProviderRef('TN', trimmed);
-    }
-    const accountNumber = String(raw?.accountNumber ?? '').trim();
-    const amount = String(raw?.amount ?? '');
-    let td = '';
-    if (raw?.transactionDate != null && raw?.transactionDate !== '') {
-      const d = new Date(raw.transactionDate);
-      td = isNaN(d.getTime()) ? String(raw.transactionDate) : d.toISOString();
-    }
-    const narration = String(raw?.narration ?? '').trim();
-    return buildStableProviderRef('NOTIF', `${accountNumber}|${amount}|${td}|${narration}`);
   }
 
   async handleTransactionAuthCallback(raw: any): Promise<{ transactionReference: string; authorized: boolean }> {
@@ -258,11 +239,46 @@ export class ProviderTxnCallbackService {
             });
           }
         }
-        if (failMeta?.payoutAdminFeeSweep === true && typeof failMeta.adminFeeId === 'string') {
-          await tx.adminFee.update({
-            where: { id: failMeta.adminFeeId },
-            data: { status: 'REVERSED' },
-          });
+        if (failMeta?.payoutAdminFeeSweep === true) {
+          const payoutNetTxId =
+            typeof failMeta.payoutNetTransactionId === 'string' ? failMeta.payoutNetTransactionId : null;
+          if (payoutNetTxId) {
+            const payoutTxn = await tx.transaction.findUnique({
+              where: { id: payoutNetTxId },
+              select: { id: true, status: true, metadata: true },
+            });
+            if (payoutTxn?.status === TransactionStatus.SUCCESS) {
+              const feeAmount = txn.amount;
+              const sourceWallet = await tx.wallet.findUnique({
+                where: { id: txn.walletId },
+                select: { id: true, availableBalance: true, ledgerBalance: true },
+              });
+              if (sourceWallet) {
+                await tx.wallet.update({
+                  where: { id: sourceWallet.id },
+                  data: {
+                    availableBalance: sourceWallet.availableBalance.plus(feeAmount),
+                    ledgerBalance: sourceWallet.ledgerBalance.plus(feeAmount),
+                  },
+                });
+              }
+              const payoutMeta =
+                typeof payoutTxn.metadata === 'object' && payoutTxn.metadata !== null
+                  ? { ...(payoutTxn.metadata as Record<string, unknown>) }
+                  : {};
+              payoutMeta.feeSweepFailed = true;
+              await tx.transaction.update({
+                where: { id: payoutTxn.id },
+                data: { metadata: payoutMeta as any },
+              });
+            }
+          }
+          if (typeof failMeta.adminFeeId === 'string') {
+            await tx.adminFee.update({
+              where: { id: failMeta.adminFeeId },
+              data: { status: 'REVERSED' },
+            });
+          }
         }
       }
 
@@ -305,13 +321,24 @@ export class ProviderTxnCallbackService {
           throw new BadRequestException(`Source wallet not found for transaction=${transactionReference}`);
         }
 
-        await tx.wallet.update({
-          where: { id: sourceWallet.id },
-          data: {
-            availableBalance: sourceWallet.availableBalance.minus(amount),
-            ledgerBalance: sourceWallet.ledgerBalance.minus(amount),
-          },
-        });
+        const skipLedgerDebit =
+          txnDebitMeta?.inflowAdminFeeSweep === true || txnDebitMeta?.payoutAdminFeeSweep === true;
+
+        // Inclusive inflow: credit net only. Inclusive payout: debit gross once. Fee sweeps are bank legs only.
+        if (!skipLedgerDebit) {
+          await tx.wallet.update({
+            where: { id: sourceWallet.id },
+            data: {
+              availableBalance: sourceWallet.availableBalance.minus(amount),
+              ledgerBalance: sourceWallet.ledgerBalance.minus(amount),
+            },
+          });
+        } else {
+          const sweepKind = txnDebitMeta?.payoutAdminFeeSweep === true ? 'payout' : 'inflow';
+          this.logger.log(
+            `Transaction callback: ${sweepKind} admin fee sweep settled without wallet debit txRef=${this.mask(transactionReference)} amount=${amount.toString()}`,
+          );
+        }
 
         if (destinationWalletId) {
           this.logger.log(
@@ -591,14 +618,35 @@ export class ProviderTxnCallbackService {
     return { received: true };
   }
 
+  private async persistGenericNotification(
+    raw: Record<string, unknown>,
+    accountNumber: string | undefined,
+    walletId: string | null | undefined,
+    transactionTypeRaw: string | undefined,
+  ): Promise<void> {
+    await this.databaseService.providerWebhookEvent.create({
+      data: {
+        event: 'transaction-notification',
+        paymentReference: accountNumber ? `notif-${accountNumber}-${raw?.transactionDate ?? ''}` : undefined,
+        payload: {
+          ...raw,
+          walletId: walletId ?? null,
+          virtualAccountNumber: accountNumber ?? null,
+          transactionType: transactionTypeRaw ?? null,
+        },
+        processingStatus: 'PROCESSED',
+      },
+    });
+  }
+
   async handleTransactionNotification(raw: any): Promise<{ received: true }> {
     this.logger.log(`Transaction notification received: account=${this.mask(raw?.accountNumber)} transactionType=${raw?.transactionType ?? 'n/a'}`);
 
     const accountNumber: string | undefined = raw?.accountNumber?.toString()?.trim() || undefined;
     const transactionTypeRaw: string | undefined = raw?.transactionType?.toString();
-    const transactionTypeNorm = transactionTypeRaw?.trim().toLowerCase();
+    const kind = classifyTransactionNotification(raw);
     this.logger.log(
-      `Transaction notification classified: account=${this.mask(accountNumber)} direction=${transactionTypeNorm === 'credit' ? 'INFLOW' : 'NON-INFLOW'} transactionType=${transactionTypeNorm ?? 'n/a'}`,
+      `Transaction notification classified: account=${this.mask(accountNumber)} kind=${kind} transactionType=${transactionTypeRaw ?? 'n/a'}`,
     );
 
     const wallet = accountNumber
@@ -607,7 +655,149 @@ export class ProviderTxnCallbackService {
         })
       : null;
 
-    if (transactionTypeNorm === 'credit') {
+    if (kind === 'inflow_admin_fee') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for inflow admin fee debit notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for inflow admin fee debit notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : 'Admin funding fee';
+      const ledgerResult = await this.notificationLedger.recordInflowAdminFeeNotification({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Inflow admin fee notification linked: walletId=${ledgerResult.walletId} feeTxId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'payout_admin_fee') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for payout admin fee debit notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for payout admin fee debit notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : 'Admin payout fee';
+      const ledgerResult = await this.notificationLedger.recordPayoutAdminFeeNotification({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Payout admin fee notification linked: walletId=${ledgerResult.walletId} feeTxId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'payout_settlement') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for payout settlement debit notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for payout settlement debit notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : 'Payout settlement';
+      const ledgerResult = await this.notificationLedger.recordPayoutSettlementNotification({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Payout settlement notification linked: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'nip_commission' || kind === 'nip_vat' || kind === 'unclassified_debit') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for debit transaction notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for debit transaction notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : kind === 'unclassified_debit'
+            ? 'Provider debit'
+            : 'NIP transfer fee';
+
+      if (kind === 'unclassified_debit') {
+        const linked = await this.notificationLedger.tryLinkUnclassifiedProcessClientTransfer({
+          accountNumber,
+          amount: normalizeToKobo(amountRaw),
+          narration,
+          kind,
+          raw: raw as Record<string, unknown>,
+        });
+        if (linked) {
+          this.logger.log(
+            `Unclassified debit linked to internal transfer: walletId=${linked.walletId} txId=${linked.transactionId} ref=${this.mask(linked.providerReference)} duplicate=${linked.isDuplicate}`,
+          );
+          return { received: true };
+        }
+      }
+
+      const ledgerResult = await this.notificationLedger.recordNotificationDebit({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `Debit notification ledger: kind=${kind} walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'nip_reversal') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for NIP reversal notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for NIP reversal notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim() ? raw.narration.trim() : 'NIP transfer reversal';
+      const ledgerResult = await this.notificationLedger.recordNipReversalCredit({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
+      this.logger.log(
+        `NIP reversal notification ledger: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+      );
+      return { received: true };
+    }
+
+    if (kind === 'bank_inflow') {
       this.logger.log(
         `Transaction notification inflow path entered: account=${this.mask(accountNumber)} rawAmount=${raw?.amount != null ? String(raw.amount) : 'n/a'}`,
       );
@@ -625,7 +815,7 @@ export class ProviderTxnCallbackService {
 
       const grossAmount = normalizeToKobo(amountRaw);
       const providerFee = normalizeToKobo(0);
-      const providerReference = this.buildTransactionNotificationProviderReference(raw);
+      const providerReference = buildTransactionNotificationProviderReference(raw);
       const narration =
         typeof raw?.narration === 'string' && raw.narration.trim() ? raw.narration.trim() : 'Inflow payment';
 
@@ -735,24 +925,18 @@ export class ProviderTxnCallbackService {
       return { received: true };
     }
 
-    this.logger.log(
-      `Transaction notification persisted as generic provider event: account=${this.mask(accountNumber)} transactionType=${transactionTypeNorm ?? 'n/a'}`,
+    if (kind === 'unknown_notification') {
+      this.logger.warn(
+        `Unknown transaction-notification (missing or invalid transactionType): account=${this.mask(accountNumber)} transactionType=${transactionTypeRaw ?? 'n/a'}`,
+      );
+      await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
+      return { received: true };
+    }
+
+    this.logger.warn(
+      `Unhandled transaction-notification kind=${kind} account=${this.mask(accountNumber)} — persisting generic event`,
     );
-
-    await this.databaseService.providerWebhookEvent.create({
-      data: {
-        event: 'transaction-notification',
-        paymentReference: accountNumber ? `notif-${accountNumber}-${raw?.transactionDate ?? ''}` : undefined,
-        payload: {
-          ...raw,
-          walletId: wallet?.id ?? null,
-          virtualAccountNumber: accountNumber ?? null,
-          transactionType: transactionTypeRaw ?? null,
-        },
-        processingStatus: 'PROCESSED',
-      },
-    });
-
+    await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
     return { received: true };
   }
 }

@@ -39,11 +39,11 @@ export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new event (requires KYC Tier_2 or Tier_3)' })
+  @ApiOperation({ summary: 'Create a new event (requires approved KYC Tier 3)' })
   @ApiBody({ type: CreateEventDto })
   @ApiResponse({ status: 201, description: 'Event created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid event data' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Requires KYC Tier_2 or Tier_3 to create events' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Requires approved KYC Tier 3 to host events' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async createEvent(@Request() req: any, @Body(ValidationPipe) createEventDto: CreateEventDto) {
     const userId = req.user?.id;
