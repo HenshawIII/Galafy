@@ -21,6 +21,7 @@ import { Prisma } from '@prisma/client';
 import { InflowCreditService } from '../common/inflow-credit/inflow-credit.service.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
+import { resolvePayoutSourceWalletDebitAmount } from '../common/utils/payout-notification.util.js';
 import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 
@@ -283,10 +284,11 @@ export class ProviderTxnCallbackService {
       }
 
       if (mappedStatus === TransactionStatus.SUCCESS && previousStatus !== TransactionStatus.SUCCESS) {
-        this.logger.log(
-          `Transaction callback success branch: debit settlement started txRef=${this.mask(transactionReference)} amount=${txn.amount.toString()}`,
-        );
         const amount = txn.amount;
+        const sourceWalletDebitAmount = resolvePayoutSourceWalletDebitAmount(txn);
+        this.logger.log(
+          `Transaction callback success branch: debit settlement started txRef=${this.mask(transactionReference)} recordAmount=${amount.toString()} walletDebit=${sourceWalletDebitAmount.toString()}`,
+        );
         const sourceWalletId = txn.walletId;
         const txnDebitMeta =
           typeof txn.metadata === 'object' && txn.metadata !== null
@@ -329,8 +331,8 @@ export class ProviderTxnCallbackService {
           await tx.wallet.update({
             where: { id: sourceWallet.id },
             data: {
-              availableBalance: sourceWallet.availableBalance.minus(amount),
-              ledgerBalance: sourceWallet.ledgerBalance.minus(amount),
+              availableBalance: sourceWallet.availableBalance.minus(sourceWalletDebitAmount),
+              ledgerBalance: sourceWallet.ledgerBalance.minus(sourceWalletDebitAmount),
             },
           });
         } else {

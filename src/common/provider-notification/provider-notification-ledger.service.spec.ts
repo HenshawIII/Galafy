@@ -175,7 +175,7 @@ describe('ProviderNotificationLedgerService', () => {
       id: 'payout-tx-1',
       walletId: 'w1',
       status: 'SUCCESS',
-      amount: new Decimal(1000),
+      amount: new Decimal(970),
       metadata: { payoutNetAmount: '970.00', payoutGrossAmount: '1000.00' },
       reference: 'TXN-abc123',
       type: 'PAYOUT',
