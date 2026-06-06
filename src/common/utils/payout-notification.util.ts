@@ -1,8 +1,32 @@
+import { Decimal } from '@prisma/client/runtime/library';
+import { TransactionType } from '../../../generated/prisma/enums.js';
+import { normalizeToKobo } from './money.util.js';
+
 /**
  * Detect and parse provider debit notifications for Gala payout / transfer ProcessClientTransfer legs.
- * Inclusive payout: user ledger debits gross once on the main TXN callback; net (970) and admin fee (30)
- * are separate bank transfers that must not debit the wallet again.
+ * Inclusive payout: PAYOUT row stores net (970); callback debits gross (1000) once; fee sweep (30) is a
+ * separate visible row and bank leg that must not debit the wallet again.
  */
+
+/**
+ * Amount to subtract from the source wallet on payout TXN callback success.
+ * DB/display amount is net; wallet debit is gross when payoutGrossAmount metadata is present.
+ */
+export function resolvePayoutSourceWalletDebitAmount(txn: {
+  amount: Decimal;
+  type: TransactionType;
+  metadata: unknown;
+}): Decimal {
+  if (txn.type !== TransactionType.PAYOUT) {
+    return txn.amount;
+  }
+  const meta = typeof txn.metadata === 'object' && txn.metadata !== null ? (txn.metadata as Record<string, unknown>) : null;
+  const gross = meta?.payoutGrossAmount;
+  if (typeof gross === 'string' && gross.trim()) {
+    return normalizeToKobo(gross);
+  }
+  return txn.amount;
+}
 
 const PAYOUT_ADMIN_FEE_NARRATION = /ADMIN\s+PAYOUT\s+FEE/i;
 const PAYOUT_SETTLEMENT_NARRATION = /WALLET\s+PAYOUT\s+TO/i;
