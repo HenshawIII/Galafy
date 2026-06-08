@@ -17,6 +17,10 @@ import type {
   AlatPartnerAccountUpgradeResponse,
   AlatPartnerAccountKycStatusResponse,
 } from './dto/provider-account-upgrade.dto.js';
+import type {
+  ProviderAccountDetailsResult,
+  ProviderTransactionHistoryItem,
+} from './dto/provider-account-maintenance.dto.js';
 import { config } from 'dotenv';
 config();
 
@@ -30,6 +34,7 @@ export class ProviderService {
   private readonly kycBaseUrl: string;
   private readonly debitWalletBaseUrl: string;
   private readonly accountUpgradeBaseUrl: string;
+  private readonly accountMaintenanceBaseUrl: string;
   private readonly kycSubscriptionKey: string;
   /** Cache for Alat GetDropDownList (countryModel). TTL 1 hour. */
   private dropdownCache: { data: AlatCountryModel; expiresAt: number } | null = null;
@@ -88,6 +93,14 @@ export class ProviderService {
         : `${hostOnly(accountUpgradeEnv)}${accountUpgradePathSuffix}`
       : `${gateway}${accountUpgradePathSuffix}`;
 
+    const accountMaintenancePathSuffix = '/ws-acct-mgt/api';
+    const accountMaintenanceEnv = process.env.PROVIDER_ACCOUNT_MAINTENANCE_BASE_URL?.replace(/\/$/, '');
+    this.accountMaintenanceBaseUrl = accountMaintenanceEnv
+      ? accountMaintenanceEnv.toLowerCase().endsWith(accountMaintenancePathSuffix)
+        ? accountMaintenanceEnv
+        : `${hostOnly(accountMaintenanceEnv)}${accountMaintenancePathSuffix}`
+      : `${gateway}${accountMaintenancePathSuffix}`;
+
     this.kycSubscriptionKey = process.env.PROVIDER_KYC_SUBSCRIPTION_KEY || '';
 
     if (!this.apiKey) {
@@ -117,6 +130,23 @@ export class ProviderService {
     const base = this.accountUpgradeBaseUrl.replace(/\/$/, '');
     const p = path.startsWith('/') ? path : `/${path}`;
     return `${base}${p}`;
+  }
+
+  private buildAccountMaintenanceUrl(path: string): string {
+    const base = this.accountMaintenanceBaseUrl.replace(/\/$/, '');
+    const p = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${p}`;
+  }
+
+  private accountMaintenanceErrorMessage(parsed: unknown): string {
+    if (typeof parsed !== 'object' || parsed === null) {
+      return 'Account maintenance request failed';
+    }
+    const o = parsed as { message?: string };
+    if (typeof o.message === 'string' && o.message.trim()) {
+      return o.message;
+    }
+    return 'Account maintenance request failed';
   }
 
   private accountUpgradeErrorMessage(parsed: unknown): string {
@@ -238,6 +268,99 @@ export class ProviderService {
       if (this.isRecord(data) && data.hasError === true) {
         const msg = this.debitWalletErrorMessage(data);
         this.logger.error(`${logLabel} hasError: ${JSON.stringify(data)}`);
+        throw new BadRequestException(msg);
+      }
+
+      if (this.isRecord(data) && 'result' in data) {
+        return data.result as T;
+      }
+
+      this.logger.warn(`${logLabel}: response missing result envelope, returning parsed body`);
+      return data as T;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(`${logLabel} failed: ${(error as Error)?.message ?? String(error)}`);
+      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+  }
+
+  /**
+   * ALAT ws-acct-mgt API: `access` + `Ocp-Apim-Subscription-Key`, envelope with `successful` / `result`.
+   */
+  private async makeAccountMaintenanceRequest<T>(
+    pathOrOptions: string | { absoluteUrl: string },
+    method: 'GET' | 'POST',
+    options?: {
+      body?: unknown;
+      contentType?: string;
+      logLabel?: string;
+    },
+  ): Promise<T> {
+    const url =
+      typeof pathOrOptions === 'string' ? this.buildAccountMaintenanceUrl(pathOrOptions) : pathOrOptions.absoluteUrl;
+    const logLabel = options?.logLabel ?? 'Account-maintenance API';
+    const access = this.getDebitWalletAccessKey();
+    const apim = this.getDebitWalletApimKey();
+    const headers: Record<string, string> = {
+      access,
+      'Cache-Control': 'no-cache',
+      'Ocp-Apim-Subscription-Key': apim,
+    };
+    if (method === 'POST') {
+      headers['Content-Type'] = options?.contentType ?? 'application/json';
+    }
+
+    try {
+      this.logger.debug(`Making ${method} ${logLabel}: ${url}`);
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: method === 'POST' && options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+      });
+
+      const responseText = await response.text();
+      if (!responseText || responseText.trim().length === 0) {
+        this.logger.error(`${logLabel} empty response. HTTP ${response.status} ${response.statusText || ''}`.trim());
+        if (response.status >= 500) {
+          this.logUpstream5xx(logLabel, response, responseText);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException(`${logLabel} returned an empty response`, response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      let data: unknown;
+      try {
+        data = JSON.parse(responseText) as unknown;
+      } catch {
+        this.logger.error(
+          `${logLabel} invalid JSON. HTTP ${response.status} ${response.statusText || ''}. Body: ${this.truncateForLog(responseText)}`.trim(),
+        );
+        if (response.status >= 500) {
+          this.logUpstream5xx(logLabel, response, responseText);
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException('Invalid response from payment partner', HttpStatus.BAD_REQUEST);
+      }
+
+      if (!response.ok) {
+        const detail =
+          typeof data === 'string'
+            ? this.truncateForLog(data, 4000)
+            : this.truncateForLog(JSON.stringify(data), 4000);
+        this.logger.error(
+          `${logLabel}: upstream HTTP ${response.status} ${response.statusText || ''}. Provider response body: ${detail}`.trim(),
+        );
+        if (response.status >= 500) {
+          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw new HttpException(this.accountMaintenanceErrorMessage(data), response.status || HttpStatus.BAD_REQUEST);
+      }
+
+      if (this.isRecord(data) && data.successful === false) {
+        const msg = this.accountMaintenanceErrorMessage(data);
+        this.logger.error(`${logLabel} unsuccessful: ${JSON.stringify(data)}`);
         throw new BadRequestException(msg);
       }
 
@@ -689,5 +812,46 @@ export class ProviderService {
       body: request,
       logLabel: 'Debit-wallet ProcessClientTransfer',
     });
+  }
+
+  /**
+   * Provider wallet account details (GetAccountV2) for admin reconciliation.
+   */
+  async getProviderAccountDetails(accountNumber: string): Promise<ProviderAccountDetailsResult> {
+    this.logger.log(`Provider account maintenance wallet details: account=${this.mask(accountNumber)}`);
+    const enc = encodeURIComponent(accountNumber);
+    return this.makeAccountMaintenanceRequest<ProviderAccountDetailsResult>(
+      `/AccountMaintenance/CustomerAccount/GetAccountV2/accountNumber/${enc}`,
+      'GET',
+      { logLabel: 'Account-maintenance GetAccountV2' },
+    );
+  }
+
+  /**
+   * Provider wallet transaction history (transhistoryV2) for admin reconciliation.
+   */
+  async getProviderTransactionHistory(params: {
+    accountNumber: string;
+    from: string;
+    to: string;
+    keyWord?: string;
+  }): Promise<ProviderTransactionHistoryItem[]> {
+    this.logger.log(
+      `Provider account maintenance transaction history: account=${this.mask(params.accountNumber)} from=${params.from} to=${params.to}`,
+    );
+    const result = await this.makeAccountMaintenanceRequest<ProviderTransactionHistoryItem[]>(
+      '/AccountMaintenance/CustomerAccount/transhistoryV2',
+      'POST',
+      {
+        body: {
+          accountNumber: params.accountNumber,
+          from: params.from,
+          to: params.to,
+          keyWord: params.keyWord ?? '',
+        },
+        logLabel: 'Account-maintenance transhistoryV2',
+      },
+    );
+    return Array.isArray(result) ? result : [];
   }
 }

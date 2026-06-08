@@ -54,6 +54,9 @@ import { normalizeToKobo } from '../common/utils/money.util.js';
 import { Prisma } from '@prisma/client';
 import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
+import { WalletReconciliationService } from '../common/wallet-reconciliation/wallet-reconciliation.service.js';
+import { ProviderService } from '../provider/provider.service.js';
+import { ProviderTransactionHistoryQueryDto } from '../provider/dto/provider-account-maintenance.dto.js';
 
 @Injectable()
 export class AdminService {
@@ -70,6 +73,8 @@ export class AdminService {
     private readonly internalLedgerTransfer: InternalLedgerTransferService,
     private readonly organizationWalletService: OrganizationWalletService,
     private readonly customerKycService: CustomerKycService,
+    private readonly walletReconciliationService: WalletReconciliationService,
+    private readonly providerService: ProviderService,
   ) {}
 
   /**
@@ -761,6 +766,21 @@ export class AdminService {
       },
     });
 
+    let walletsWithSnapshots = user.customer?.wallets ?? [];
+    if (user.customer?.wallets?.length) {
+      walletsWithSnapshots = await Promise.all(
+        user.customer.wallets.map(async (wallet) => ({
+          ...wallet,
+          providerBalanceSnapshot: await this.walletReconciliationService.buildProviderBalanceSnapshot({
+            id: wallet.id,
+            availableBalance: wallet.availableBalance,
+            ledgerBalance: wallet.ledgerBalance,
+            virtualAccountNumber: wallet.virtualAccountNumber,
+          }),
+        })),
+      );
+    }
+
     return {
       id: user.id,
       email: user.email,
@@ -770,9 +790,111 @@ export class AdminService {
       customer: user.customer
         ? {
             ...user.customer,
+            wallets: walletsWithSnapshots,
             transactions: transactions,
           }
         : null,
+    };
+  }
+
+  /**
+   * Admin wallet lookup by virtual account number with provider balance snapshot.
+   */
+  async getWalletByAccountNumber(accountNumber: string) {
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: accountNumber },
+      include: {
+        customer: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
+
+    const providerBalanceSnapshot = await this.walletReconciliationService.buildProviderBalanceSnapshot({
+      id: wallet.id,
+      availableBalance: wallet.availableBalance,
+      ledgerBalance: wallet.ledgerBalance,
+      virtualAccountNumber: wallet.virtualAccountNumber,
+    });
+
+    return {
+      ...wallet,
+      providerBalanceSnapshot,
+    };
+  }
+
+  /**
+   * Provider wallet account details with reconciliation snapshot (admin).
+   */
+  async getProviderWalletAccount(accountNumber: string) {
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: accountNumber },
+      select: {
+        id: true,
+        availableBalance: true,
+        ledgerBalance: true,
+        virtualAccountNumber: true,
+      },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
+
+    const providerAccount = await this.walletReconciliationService.fetchProviderAccountDetailsFresh(accountNumber);
+    const providerBalanceSnapshot = await this.walletReconciliationService.buildProviderBalanceSnapshot({
+      id: wallet.id,
+      availableBalance: wallet.availableBalance,
+      ledgerBalance: wallet.ledgerBalance,
+      virtualAccountNumber: wallet.virtualAccountNumber,
+    });
+
+    return {
+      providerAccount,
+      providerBalanceSnapshot,
+    };
+  }
+
+  /**
+   * Provider wallet transaction history (admin proxy).
+   */
+  async getProviderWalletHistory(accountNumber: string, query: ProviderTransactionHistoryQueryDto) {
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: accountNumber },
+      select: { id: true },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
+
+    const transactions = await this.providerService.getProviderTransactionHistory({
+      accountNumber,
+      from: query.from,
+      to: query.to,
+      keyWord: query.keyWord,
+    });
+
+    return {
+      accountNumber,
+      from: query.from,
+      to: query.to,
+      keyWord: query.keyWord ?? '',
+      transactions,
+      count: transactions.length,
     };
   }
 

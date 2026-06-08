@@ -196,7 +196,16 @@ export class UsersController {
         lastName: 'Doe',
         walletStatus: 'active',
         isPinSet: true,
-        kycStatus: { tier: 'Tier_1' },
+        kycStatus: {
+          tier: 'Tier_1',
+          partnerAccount: {
+            accountNumber: '0446920038',
+            accountName: 'AYOMIDE ADEBAYO',
+            accountTier: 'Tier 2 Partnership Account',
+            accountStatus: 'ACTIVE',
+            restrictionStatus: null,
+          },
+        },
       },
     },
   })

@@ -357,7 +357,9 @@ export class UsersService {
 
     let kycStatus: unknown = null;
     try {
-      kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(user.id);
+      kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(user.id, {
+        includePartnerAccountStatus: false,
+      });
     } catch {
       kycStatus = null;
     }
@@ -707,11 +709,13 @@ export class UsersService {
           username: user.username,
         };
 
-    // Get KYC status from our local KYC service (enriched with partnership account details)
+    // Local KYC + partner account status from account-upgrade API (not on login — reduces provider calls).
     let kycStatus: any = null;
     try {
       if (customer) {
-        kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(userId);
+        kycStatus = await this.customerKycService.getCustomerKycStatusByUserId(userId, {
+          includePartnerAccountStatus: true,
+        });
       } else {
         // Implicit Tier_0 when user exists but no customer profile has been created yet.
         kycStatus = {

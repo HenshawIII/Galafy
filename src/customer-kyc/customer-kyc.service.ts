@@ -487,21 +487,25 @@ export class CustomerKycService {
   /**
    * Get partnership account details (optional phoneNumber; defaults to current user's phone).
    */
-  async getAccountDetails(
-    userId: string,
-    phoneNumber?: string,
-  ): Promise<{
-    accountNumber?: string;
-    firstName?: string;
-    lastName?: string;
-    email?: string;
-    phoneNumber?: string;
+  async getAccountDetails(userId: string): Promise<{
+    accountNumber: string | null;
+    accountName: string | null;
+    accountTier: string | null;
+    accountStatus: string | null;
+    restrictionStatus: string | null;
   } | null> {
-    const phone =
-      phoneNumber ??
-      (await this.databaseService.user.findUnique({ where: { id: userId } }))?.phone ??
-      (await this.databaseService.customer.findFirst({ where: { userId } }))?.mobileNumber;
-    return this.providerService.getPartnershipAccountDetails(phone ?? undefined);
+    const customerId = await this.getCustomerIdByUserId(userId);
+    const data = await this.fetchPartnerAccountKycStatus(customerId);
+    if (!data) {
+      return null;
+    }
+    return {
+      accountNumber: data.accountNumber?.trim() || null,
+      accountName: data.accountName?.trim() || null,
+      accountTier: data.accountTier?.trim() || null,
+      accountStatus: data.accountStatus?.trim() || null,
+      restrictionStatus: data.restrictionStatus?.trim() || null,
+    };
   }
 
   /**
@@ -736,15 +740,21 @@ export class CustomerKycService {
   /**
    * Get customer KYC status by userId
    */
-  async getCustomerKycStatusByUserId(userId: string) {
+  async getCustomerKycStatusByUserId(
+    userId: string,
+    options?: { includePartnerAccountStatus?: boolean },
+  ) {
     const customerId = await this.getCustomerIdByUserId(userId);
-    return this.getCustomerKycStatus(customerId);
+    return this.getCustomerKycStatus(customerId, options);
   }
 
   /**
-   * Get customer KYC status (local + optional ALAT account details)
+   * Get customer KYC status (local DB; optional partner account KYC from account-upgrade API).
    */
-  async getCustomerKycStatus(customerId: string) {
+  async getCustomerKycStatus(
+    customerId: string,
+    options?: { includePartnerAccountStatus?: boolean },
+  ) {
     const customer = await this.databaseService.customer.findUnique({
       where: { id: customerId },
       include: {
@@ -777,41 +787,30 @@ export class CustomerKycService {
       hasAddressVerification: !!customer.addressVerification,
     };
 
-    let partnerKyc: AlatPartnerAccountKycStatusData | undefined;
+    if (!options?.includePartnerAccountStatus) {
+      return base;
+    }
+
     try {
       const accountNumber = resolvePartnershipAccountNumber(customer);
       const res = await this.providerService.getPartnerAccountKycStatus(accountNumber);
-      if (res.data) {
-        partnerKyc = res.data;
+      const data = res.data;
+      if (!data) {
+        return base;
       }
-    } catch (error) {
-      this.logger.warn(`Could not fetch partner KYC status: ${(error as Error).message}`);
-    }
-
-    const phone = customer.mobileNumber || customer.user?.phone;
-    if (!phone) {
-      return { ...base, ...(partnerKyc ? { partnerKyc } : {}) };
-    }
-
-    try {
-      const accountDetails = await this.providerService.getPartnershipAccountDetails(phone);
       return {
         ...base,
-        accountNumber: accountDetails?.accountNumber,
-        partnershipAccount: accountDetails
-          ? {
-              accountNumber: accountDetails.accountNumber,
-              firstName: accountDetails.firstName,
-              lastName: accountDetails.lastName,
-              email: accountDetails.email,
-              phoneNumber: accountDetails.phoneNumber,
-            }
-          : undefined,
-        ...(partnerKyc ? { partnerKyc } : {}),
+        partnerAccount: {
+          accountNumber: data.accountNumber?.trim() || accountNumber,
+          accountName: data.accountName?.trim() || null,
+          accountTier: data.accountTier?.trim() || null,
+          accountStatus: data.accountStatus?.trim() || null,
+          restrictionStatus: data.restrictionStatus?.trim() || null,
+        },
       };
     } catch (error) {
-      this.logger.debug(`Could not fetch partnership account details: ${(error as Error).message}`);
-      return { ...base, ...(partnerKyc ? { partnerKyc } : {}) };
+      this.logger.warn(`Could not fetch partner account KYC status: ${(error as Error).message}`);
+      return base;
     }
   }
 }
