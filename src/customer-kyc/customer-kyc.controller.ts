@@ -212,13 +212,15 @@ export class CustomerKycController {
   }
 
   @Get('account-details')
-  @ApiOperation({ summary: 'Get partnership account details' })
-  @ApiQuery({ name: 'phoneNumber', required: false })
-  @ApiResponse({ status: 200, description: 'Account details (accountNumber, firstName, lastName, email, phoneNumber)' })
-  async getAccountDetails(@Request() req: any, @Query('phoneNumber') phoneNumber?: string) {
+  @ApiOperation({ summary: 'Get partner account KYC status from account-upgrade API' })
+  @ApiResponse({
+    status: 200,
+    description: 'Partner account status (accountNumber, accountName, accountTier, accountStatus, restrictionStatus)',
+  })
+  async getAccountDetails(@Request() req: any) {
     const userId = req.user?.id;
     if (!userId) throw new Error('User ID is required. Please ensure you are authenticated.');
-    return this.customerKycService.getAccountDetails(userId, phoneNumber);
+    return this.customerKycService.getAccountDetails(userId);
   }
 
   @Post('kyc/tier2')

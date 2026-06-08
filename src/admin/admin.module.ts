@@ -10,6 +10,8 @@ import { WalletmoduleModule } from '../walletmodule/walletmodule.module.js';
 import { InternalLedgerModule } from '../common/internal-ledger/internal-ledger.module.js';
 import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 import { AccountRestrictionNotifyModule } from '../common/account-restriction/account-restriction-notify.module.js';
+import { WalletReconciliationModule } from '../common/wallet-reconciliation/wallet-reconciliation.module.js';
+import { ProviderModule } from '../provider/provider.module.js';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { AccountRestrictionNotifyModule } from '../common/account-restriction/ac
     WalletmoduleModule, // Exports OrganizationWalletService for AdminService
     InternalLedgerModule,
     CustomerKycModule,
+    WalletReconciliationModule,
+    ProviderModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

@@ -53,6 +53,7 @@ import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
 import { GetNotificationsDto } from './dto/notifications-management.dto.js';
 import { NormalizeArrayQueryPipe } from './pipes/normalize-array-query.pipe.js';
+import { ProviderTransactionHistoryQueryDto } from '../provider/dto/provider-account-maintenance.dto.js';
 
 @ApiTags('admin')
 @Controller('admin')
@@ -392,6 +393,50 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async getUserDetails(@Param('userId') userId: string) {
     return this.adminService.getUserDetails(userId);
+  }
+
+  @Get('wallets/account/:accountNumber')
+  @RequirePermission(PERMISSIONS.VIEW_WALLETS)
+  @ApiOperation({
+    summary: 'Get wallet by account number (admin)',
+    description:
+      'Returns internal wallet record with provider balance snapshot for reconciliation. Internal balances remain authoritative.',
+  })
+  @ApiParam({ name: 'accountNumber', description: 'Wallet virtual account number' })
+  @ApiResponse({ status: 200, description: 'Wallet retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  async getWalletByAccountNumber(@Param('accountNumber') accountNumber: string) {
+    return this.adminService.getWalletByAccountNumber(accountNumber);
+  }
+
+  @Get('wallets/account/:accountNumber/provider')
+  @RequirePermission(PERMISSIONS.VIEW_WALLETS)
+  @ApiOperation({
+    summary: 'Get provider wallet account details',
+    description: 'Proxies provider GetAccountV2 and returns reconciliation snapshot alongside raw provider data.',
+  })
+  @ApiParam({ name: 'accountNumber', description: 'Wallet virtual account number' })
+  @ApiResponse({ status: 200, description: 'Provider wallet details retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  async getProviderWalletAccount(@Param('accountNumber') accountNumber: string) {
+    return this.adminService.getProviderWalletAccount(accountNumber);
+  }
+
+  @Post('wallets/account/:accountNumber/provider-history')
+  @RequirePermission(PERMISSIONS.VIEW_WALLETS)
+  @ApiOperation({
+    summary: 'Get provider wallet transaction history',
+    description: 'Proxies provider transhistoryV2 for admin reconciliation. Does not replace internal Gala history.',
+  })
+  @ApiParam({ name: 'accountNumber', description: 'Wallet virtual account number' })
+  @ApiBody({ type: ProviderTransactionHistoryQueryDto })
+  @ApiResponse({ status: 200, description: 'Provider transaction history retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  async getProviderWalletHistory(
+    @Param('accountNumber') accountNumber: string,
+    @Body(ValidationPipe) body: ProviderTransactionHistoryQueryDto,
+  ) {
+    return this.adminService.getProviderWalletHistory(accountNumber, body);
   }
 
   @Post('users/:userId/send-kyc-reminder')
