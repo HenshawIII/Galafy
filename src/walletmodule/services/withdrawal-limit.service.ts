@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
 import { KycTier, Tier3UpgradeStatus } from '../../../generated/prisma/enums.js';
+import { ProviderAccountStatusService } from '../../common/provider-account-status/provider-account-status.service.js';
 import { TierLimitService } from '../../common/services/tier-limit.service.js';
 
 /**
@@ -8,15 +9,19 @@ import { TierLimitService } from '../../common/services/tier-limit.service.js';
  */
 @Injectable()
 export class WithdrawalLimitService {
-  constructor(private readonly tierLimitService: TierLimitService) {}
+  constructor(
+    private readonly tierLimitService: TierLimitService,
+    private readonly providerAccountStatusService: ProviderAccountStatusService,
+  ) {}
 
   async validatePayoutForTier(
     customer: { tier: KycTier; tier3UpgradeStatus?: Tier3UpgradeStatus | null },
     customerId: string,
     amount: Decimal,
   ): Promise<void> {
+    await this.providerAccountStatusService.assertProviderAllowsOutbound(customerId);
     const row = await this.tierLimitService.getCustomerForLimits(customerId);
-    this.tierLimitService.assertOutboundAllowed(row);
+    this.tierLimitService.assertInternalOutboundAllowed(row);
     await this.tierLimitService.assertDailySpendAllowed(customerId, amount);
   }
 

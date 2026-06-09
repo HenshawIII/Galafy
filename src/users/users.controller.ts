@@ -185,7 +185,7 @@ export class UsersController {
   }
 
   @Get(':id/details')
-  @ApiOperation({ summary: 'Get user details with KYC status, isPinSet, accountLimits, and walletStatus' })
+  @ApiOperation({ summary: 'Get user details with KYC status, isPinSet, accountLimits, and internalWalletStatus' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
     status: 200,
@@ -194,7 +194,7 @@ export class UsersController {
       example: {
         firstName: 'John',
         lastName: 'Doe',
-        walletStatus: 'active',
+        internalWalletStatus: 'active',
         isPinSet: true,
         kycStatus: {
           tier: 'Tier_1',

@@ -22,6 +22,10 @@ import { InflowCreditService } from '../common/inflow-credit/inflow-credit.servi
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { resolvePayoutSourceWalletDebitAmount } from '../common/utils/payout-notification.util.js';
+import {
+  buildWithdrawalPushNotification,
+  resolveWithdrawalDisplayAmount,
+} from '../common/utils/withdrawal-notification.util.js';
 import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 
@@ -129,6 +133,7 @@ export class ProviderTxnCallbackService {
         transactionReference: string;
         destinationAccountNumber: string | null;
         firstName?: string;
+        kind: 'WITHDRAWAL_SUCCESS' | 'WITHDRAWAL_FAILED';
       } | null;
     } = { v: null };
 
@@ -279,6 +284,32 @@ export class ProviderTxnCallbackService {
               where: { id: failMeta.adminFeeId },
               data: { status: 'REVERSED' },
             });
+          }
+        }
+
+        const suppressDebitFailNotify =
+          failMeta?.payoutAdminFeeSweep === true || failMeta?.inflowAdminFeeSweep === true;
+        if (!suppressDebitFailNotify) {
+          const payerWallet = await tx.wallet.findUnique({
+            where: { id: txn.walletId },
+            include: {
+              customer: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          });
+          if (payerWallet?.customer?.userId) {
+            notifyHolder.v = {
+              userId: payerWallet.customer.userId,
+              email: payerWallet.customer.user?.email ?? null,
+              amountFormatted: resolveWithdrawalDisplayAmount(txn.amount, txn.metadata),
+              transactionReference,
+              destinationAccountNumber: txn.destinationAccountNumber,
+              firstName: payerWallet.customer.user?.firstName ?? payerWallet.customer.firstName ?? undefined,
+              kind: 'WITHDRAWAL_FAILED',
+            };
           }
         }
       }
@@ -566,10 +597,11 @@ export class ProviderTxnCallbackService {
           notifyHolder.v = {
             userId: payerWallet.customer.userId,
             email: payerWallet.customer.user?.email ?? null,
-            amountFormatted: amount.toFixed(2),
+            amountFormatted: resolveWithdrawalDisplayAmount(txn.amount, txn.metadata),
             transactionReference,
             destinationAccountNumber: txn.destinationAccountNumber,
             firstName: payerWallet.customer.user?.firstName ?? payerWallet.customer.firstName ?? undefined,
+            kind: 'WITHDRAWAL_SUCCESS',
           };
         }
 
@@ -582,12 +614,13 @@ export class ProviderTxnCallbackService {
     const n = notifyHolder.v;
     if (n) {
       const destDisplay = n.destinationAccountNumber || 'Recipient';
+      const emailStatus = n.kind === 'WITHDRAWAL_SUCCESS' ? 'success' : 'failed';
       if (n.email) {
         this.emailService
           .sendWithdrawalStatusAlert(
             n.email,
             n.amountFormatted,
-            'success',
+            emailStatus,
             destDisplay,
             n.transactionReference,
             data?.narration ?? undefined,
@@ -596,24 +629,19 @@ export class ProviderTxnCallbackService {
             new Date(),
           )
           .catch((error) => {
-            this.logger.error(`Failed to send transfer success email: ${error.message}`);
+            this.logger.error(`Failed to send transfer status email: ${error.message}`);
           });
       }
       try {
-        await this.notificationsService.sendNotificationIfEnabled(n.userId, {
-          notification: {
-            title: 'Transfer successful',
-            body: `Your transfer of ₦${n.amountFormatted} completed`,
-          },
-          data: {
-            type: 'TRANSFER_SUCCESS',
-            amount: n.amountFormatted,
-            reference: n.transactionReference,
-            destinationAccountNumber: n.destinationAccountNumber || '',
-          },
+        const payload = buildWithdrawalPushNotification({
+          kind: n.kind,
+          amountFormatted: n.amountFormatted,
+          transactionReference: n.transactionReference,
+          destinationAccountNumber: n.destinationAccountNumber,
         });
+        await this.notificationsService.sendNotificationIfEnabled(n.userId, payload);
       } catch (e: any) {
-        this.logger.warn(`Failed to send transfer success push: ${e.message}`);
+        this.logger.warn(`Failed to send transfer push (${n.kind}): ${e.message}`);
       }
     }
 

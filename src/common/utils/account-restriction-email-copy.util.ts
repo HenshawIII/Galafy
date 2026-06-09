@@ -1,4 +1,4 @@
-export type AccountRestrictionKind = 'aml' | 'balance' | 'risk_soft' | 'risk_hard';
+export type AccountRestrictionKind = 'aml' | 'balance' | 'risk_soft' | 'risk_hard' | 'provider';
 
 export type AccountRestrictionEmailCopy = {
   subject: string;
@@ -62,6 +62,23 @@ export function getAccountRestrictionEmailCopy(kind: AccountRestrictionKind): Ac
           'Contact support if you believe this is an error',
         ],
         signOffTeam: 'The Galafy Security Team',
+      };
+    case 'provider':
+      return {
+        subject: 'Important: Wallet Account Restricted - Galafy',
+        textIntro:
+          'Your bank partnership wallet account has been marked inactive. Outbound transfers are not available until your account is restored with the bank.',
+        htmlIntro:
+          'We are writing to inform you that your <strong>bank partnership wallet account has been marked inactive</strong>. <strong>Outbound transfers are restricted</strong> until your account is restored.',
+        warningTitle: 'Bank account restriction',
+        warningBody:
+          'Your wallet account is inactive at the bank (for example due to tier limit violations). You may still receive inbound transfers, but payouts and other outbound transfers are blocked.',
+        bullets: [
+          'Outbound transfers and payouts are temporarily unavailable',
+          'Inbound transfers and funding may still be accepted',
+          'Contact support or complete any required tier upgrade to restore outbound access',
+        ],
+        signOffTeam: 'The Galafy Team',
       };
     case 'aml':
     default:

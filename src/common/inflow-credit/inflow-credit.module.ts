@@ -5,9 +5,18 @@ import { OrganizationWalletService } from '../services/organization-wallet.servi
 import { InflowCreditService } from './inflow-credit.service.js';
 import { ProviderModule } from '../../provider/provider.module.js';
 import { DebitMandateModule } from '../debit-mandate/debit-mandate.module.js';
+import { ProviderAccountStatusModule } from '../provider-account-status/provider-account-status.module.js';
+import { AccountRestrictionNotifyModule } from '../account-restriction/account-restriction-notify.module.js';
 
 @Module({
-  imports: [DatabaseModule, ConfigModule, DebitMandateModule, forwardRef(() => ProviderModule)],
+  imports: [
+    DatabaseModule,
+    ConfigModule,
+    DebitMandateModule,
+    forwardRef(() => ProviderModule),
+    ProviderAccountStatusModule,
+    AccountRestrictionNotifyModule,
+  ],
   providers: [InflowCreditService, OrganizationWalletService],
   exports: [InflowCreditService],
 })

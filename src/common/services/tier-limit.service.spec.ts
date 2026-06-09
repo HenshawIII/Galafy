@@ -52,15 +52,14 @@ describe('TierLimitService', () => {
     service = module.get(TierLimitService);
   });
 
-  it('assertOutboundAllowed blocks balance-restricted customers', () => {
+  it('assertInternalOutboundAllowed blocks balance-restricted customers', () => {
     expect(() =>
-      service.assertOutboundAllowed({
+      service.assertInternalOutboundAllowed({
         id: 'c1',
         tier: KycTier.Tier_1,
         tier3UpgradeStatus: null,
         isBalanceRestricted: true,
         balanceRestrictionReason: 'Over cap',
-        providerRestrictionStatus: null,
         isAmlRestricted: false,
       }),
     ).toThrow(ForbiddenException);
@@ -73,7 +72,6 @@ describe('TierLimitService', () => {
       tier3UpgradeStatus: null,
       isBalanceRestricted: false,
       balanceRestrictionReason: null,
-      providerRestrictionStatus: null,
       isAmlRestricted: false,
     }));
     db.wallet.findFirst = mockFn(async () => ({ availableBalance: new Decimal(350000) }));
@@ -94,7 +92,6 @@ describe('TierLimitService', () => {
       tier3UpgradeStatus: null,
       isBalanceRestricted: true,
       balanceRestrictionReason: 'Already restricted',
-      providerRestrictionStatus: null,
       isAmlRestricted: false,
     }));
     db.wallet.findFirst = mockFn(async () => ({ availableBalance: new Decimal(350000) }));
@@ -112,7 +109,6 @@ describe('TierLimitService', () => {
       tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
       isBalanceRestricted: false,
       balanceRestrictionReason: null,
-      providerRestrictionStatus: null,
       isAmlRestricted: false,
     }));
     db.withdrawalLimit.findUnique = mockFn();
