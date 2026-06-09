@@ -15,7 +15,6 @@ export type AccountLimitsSnapshot = {
   cumulativeBalanceRemaining: string | null;
   isBalanceRestricted: boolean;
   balanceRestrictionReason: string | null;
-  providerRestrictionStatus: string | null;
   dailySpendLimit: string | null;
   dailySpendUsed: string;
   dailySpendRemaining: string | null;
@@ -28,7 +27,6 @@ type CustomerLimitRow = {
   tier3UpgradeStatus: Tier3UpgradeStatus | null;
   isBalanceRestricted: boolean;
   balanceRestrictionReason: string | null;
-  providerRestrictionStatus: string | null;
   isAmlRestricted: boolean;
 };
 
@@ -51,7 +49,6 @@ export class TierLimitService {
         tier3UpgradeStatus: true,
         isBalanceRestricted: true,
         balanceRestrictionReason: true,
-        providerRestrictionStatus: true,
         isAmlRestricted: true,
       },
     });
@@ -115,7 +112,7 @@ export class TierLimitService {
     }
   }
 
-  assertOutboundAllowed(customer: CustomerLimitRow): void {
+  assertInternalOutboundAllowed(customer: CustomerLimitRow): void {
     if (customer.isAmlRestricted) {
       throw new ForbiddenException(
         'Your account is restricted due to compliance review. Outbound transfers are not available.',
@@ -244,7 +241,6 @@ export class TierLimitService {
       cumulativeBalanceRemaining: formatLimitAmount(cumulativeRemaining),
       isBalanceRestricted: customer.isBalanceRestricted,
       balanceRestrictionReason: customer.balanceRestrictionReason,
-      providerRestrictionStatus: customer.providerRestrictionStatus,
       dailySpendLimit: formatLimitAmount(profile.dailySpendLimit),
       dailySpendUsed: dailyUsed.toFixed(2),
       dailySpendRemaining: formatLimitAmount(dailyRemaining),

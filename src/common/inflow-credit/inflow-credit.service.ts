@@ -26,6 +26,9 @@ import { ProviderService } from '../../provider/provider.service.js';
 import { DebitWalletMandateService } from '../debit-mandate/debit-wallet-mandate.service.js';
 import { buildStableProviderRef } from '../utils/provider-transaction-reference.util.js';
 import { TierLimitService } from '../services/tier-limit.service.js';
+import { ProviderAccountStatusService } from '../provider-account-status/provider-account-status.service.js';
+import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
+import { isProviderOutboundBlocked } from '../provider-account-status/provider-account-status.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -63,6 +66,8 @@ export class InflowCreditService {
     @Inject(forwardRef(() => ProviderService))
     private readonly providerService: ProviderService,
     private readonly tierLimitService: TierLimitService,
+    private readonly providerAccountStatusService: ProviderAccountStatusService,
+    private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
   ) {}
 
   async processBankInflow(input: BankInflowProcessInput): Promise<BankInflowProcessResult> {
@@ -407,6 +412,7 @@ export class InflowCreditService {
 
     if (!clientResult.isDuplicate) {
       await this.tierLimitService.evaluateBalanceAfterInflow(wallet.customerId);
+      await this.notifyIfProviderAccountInactive(wallet.customerId);
     }
 
     if (pendingFeeSweep && !clientResult.isDuplicate) {
@@ -454,5 +460,22 @@ export class InflowCreditService {
     }
 
     return clientResult as BankInflowProcessResult;
+  }
+
+  private async notifyIfProviderAccountInactive(customerId: string): Promise<void> {
+    try {
+      const status = await this.providerAccountStatusService.fetchPartnerAccountStatusForCustomer(customerId);
+      if (!isProviderOutboundBlocked(status.accountStatus)) {
+        return;
+      }
+      const reason =
+        status.restrictionStatus != null
+          ? `Bank account is inactive (restriction: ${status.restrictionStatus}). Outbound transfers are blocked.`
+          : 'Bank account is inactive. Outbound transfers are blocked.';
+      await this.accountRestrictionNotify.notifyCustomerById(customerId, 'provider', reason);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Post-inflow provider status check failed: customerId=${customerId} message=${message}`);
+    }
   }
 }

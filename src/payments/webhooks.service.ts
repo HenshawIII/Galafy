@@ -21,6 +21,10 @@ import { Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '../config/config.service.js';
 import { InflowCreditService } from '../common/inflow-credit/inflow-credit.service.js';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
+import {
+  buildWithdrawalPushNotification,
+  resolveWithdrawalDisplayAmount,
+} from '../common/utils/withdrawal-notification.util.js';
 config();
 
 @Injectable()
@@ -468,33 +472,50 @@ export class WebhooksService {
     });
 
     // Send email notification for withdrawal status (outside transaction to avoid blocking)
-    if (result.status === 'success') {
-      // Fetch payout transaction with user info for email
-      const payoutWithUser = await this.databaseService.payoutTransaction.findUnique({
-        where: { providerTransactionRef: data.paymentReference },
-        include: {
-          wallet: {
-            include: {
-              customer: {
-                include: {
-                  user: true,
-                },
+    const payoutWithUser = await this.databaseService.payoutTransaction.findUnique({
+      where: { providerTransactionRef: data.paymentReference },
+      include: {
+        wallet: {
+          include: {
+            customer: {
+              include: {
+                user: true,
               },
             },
           },
-          bankAccount: true,
         },
-      });
+        bankAccount: true,
+        transaction: {
+          select: {
+            amount: true,
+            metadata: true,
+          },
+        },
+      },
+    });
 
-      if (payoutWithUser?.wallet?.customer?.user?.email) {
-        const amountFormatted = payoutWithUser.amount.toFixed(2);
-        const accountNumber = payoutWithUser.bankAccount?.accountNumber || 'N/A';
-        const status = data.status;
-        const message = data.deliveryStatusMessage || undefined;
-        const firstName =
-          payoutWithUser.wallet.customer.user.firstName || payoutWithUser.wallet.customer.firstName || undefined;
-        const requestDate = payoutWithUser.createdAt;
+    if (payoutWithUser?.wallet?.customer?.user) {
+      const amountFormatted = resolveWithdrawalDisplayAmount(
+        payoutWithUser.transaction?.amount ?? payoutWithUser.amount,
+        payoutWithUser.transaction?.metadata,
+      );
+      const accountNumber = payoutWithUser.bankAccount?.accountNumber || 'N/A';
+      const status = data.status;
+      const message = data.deliveryStatusMessage || undefined;
+      const firstName =
+        payoutWithUser.wallet.customer.user.firstName || payoutWithUser.wallet.customer.firstName || undefined;
+      const requestDate = payoutWithUser.createdAt;
+      const userId = payoutWithUser.wallet.customer.userId;
+      const pushKind =
+        status.toLowerCase() === 'success' ||
+        status.toLowerCase() === 'approved' ||
+        status.toLowerCase() === 'completed'
+          ? ('WITHDRAWAL_SUCCESS' as const)
+          : status.toLowerCase() === 'failed' || status.toLowerCase() === 'rejected'
+            ? ('WITHDRAWAL_FAILED' as const)
+            : null;
 
+      if (payoutWithUser.wallet.customer.user.email) {
         this.emailService
           .sendWithdrawalStatusAlert(
             payoutWithUser.wallet.customer.user.email,
@@ -504,12 +525,27 @@ export class WebhooksService {
             data.paymentReference,
             message,
             firstName,
-            undefined, // bankName - can be looked up from bankCode if needed
+            undefined,
             requestDate,
           )
           .catch((error) => {
             this.logger.error(`Failed to send withdrawal status email: ${error.message}`);
           });
+      }
+
+      if (userId && pushKind) {
+        try {
+          const payload = buildWithdrawalPushNotification({
+            kind: pushKind,
+            amountFormatted,
+            transactionReference: data.paymentReference,
+            destinationAccountNumber: accountNumber,
+          });
+          await this.notificationsService.sendNotificationIfEnabled(userId, payload);
+        } catch (error: unknown) {
+          const errMessage = error instanceof Error ? error.message : String(error);
+          this.logger.warn(`Failed to send withdrawal webhook push: ${errMessage}`);
+        }
       }
     }
 

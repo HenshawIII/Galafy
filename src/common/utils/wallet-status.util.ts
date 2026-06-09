@@ -28,6 +28,13 @@ export function pickPrimaryWallet(wallets: WalletRow[] | null | undefined): Wall
   })[0];
 }
 
+export function resolveInternalWalletStatus(
+  customer: CustomerRestrictionFields,
+  wallet: WalletRow | null,
+): WalletStatus {
+  return resolveWalletStatus(customer, wallet);
+}
+
 export function resolveWalletStatus(customer: CustomerRestrictionFields, wallet: WalletRow | null): WalletStatus {
   if (!wallet) {
     return 'blocked';

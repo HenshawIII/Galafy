@@ -6,6 +6,7 @@ describe('getAccountRestrictionEmailCopy', () => {
     expect(getAccountRestrictionEmailCopy('balance').subject).toContain('Balance');
     expect(getAccountRestrictionEmailCopy('risk_soft').subject).toContain('Activity');
     expect(getAccountRestrictionEmailCopy('risk_hard').subject).toContain('Wallet');
+    expect(getAccountRestrictionEmailCopy('provider').subject).toContain('Wallet Account');
   });
 
   it('includes tier-oriented bullets for balance restrictions', () => {

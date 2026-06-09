@@ -25,7 +25,7 @@ import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { TierLimitService } from '../common/services/tier-limit.service.js';
 import type { AccountLimitsSnapshot } from '../common/services/tier-limit.service.js';
-import { pickPrimaryWallet, resolveWalletStatus } from '../common/utils/wallet-status.util.js';
+import { pickPrimaryWallet, resolveInternalWalletStatus } from '../common/utils/wallet-status.util.js';
 import { authConflictMessage } from '../common/utils/auth-conflict-messages.util.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
@@ -826,7 +826,7 @@ export class UsersService {
     const accountLimits = await this.buildAccountLimitsForUser(customer?.id ?? null, isPinSet);
 
     const primaryWallet = pickPrimaryWallet(customer?.wallets);
-    const walletStatus = resolveWalletStatus(
+    const internalWalletStatus = resolveInternalWalletStatus(
       customer
         ? {
             isAmlRestricted: customer.isAmlRestricted,
@@ -842,7 +842,7 @@ export class UsersService {
       kycStatus,
       isPinSet,
       accountLimits,
-      walletStatus,
+      internalWalletStatus,
       wallets: customer?.wallets || [],
       bankAccounts,
       settings,

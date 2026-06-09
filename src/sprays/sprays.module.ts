@@ -7,9 +7,10 @@ import { DebitMandateModule } from '../common/debit-mandate/debit-mandate.module
 import { SpraysController } from './sprays.controller.js';
 import { SpraysService } from './sprays.service.js';
 import { SprayRateLimitGuard } from './guards/spray-rate-limit.guard.js';
+import { ProviderAccountStatusModule } from '../common/provider-account-status/provider-account-status.module.js';
 
 @Module({
-  imports: [DatabaseModule, ProviderModule, LiveModule, CacheModule, DebitMandateModule],
+  imports: [DatabaseModule, ProviderModule, LiveModule, CacheModule, DebitMandateModule, ProviderAccountStatusModule],
   controllers: [SpraysController],
   providers: [SpraysService, SprayRateLimitGuard],
   exports: [SpraysService],

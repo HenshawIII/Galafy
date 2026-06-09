@@ -35,6 +35,11 @@ import {
   nipChargeAmountFromBand,
 } from '../common/utils/nip-charges.util.js';
 import { NipChargesService } from './services/nip-charges.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import {
+  buildWithdrawalPushNotification,
+  WithdrawalNotificationKind,
+} from '../common/utils/withdrawal-notification.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -56,6 +61,7 @@ export class WalletmoduleService {
     private readonly withdrawalLimitService: WithdrawalLimitService,
     private readonly debitWalletMandateService: DebitWalletMandateService,
     private readonly nipChargesService: NipChargesService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getNipCharges() {
@@ -816,6 +822,13 @@ export class WalletmoduleService {
       } catch (netErr: unknown) {
         await markPayoutTxnFailed();
         await markFeeTxnFailed();
+        await this.notifyWithdrawalStatus(previewWallet.customer.userId, previewWallet.customer.user?.email ?? null, {
+          kind: 'WITHDRAWAL_FAILED',
+          amountFormatted: amount.toFixed(2),
+          transactionReference,
+          destinationAccountNumber: payoutData.toAccountNumber as string,
+          firstName: previewWallet.customer.user?.firstName ?? previewWallet.customer.firstName ?? undefined,
+        });
         throw netErr;
       }
 
@@ -843,6 +856,14 @@ export class WalletmoduleService {
     }
 
     await this.withdrawalLimitService.recordWithdrawal(previewWallet.customerId, amount);
+
+    await this.notifyWithdrawalStatus(previewWallet.customer.userId, previewWallet.customer.user?.email ?? null, {
+      kind: 'WITHDRAWAL_SUBMITTED',
+      amountFormatted: amount.toFixed(2),
+      transactionReference,
+      destinationAccountNumber: payoutData.toAccountNumber as string,
+      firstName: previewWallet.customer.user?.firstName ?? previewWallet.customer.firstName ?? undefined,
+    });
 
     const quote = await this.buildPayoutQuote({
       grossAmount: amount,
@@ -1135,5 +1156,56 @@ export class WalletmoduleService {
       message: existingBankAccount ? 'Bank account updated successfully' : 'Bank account added successfully',
       bankAccount,
     };
+  }
+
+  private async notifyWithdrawalStatus(
+    userId: string,
+    email: string | null,
+    input: {
+      kind: WithdrawalNotificationKind;
+      amountFormatted: string;
+      transactionReference: string;
+      destinationAccountNumber?: string | null;
+      firstName?: string;
+    },
+  ): Promise<void> {
+    const destination = input.destinationAccountNumber?.trim() || 'Recipient';
+    const emailStatus =
+      input.kind === 'WITHDRAWAL_SUBMITTED'
+        ? 'pending'
+        : input.kind === 'WITHDRAWAL_SUCCESS'
+          ? 'success'
+          : 'failed';
+
+    if (email) {
+      this.emailService
+        .sendWithdrawalStatusAlert(
+          email,
+          input.amountFormatted,
+          emailStatus,
+          destination,
+          input.transactionReference,
+          undefined,
+          input.firstName,
+          undefined,
+          new Date(),
+        )
+        .catch((error) => {
+          this.logger.error(`Failed to send withdrawal status email: ${error.message}`);
+        });
+    }
+
+    try {
+      const payload = buildWithdrawalPushNotification({
+        kind: input.kind,
+        amountFormatted: input.amountFormatted,
+        transactionReference: input.transactionReference,
+        destinationAccountNumber: input.destinationAccountNumber,
+      });
+      await this.notificationsService.sendNotificationIfEnabled(userId, payload);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Failed to send withdrawal push (${input.kind}): ${message}`);
+    }
   }
 }
