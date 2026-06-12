@@ -94,7 +94,8 @@ export class WalletmoduleController {
   @Get('account/:accountNumber/history')
   @ApiOperation({
     summary: 'Get wallet transaction history by account number',
-    description: 'Retrieves transaction history with support for search, status filtering, and amount range filtering',
+    description:
+      'Retrieves transaction history newest-first (page 1 = latest transactions). Supports search, status filtering, and amount range filtering.',
   })
   @ApiParam({ name: 'accountNumber', description: 'Wallet account number', example: '9719913297' })
   @ApiQuery({ name: 'startDate', required: true, description: 'Start date (YYYY-MM-DD)', example: '2025-01-01' })
