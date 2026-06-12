@@ -35,6 +35,7 @@ import {
   nipChargeAmountFromBand,
 } from '../common/utils/nip-charges.util.js';
 import { NipChargesService } from './services/nip-charges.service.js';
+import { sliceWalletHistoryPageNewestFirst } from '../common/utils/wallet-history-pagination.util.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import {
   buildWithdrawalPushNotification,
@@ -999,8 +1000,7 @@ export class WalletmoduleService {
     const totalFiltered = allFiltered.length;
     const limit = pageSize || 20;
     const p = page || 1;
-    const startIndex = (p - 1) * limit;
-    const pageSlice = allFiltered.slice(startIndex, startIndex + limit).reverse();
+    const pageSlice = sliceWalletHistoryPageNewestFirst(allFiltered, p, limit);
 
     const paginatedTransactions = pageSlice.map((t) => ({
       id: t.id,
