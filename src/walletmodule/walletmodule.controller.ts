@@ -95,11 +95,21 @@ export class WalletmoduleController {
   @ApiOperation({
     summary: 'Get wallet transaction history by account number',
     description:
-      'Retrieves transaction history newest-first (page 1 = latest transactions). Supports search, status filtering, and amount range filtering.',
+      'Retrieves transaction history newest-first (page 1 = latest transactions). startDate/endDate optional (default: wallet creation → today). Supports search, status filtering, and amount range filtering.',
   })
   @ApiParam({ name: 'accountNumber', description: 'Wallet account number', example: '9719913297' })
-  @ApiQuery({ name: 'startDate', required: true, description: 'Start date (YYYY-MM-DD)', example: '2025-01-01' })
-  @ApiQuery({ name: 'endDate', required: true, description: 'End date (YYYY-MM-DD)', example: '2025-01-31' })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    description: 'Start date (YYYY-MM-DD). Defaults to wallet creation date.',
+    example: '2025-01-01',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    description: 'End date (YYYY-MM-DD). Defaults to today.',
+    example: '2025-01-31',
+  })
   @ApiQuery({ name: 'page', required: false, description: 'Page number', example: '1' })
   @ApiQuery({ name: 'limit', required: false, description: 'Number of items per page', example: '10' })
   @ApiQuery({

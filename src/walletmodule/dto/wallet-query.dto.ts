@@ -31,21 +31,22 @@ export enum TransactionTypeFilter {
 }
 
 export class GetWalletHistoryDto {
-  @ApiProperty({
-    description: 'Start date for the query period (YYYY-MM-DD)',
+  @ApiPropertyOptional({
+    description:
+      'Start date for the query period (YYYY-MM-DD). Defaults to wallet creation date when omitted.',
     example: '2025-01-01',
   })
+  @IsOptional()
   @IsString({ message: 'Start date must be a string' })
-  @IsNotEmpty({ message: 'Start date is required' })
-  startDate: string;
+  startDate?: string;
 
-  @ApiProperty({
-    description: 'End date for the query period (YYYY-MM-DD)',
+  @ApiPropertyOptional({
+    description: 'End date for the query period (YYYY-MM-DD). Defaults to today when omitted.',
     example: '2025-01-31',
   })
+  @IsOptional()
   @IsString({ message: 'End date must be a string' })
-  @IsNotEmpty({ message: 'End date is required' })
-  endDate: string;
+  endDate?: string;
 
   @ApiPropertyOptional({
     description: 'Page number to retrieve',

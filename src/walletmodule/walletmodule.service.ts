@@ -36,6 +36,7 @@ import {
 } from '../common/utils/nip-charges.util.js';
 import { NipChargesService } from './services/nip-charges.service.js';
 import { sliceWalletHistoryPageNewestFirst } from '../common/utils/wallet-history-pagination.util.js';
+import { resolveWalletHistoryDateRange } from '../common/utils/wallet-history-date-range.util.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import {
   buildWithdrawalPushNotification,
@@ -890,8 +891,8 @@ export class WalletmoduleService {
    */
   async getWalletHistory(
     accountNumber: string,
-    fromDate: string,
-    toDate: string,
+    fromDate?: string,
+    toDate?: string,
     page?: number,
     pageSize?: number,
     query?: string,
@@ -900,16 +901,6 @@ export class WalletmoduleService {
     maxAmount?: number,
     type?: string,
   ) {
-    // Generate cache key from all parameters (excluding filters for cache efficiency)
-    const baseCacheKey = `wallet:history:${accountNumber}:${fromDate}:${toDate}:${page || 1}:${pageSize || 20}`;
-    const filterCacheKey = `${baseCacheKey}:${query || ''}:${status || 'all'}:${minAmount || ''}:${maxAmount || ''}:${type || 'all'}`;
-
-    // Check cache first
-    const cached = await this.cacheService.get(filterCacheKey);
-    if (cached) {
-      return cached;
-    }
-
     const wallet = await this.databaseService.wallet.findFirst({
       where: { virtualAccountNumber: accountNumber },
     });
@@ -922,8 +913,24 @@ export class WalletmoduleService {
       throw new BadRequestException('Wallet does not have a virtual account number');
     }
 
-    const startRange = new Date(`${fromDate}T00:00:00.000Z`);
-    const endRange = new Date(`${toDate}T23:59:59.999Z`);
+    const { startDate: resolvedFromDate, endDate: resolvedToDate } = resolveWalletHistoryDateRange(
+      fromDate,
+      toDate,
+      wallet.createdAt,
+    );
+
+    // Generate cache key from all parameters (excluding filters for cache efficiency)
+    const baseCacheKey = `wallet:history:${accountNumber}:${resolvedFromDate}:${resolvedToDate}:${page || 1}:${pageSize || 20}`;
+    const filterCacheKey = `${baseCacheKey}:${query || ''}:${status || 'all'}:${minAmount || ''}:${maxAmount || ''}:${type || 'all'}`;
+
+    // Check cache first
+    const cached = await this.cacheService.get(filterCacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const startRange = new Date(`${resolvedFromDate}T00:00:00.000Z`);
+    const endRange = new Date(`${resolvedToDate}T23:59:59.999Z`);
 
     const andConditions: object[] = [
       { walletId: wallet.id },
@@ -1019,6 +1026,8 @@ export class WalletmoduleService {
       page: p,
       limit,
       totalPages: Math.ceil(totalFiltered / limit) || 1,
+      startDate: resolvedFromDate,
+      endDate: resolvedToDate,
     };
 
     // Cache for 30 seconds (transaction history changes frequently)
