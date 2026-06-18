@@ -3,9 +3,8 @@
  * These match the Prisma schema enums
  */
 export enum EventRole {
-  ATTENDEE = 'ATTENDEE',
-  PERFORMER = 'PERFORMER',
-  CELEBRANT = 'CELEBRANT',
+  HOST = 'HOST',
+  GIFTER = 'GIFTER',
 }
 
 export enum EventVisibility {

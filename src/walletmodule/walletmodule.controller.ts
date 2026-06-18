@@ -373,10 +373,18 @@ export class WalletmoduleController {
   }
 
   @Put('bank-account')
-  @ApiOperation({ summary: 'Update or add bank account details' })
+  @ApiOperation({
+    summary: 'Add or replace bank account details',
+    description:
+      'Each customer may have only one bank account at a time. Replacing details updates the existing row. ' +
+      'Requires Tier 1 KYC (tier1NubanName). The accountName from provider name enquiry must include the verified first and last name tokens.',
+  })
   @ApiBody({ type: UpdateBankAccountDto })
-  @ApiResponse({ status: 200, description: 'Bank account updated successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid bank account details' })
+  @ApiResponse({ status: 200, description: 'Bank account saved successfully' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid bank account details, missing Tier 1 KYC, or name does not match verified identity',
+  })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async updateBankAccount(@Request() req: any, @Body(ValidationPipe) updateDto: UpdateBankAccountDto) {

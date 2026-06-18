@@ -12,8 +12,8 @@ import { DatabaseService } from '../database/database.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
 import { SearchEventDto } from './dto/search-event.dto.js';
-import { EventStatus, EventRole, EventVisibility, KycTier, SprayStatus } from '../../generated/prisma/enums.js';
-import { canHostEvents, isTier2OrTier3WithBenefits } from '../common/utils/kyc-tier.util.js';
+import { EventStatus, EventRole, EventVisibility, SprayStatus } from '../../generated/prisma/enums.js';
+import { canHostEvents } from '../common/utils/kyc-tier.util.js';
 import { randomUUID } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -70,49 +70,6 @@ export class EventsService {
     }
 
     return converted;
-  }
-
-  /**
-   * Check if user has required KYC tier for a role
-   */
-  private async checkKycTierForRole(userId: string, role: EventRole): Promise<void> {
-    const customer = await this.databaseService.customer.findUnique({
-      where: { userId },
-      select: { tier: true },
-    });
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found for this user');
-    }
-
-    // CELEBRANT and PERFORMER require Tier_2 or higher
-    if (
-      (role === EventRole.CELEBRANT || role === EventRole.PERFORMER) &&
-      (customer.tier === KycTier.Tier_0 || customer.tier === KycTier.Tier_1)
-    ) {
-      throw new ForbiddenException(
-        `You need at least KYC Tier_2 to be a ${role}. Your current tier is ${customer.tier}.`,
-      );
-    }
-  }
-
-  /**
-   * Check if an event has at least one CELEBRANT or PERFORMER participant
-   * This ensures events always have someone who can receive sprays
-   */
-  private async hasNonAttendeeParticipant(eventId: string, excludeUserId?: string): Promise<boolean> {
-    const participants = await this.databaseService.eventParticipant.findMany({
-      where: {
-        eventId,
-        role: {
-          in: [EventRole.CELEBRANT, EventRole.PERFORMER],
-        },
-        ...(excludeUserId ? { userId: { not: excludeUserId } } : {}),
-      },
-      select: { id: true },
-    });
-
-    return participants.length > 0;
   }
 
   /**
@@ -231,67 +188,7 @@ export class EventsService {
       throw new NotFoundException('User not found');
     }
 
-    // Determine role (default to CELEBRANT for backward compatibility)
-    const creatorRole = createEventDto.role || EventRole.CELEBRANT;
-
-    // Validate that role is PERFORMER or CELEBRANT (not ATTENDEE)
-    if (creatorRole === EventRole.ATTENDEE) {
-      throw new BadRequestException(
-        'ATTENDEE role is not allowed for event creators. Please use PERFORMER or CELEBRANT.',
-      );
-    }
-
-    // Validate that taggedPerformer is not provided when role is PERFORMER
-    if (creatorRole === EventRole.PERFORMER && createEventDto.taggedPerformer) {
-      throw new BadRequestException(
-        'taggedPerformer field is invalid when creating an event as PERFORMER. Only CELEBRANTs can tag performers.',
-      );
-    }
-
-    // Validate taggedPerformer exists if provided (only valid when role is CELEBRANT)
-    if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
-      const performerIdentifier = createEventDto.taggedPerformer.trim();
-      const isEmail = performerIdentifier.includes('@');
-
-      let performerUser;
-      if (isEmail) {
-        performerUser = await this.databaseService.user.findUnique({
-          where: { email: performerIdentifier },
-          select: { id: true },
-        });
-      } else {
-        performerUser = await this.databaseService.user.findUnique({
-          where: { username: performerIdentifier },
-          select: { id: true },
-        });
-      }
-
-      if (!performerUser) {
-        throw new NotFoundException(
-          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`,
-        );
-      }
-
-      // Check if performer has required KYC tier
-      const performerCustomer = await this.databaseService.customer.findUnique({
-        where: { userId: performerUser.id },
-        select: { tier: true, tier3UpgradeStatus: true },
-      });
-
-      if (!performerCustomer) {
-        throw new BadRequestException(
-          `Tagged performer (${performerIdentifier}) does not have a customer record. They need to complete KYC registration.`,
-        );
-      }
-
-      if (!isTier2OrTier3WithBenefits(performerCustomer)) {
-        throw new BadRequestException(
-          `Tagged performer (${performerIdentifier}) must have at least KYC Tier_2 (or approved Tier 3). Their current tier is ${performerCustomer.tier}.`,
-        );
-      }
-    }
-
-    // Check KYC tier from customer table
+    // Check KYC tier from customer table — HOST requires Tier 3 COMPLETED
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
       select: { tier: true, tier3UpgradeStatus: true },
@@ -303,7 +200,7 @@ export class EventsService {
 
     if (!canHostEvents(customer)) {
       throw new ForbiddenException(
-        `You need approved KYC Tier 3 to host events. Your current tier is ${customer.tier}.`,
+        'You need approved KYC Tier 3 to host events. Complete Tier 3 verification to create an event.',
       );
     }
 
@@ -374,72 +271,13 @@ export class EventsService {
       }
     }
 
-    // Get performer wallet if taggedPerformer is provided
-    let performerUser: { id: string } | null = null;
-    let performerWalletId: string | null = null;
-    if (createEventDto.taggedPerformer && creatorRole === EventRole.CELEBRANT) {
-      const performerIdentifier = createEventDto.taggedPerformer.trim();
-      const isEmail = performerIdentifier.includes('@');
-
-      // Lookup performer user (already validated above, so this should always succeed)
-      if (isEmail) {
-        performerUser = await this.databaseService.user.findUnique({
-          where: { email: performerIdentifier },
-          select: { id: true },
-        });
-      } else {
-        performerUser = await this.databaseService.user.findUnique({
-          where: { username: performerIdentifier },
-          select: { id: true },
-        });
-      }
-
-      // Safety check (should never happen since we validated above, but defensive programming)
-      if (!performerUser) {
-        throw new NotFoundException(
-          `Tagged performer not found: ${performerIdentifier}. Please verify the email or username.`,
-        );
-      }
-
-      // Get performer's wallet if they're not the creator
-      if (performerUser.id !== userId) {
-        const performerCustomer = await this.databaseService.customer.findUnique({
-          where: { userId: performerUser.id },
-          include: {
-            wallets: {
-              where: { isDefault: true },
-              take: 1,
-            },
-          },
-        });
-
-        if (performerCustomer && performerCustomer.wallets && performerCustomer.wallets.length > 0) {
-          performerWalletId = performerCustomer.wallets[0].id;
-        } else {
-          // If no default wallet, try to get any wallet
-          const anyWallet = await this.databaseService.wallet.findFirst({
-            where: {
-              customer: {
-                userId: performerUser.id,
-              },
-            },
-          });
-          if (anyWallet) {
-            performerWalletId = anyWallet.id;
-          }
-        }
-      }
-    }
-
-    // Use transaction to ensure atomicity: event and participants are created together
-    // If any part fails, everything is rolled back
+    // Use transaction to ensure atomicity: event and host participant are created together
     const event = await this.databaseService.$transaction(async (tx) => {
-      // Create event
       const createdEvent = await tx.event.create({
         data: {
           code: eventCode!,
           title: createEventDto.title,
-          name: createEventDto.title, // Keep name same as title for backward compatibility
+          name: createEventDto.title,
           location: createEventDto.location,
           category: createEventDto.category,
           description: createEventDto.description,
@@ -454,40 +292,19 @@ export class EventsService {
           endsAt: endAt,
           enableLeaderboard: createEventDto.enableLeaderboard ?? true,
           anonSprayersAllowed: createEventDto.anonSprayersAllowed ?? true,
-          taggedPerformer: creatorRole === EventRole.PERFORMER ? null : createEventDto.taggedPerformer || null,
+          taggedPerformer: null,
           visibility: createEventDto.visibility || EventVisibility.PUBLIC,
         },
       });
 
-      // Automatically add host user with the specified role (PERFORMER or CELEBRANT)
-      // This ensures every event has at least one non-ATTENDEE participant
       await tx.eventParticipant.create({
         data: {
           eventId: createdEvent.id,
           userId: userId,
-          role: creatorRole,
+          role: EventRole.HOST,
           walletId: hostWalletId,
         },
       });
-
-      // If taggedPerformer is provided (only valid when role is CELEBRANT), add them as a participant with PERFORMER role
-      if (performerUser && performerUser.id !== userId && performerWalletId !== null) {
-        try {
-          await tx.eventParticipant.create({
-            data: {
-              eventId: createdEvent.id,
-              userId: performerUser.id,
-              role: EventRole.PERFORMER,
-              walletId: performerWalletId,
-            },
-          });
-        } catch (error: any) {
-          // If participant already exists, skip (shouldn't happen since we check userId !== userId)
-          if (error.code !== 'P2002') {
-            throw error;
-          }
-        }
-      }
 
       return createdEvent;
     });
@@ -907,7 +724,6 @@ export class EventsService {
     }
     if (dto.enableLeaderboard !== undefined) updateData.enableLeaderboard = dto.enableLeaderboard;
     if (dto.anonSprayersAllowed !== undefined) updateData.anonSprayersAllowed = dto.anonSprayersAllowed;
-    if (dto.taggedPerformer !== undefined) updateData.taggedPerformer = dto.taggedPerformer || null;
     if (dto.visibility !== undefined) updateData.visibility = dto.visibility;
     if (dto.status !== undefined) updateData.status = dto.status;
 
@@ -981,87 +797,23 @@ export class EventsService {
   }
 
   /**
-   * Join an event as a participant
+   * Join an event as a GIFTER participant.
    */
   async joinEvent(eventId: string, userId: string, joinEventDto: JoinEventDto) {
-    // Check if event exists
     const event = await this.databaseService.event.findUnique({
       where: { id: eventId },
-      include: {
-        participants: {
-          where: {
-            role: {
-              in: [EventRole.CELEBRANT, EventRole.PERFORMER],
-            },
-          },
-          select: {
-            userId: true,
-            role: true,
-          },
-        },
-      },
     });
 
     if (!event) {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
-    // Default role to ATTENDEE if not provided
-    const role = joinEventDto.role || EventRole.ATTENDEE;
-
-    // Business Rule: Only host can be CELEBRANT, only tagged performer can be PERFORMER
-    // All other participants must be ATTENDEE
-    if (role === EventRole.CELEBRANT) {
-      if (event.hostUserId !== userId) {
-        throw new ForbiddenException(
-          'Only the event host can have the CELEBRANT role. Regular participants must join as ATTENDEE.',
-        );
-      }
-    } else if (role === EventRole.PERFORMER) {
-      // Check if user is the tagged performer
-      if (!event.taggedPerformer) {
-        throw new BadRequestException('This event does not have a tagged performer. Only ATTENDEE role is available.');
-      }
-
-      // Find the tagged performer user
-      const isEmail = event.taggedPerformer.includes('@');
-      const taggedPerformerUser = isEmail
-        ? await this.databaseService.user.findUnique({
-            where: { email: event.taggedPerformer },
-            select: { id: true },
-          })
-        : await this.databaseService.user.findUnique({
-            where: { username: event.taggedPerformer },
-            select: { id: true },
-          });
-
-      if (!taggedPerformerUser || taggedPerformerUser.id !== userId) {
-        throw new ForbiddenException(
-          'Only the tagged performer can have the PERFORMER role. Regular participants must join as ATTENDEE.',
-        );
-      }
-
-      // Check if there's already a PERFORMER
-      const existingPerformer = event.participants.find((p) => p.role === EventRole.PERFORMER);
-      if (existingPerformer && existingPerformer.userId !== userId) {
-        throw new ConflictException(
-          'This event already has a PERFORMER participant. Only one PERFORMER is allowed per event.',
-        );
-      }
-    } else if (role === EventRole.ATTENDEE) {
-      // Regular users joining should always be ATTENDEE - this is fine
-      // But prevent host from joining as ATTENDEE
-      if (event.hostUserId === userId) {
-        throw new ForbiddenException(
-          'Event host cannot join as ATTENDEE. The host must remain as CELEBRANT or PERFORMER.',
-        );
-      }
+    if (event.hostUserId === userId) {
+      throw new ForbiddenException(
+        'Event host cannot join as a gifter. The host is registered when the event is created.',
+      );
     }
 
-    // Check KYC tier for role
-    await this.checkKycTierForRole(userId, role);
-
-    // Check if user is already a participant
     const existingParticipant = await this.databaseService.eventParticipant.findUnique({
       where: {
         eventId_userId: {
@@ -1072,41 +824,23 @@ export class EventsService {
     });
 
     if (existingParticipant) {
-      // Update role if different
-      if (existingParticipant.role !== role) {
-        // Prevent host from changing their role from CELEBRANT or PERFORMER to ATTENDEE
-        if (event.hostUserId === userId) {
-          if (role === EventRole.ATTENDEE) {
-            throw new ForbiddenException(
-              'Event host cannot change their role to ATTENDEE. The host must remain as CELEBRANT or PERFORMER.',
-            );
-          }
-          // Host can only be CELEBRANT or PERFORMER
-          if (role !== EventRole.CELEBRANT && role !== EventRole.PERFORMER) {
-            throw new ForbiddenException('Event host can only have CELEBRANT or PERFORMER role.');
-          }
+      if (joinEventDto.walletId && joinEventDto.walletId !== existingParticipant.walletId) {
+        const wallet = await this.databaseService.wallet.findUnique({
+          where: { id: joinEventDto.walletId },
+          include: { customer: true },
+        });
+
+        if (!wallet) {
+          throw new NotFoundException(`Wallet with ID ${joinEventDto.walletId} not found`);
         }
 
-        // Prevent changing to ATTENDEE if it would leave the event with only ATTENDEEs
-        // Events must have at least one CELEBRANT or PERFORMER to receive sprays
-        if (role === EventRole.ATTENDEE) {
-          const hasOtherNonAttendees = await this.hasNonAttendeeParticipant(eventId, userId);
-          if (!hasOtherNonAttendees) {
-            throw new BadRequestException(
-              'Cannot change role to ATTENDEE. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.',
-            );
-          }
+        if (wallet.customer.userId !== userId) {
+          throw new ForbiddenException('Wallet does not belong to you');
         }
-
-        // Check KYC tier for new role
-        await this.checkKycTierForRole(userId, role);
 
         return this.databaseService.eventParticipant.update({
           where: { id: existingParticipant.id },
-          data: {
-            role: role,
-            walletId: joinEventDto.walletId || existingParticipant.walletId,
-          },
+          data: { walletId: joinEventDto.walletId },
           include: {
             user: {
               select: {
@@ -1127,47 +861,13 @@ export class EventsService {
           },
         });
       }
+
       throw new ConflictException('You are already a participant in this event');
     }
 
-    // Determine wallet to use
+    const role = EventRole.GIFTER;
     let walletIdToUse: string | null = joinEventDto.walletId || null;
 
-    // For CELEBRANT and PERFORMER roles, automatically fetch default wallet if not provided
-    // They need a wallet to receive sprays
-    if (!walletIdToUse && (role === EventRole.CELEBRANT || role === EventRole.PERFORMER)) {
-      const customer = await this.databaseService.customer.findUnique({
-        where: { userId },
-        include: {
-          wallets: {
-            where: { isDefault: true },
-            take: 1,
-          },
-        },
-      });
-
-      if (customer && customer.wallets && customer.wallets.length > 0) {
-        walletIdToUse = customer.wallets[0].id;
-        this.logger.log(`Auto-assigned default wallet ${walletIdToUse} to ${role} ${userId}`);
-      } else {
-        // If no default wallet, try to get any wallet
-        const anyWallet = await this.databaseService.wallet.findFirst({
-          where: {
-            customer: {
-              userId,
-            },
-          },
-        });
-        if (anyWallet) {
-          walletIdToUse = anyWallet.id;
-          this.logger.log(`Auto-assigned wallet ${walletIdToUse} to ${role} ${userId}`);
-        } else {
-          this.logger.warn(`No wallet found for ${role} ${userId}. They may not be able to receive sprays.`);
-        }
-      }
-    }
-
-    // Validate wallet if provided or auto-assigned
     if (walletIdToUse) {
       const wallet = await this.databaseService.wallet.findUnique({
         where: { id: walletIdToUse },
@@ -1178,18 +878,16 @@ export class EventsService {
         throw new NotFoundException(`Wallet with ID ${walletIdToUse} not found`);
       }
 
-      // Verify wallet belongs to user
       if (wallet.customer.userId !== userId) {
         throw new ForbiddenException('Wallet does not belong to you');
       }
     }
 
-    // Create participant
     const participant = await this.databaseService.eventParticipant.create({
       data: {
         eventId,
         userId,
-        role: role,
+        role,
         walletId: walletIdToUse,
       },
       include: {
@@ -1212,40 +910,34 @@ export class EventsService {
       },
     });
 
-    // Notify event host when someone joins (if joining user is not the host)
-    if (event.hostUserId !== userId) {
-      try {
-        // Get event details for notification
-        const eventDetails = await this.databaseService.event.findUnique({
-          where: { id: eventId },
-          select: { title: true, code: true },
-        });
+    try {
+      const eventDetails = await this.databaseService.event.findUnique({
+        where: { id: eventId },
+        select: { title: true, code: true },
+      });
 
-        // Get participant name
-        const participantName =
-          participant.user.username ||
-          `${participant.user.firstName || ''} ${participant.user.lastName || ''}`.trim() ||
-          'Someone';
+      const participantName =
+        participant.user.username ||
+        `${participant.user.firstName || ''} ${participant.user.lastName || ''}`.trim() ||
+        'Someone';
 
-        await this.notificationsService.sendNotificationIfEnabled(event.hostUserId, {
-          notification: {
-            title: 'New Participant Joined',
-            body: `${participantName} joined your event "${eventDetails?.title || 'Event'}"`,
-          },
-          data: {
-            type: 'EVENT_PARTICIPANT_JOINED',
-            eventId: eventId,
-            eventCode: eventDetails?.code || '',
-            eventTitle: eventDetails?.title || '',
-            participantId: userId,
-            participantName: participantName,
-            participantRole: role,
-          },
-        });
-      } catch (notificationError: any) {
-        // Log error but don't fail the join - notification is optional
-        this.logger.warn(`Failed to send participant joined notification: ${notificationError.message}`);
-      }
+      await this.notificationsService.sendNotificationIfEnabled(event.hostUserId, {
+        notification: {
+          title: 'New Participant Joined',
+          body: `${participantName} joined your event "${eventDetails?.title || 'Event'}"`,
+        },
+        data: {
+          type: 'EVENT_PARTICIPANT_JOINED',
+          eventId: eventId,
+          eventCode: eventDetails?.code || '',
+          eventTitle: eventDetails?.title || '',
+          participantId: userId,
+          participantName: participantName,
+          participantRole: role,
+        },
+      });
+    } catch (notificationError: any) {
+      this.logger.warn(`Failed to send participant joined notification: ${notificationError.message}`);
     }
 
     return participant;
@@ -1275,17 +967,6 @@ export class EventsService {
 
     if (event?.hostUserId === userId) {
       throw new BadRequestException('Event host cannot leave their own event');
-    }
-
-    // Prevent leaving if it would leave the event with only ATTENDEEs
-    // Events must have at least one CELEBRANT or PERFORMER to receive sprays
-    if (participant.role === EventRole.CELEBRANT || participant.role === EventRole.PERFORMER) {
-      const hasOtherNonAttendees = await this.hasNonAttendeeParticipant(eventId, userId);
-      if (!hasOtherNonAttendees) {
-        throw new BadRequestException(
-          'Cannot leave event. Events must have at least one CELEBRANT or PERFORMER participant to receive sprays.',
-        );
-      }
     }
 
     await this.databaseService.eventParticipant.delete({
@@ -1379,7 +1060,7 @@ export class EventsService {
         },
       },
       orderBy: [
-        { role: 'asc' }, // Order by role (CELEBRANT, PERFORMER, ATTENDEE)
+        { role: 'asc' },
         { joinedAt: 'asc' }, // Then by join date
       ],
     });
@@ -1409,71 +1090,6 @@ export class EventsService {
             }
           : null,
       })),
-    };
-  }
-
-  /**
-   * Verify if a user is eligible to be a performer
-   * Performer must have at least KYC Tier_2 or Tier_3
-   */
-  async verifyPerformerEligibility(identifier: string) {
-    // Determine if identifier is email or username
-    const isEmail = identifier.includes('@');
-
-    let user;
-    if (isEmail) {
-      user = await this.databaseService.user.findUnique({
-        where: { email: identifier },
-        select: { id: true, email: true, username: true },
-      });
-    } else {
-      user = await this.databaseService.user.findUnique({
-        where: { username: identifier },
-        select: { id: true, email: true, username: true },
-      });
-    }
-
-    if (!user) {
-      return {
-        eligible: false,
-        reason: 'User not found',
-        user: null,
-        kycTier: null,
-      };
-    }
-
-    // Get customer to check KYC tier
-    const customer = await this.databaseService.customer.findUnique({
-      where: { userId: user.id },
-      select: { tier: true, tier3UpgradeStatus: true },
-    });
-
-    if (!customer) {
-      return {
-        eligible: false,
-        reason: 'Customer record not found. User needs to complete KYC registration.',
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-        },
-        kycTier: null,
-      };
-    }
-
-    const isEligible = isTier2OrTier3WithBenefits(customer);
-
-    return {
-      eligible: isEligible,
-      reason: isEligible
-        ? 'User is eligible to be a performer'
-        : `User has KYC Tier ${customer.tier}. Performer role requires Tier_2 or approved Tier_3.`,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-      },
-      kycTier: customer.tier,
     };
   }
 

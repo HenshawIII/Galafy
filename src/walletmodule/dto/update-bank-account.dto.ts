@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class UpdateBankAccountDto {
   @ApiProperty({ example: '1234567890', description: 'Bank account number' })
@@ -12,15 +12,12 @@ export class UpdateBankAccountDto {
   @IsNotEmpty({ message: 'Bank code is required' })
   bankCode: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 'John Doe',
-    description: 'Bank account name (will be fetched via name enquiry if not provided)',
+    description:
+      'Bank account name from provider name enquiry. Must match the customer Tier 1 verified name.',
   })
-  @IsOptional()
   @IsString({ message: 'Account name must be a string' })
-  accountName?: string;
-
-  @ApiPropertyOptional({ example: true, description: 'Set as default bank account' })
-  @IsOptional()
-  isDefault?: boolean;
+  @IsNotEmpty({ message: 'Account name is required' })
+  accountName: string;
 }

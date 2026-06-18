@@ -570,6 +570,27 @@ export class AdminController {
     return this.adminService.promoteCustomerToTier3(customerId, adminId, dto);
   }
 
+  @Patch('customers/:customerId/complete-tier-3')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
+  @RequirePermission(PERMISSIONS.APPROVE_KYC)
+  @ApiOperation({
+    summary: 'Complete Tier 3 upgrade (provider-confirmed)',
+    description:
+      'Sets tier to Tier_3, marks tier3UpgradeStatus COMPLETED, verifies address, clears balance-cap restrictions, and invalidates user cache. Use when provider has already upgraded the account (e.g. after address verification email).',
+  })
+  @ApiParam({ name: 'customerId', description: 'Customer ID' })
+  @ApiBody({ type: ApproveKycDto, required: false })
+  @ApiResponse({ status: 200, description: 'Tier 3 completed; benefits unlocked and balance blocks cleared' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  async completeCustomerTier3(
+    @Param('customerId') customerId: string,
+    @Body(new ValidationPipe({ skipMissingProperties: true })) dto: ApproveKycDto,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    return this.adminService.completeCustomerTier3(customerId, adminId, dto);
+  }
+
   @Get('customers/:customerId/partner-kyc-status')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
   @RequirePermission(PERMISSIONS.APPROVE_KYC)

@@ -23,6 +23,7 @@ import { SpraysModule } from './sprays/sprays.module.js';
 import { BvnCryptoModule } from './common/crypto/bvn-crypto.module.js';
 import { TierLimitModule } from './common/tier-limit/tier-limit.module.js';
 import { EmailModule } from './users/email.module.js';
+import { ConfigModule } from './config/config.module.js';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { EmailModule } from './users/email.module.js';
     BvnCryptoModule,
     EmailModule,
     TierLimitModule,
+    ConfigModule,
     UsersModule,
     DatabaseModule,
     ThrottlerModule.forRootAsync({

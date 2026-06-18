@@ -27,7 +27,6 @@ import { EventsService } from './events.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
 import { SearchEventDto } from './dto/search-event.dto.js';
-import { VerifyPerformerDto } from './dto/verify-performer.dto.js';
 import { EventStatus, EventVisibility, EventRole } from '../../generated/prisma/enums.js';
 
 @ApiTags('Events')
@@ -39,7 +38,11 @@ export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new event (requires approved KYC Tier 3)' })
+  @ApiOperation({
+    summary: 'Create a new event (requires approved KYC Tier 3)',
+    description:
+      'The authenticated user becomes the sole HOST participant. All other users join as GIFTERs. Requires Tier 3 with COMPLETED status.',
+  })
   @ApiBody({ type: CreateEventDto })
   @ApiResponse({ status: 201, description: 'Event created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid event data' })
@@ -159,7 +162,7 @@ export class EventsController {
             properties: {
               id: { type: 'string' },
               userId: { type: 'string' },
-              role: { type: 'string', enum: ['ATTENDEE', 'PERFORMER', 'CELEBRANT'] },
+              role: { type: 'string', enum: ['HOST', 'GIFTER'] },
               joinedAt: { type: 'string', format: 'date-time' },
               user: {
                 type: 'object',
@@ -246,12 +249,15 @@ export class EventsController {
   }
 
   @Post(':id/join')
-  @ApiOperation({ summary: 'Join an event as a participant' })
+  @ApiOperation({
+    summary: 'Join an event as a GIFTER',
+    description: 'Adds the authenticated user as a GIFTER participant. The event host is registered at event creation.',
+  })
   @ApiParam({ name: 'id', description: 'Event ID' })
   @ApiBody({ type: JoinEventDto })
   @ApiResponse({ status: 201, description: 'Successfully joined the event' })
   @ApiResponse({ status: 400, description: 'Bad request' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient KYC tier for role' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Event host cannot join as a gifter' })
   @ApiResponse({ status: 404, description: 'Event or wallet not found' })
   @ApiResponse({ status: 409, description: 'Conflict - Already a participant' })
   async joinEvent(@Request() req: any, @Param('id') id: string, @Body(ValidationPipe) joinEventDto: JoinEventDto) {
@@ -274,39 +280,6 @@ export class EventsController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.eventsService.leaveEvent(id, userId);
-  }
-
-  @Post('verify-performer')
-  @ApiOperation({ summary: 'Verify if a user is eligible to be a performer (requires KYC Tier_2 or Tier_3)' })
-  @ApiBody({ type: VerifyPerformerDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Performer eligibility verified',
-    schema: {
-      type: 'object',
-      properties: {
-        eligible: { type: 'boolean', description: 'Whether the user is eligible to be a performer' },
-        reason: { type: 'string', description: 'Reason for eligibility status' },
-        user: {
-          type: 'object',
-          nullable: true,
-          properties: {
-            id: { type: 'string' },
-            email: { type: 'string' },
-            username: { type: 'string', nullable: true },
-          },
-        },
-        kycTier: {
-          type: 'string',
-          nullable: true,
-          enum: ['Tier_0', 'Tier_1', 'Tier_2', 'Tier_3'],
-          description: 'Current KYC tier of the user',
-        },
-      },
-    },
-  })
-  async verifyPerformer(@Body(ValidationPipe) verifyPerformerDto: VerifyPerformerDto) {
-    return this.eventsService.verifyPerformerEligibility(verifyPerformerDto.identifier);
   }
 
   @Get(':id/leaderboard')

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException,
 import { DatabaseService } from '../database/database.service.js';
 import { CreateSprayDto } from './dto/create-spray.dto.js';
 import { ProviderService } from '../provider/provider.service.js';
-import { EventStatus, SprayStatus } from '../../generated/prisma/enums.js';
+import { EventStatus, SprayStatus, EventRole } from '../../generated/prisma/enums.js';
 import { TransactionType, TransactionDirection, TransactionStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
@@ -235,6 +235,10 @@ export class SpraysService {
       throw new BadRequestException('Either receiverUserId or receiverParticipantId must be provided');
     }
 
+    if (receiverParticipant.role !== EventRole.HOST) {
+      throw new BadRequestException('Sprays can only be sent to the event host');
+    }
+
     // Determine wallets
     let sprayerWallet = sprayerParticipant.wallet;
     if (!sprayerWallet) {
@@ -379,7 +383,7 @@ export class SpraysService {
                 note: createSprayDto.note ?? null,
                 sprayerUserId: userId,
                 receiverUserId: receiverParticipant.userId,
-                receiverRole: receiverParticipant.role,
+                receiverRole: EventRole.HOST,
                 eventTitle: event.title,
               },
             },

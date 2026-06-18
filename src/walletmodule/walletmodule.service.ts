@@ -42,6 +42,7 @@ import {
   buildWithdrawalPushNotification,
   WithdrawalNotificationKind,
 } from '../common/utils/withdrawal-notification.util.js';
+import { bankAccountNameMatchesTier1 } from '../common/utils/bank-account-name-match.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -459,6 +460,18 @@ export class WalletmoduleService {
     const payoutCustomer = fromWallet.customer;
     await this.withdrawalLimitService.validatePayoutForTier(payoutCustomer, payoutCustomer.id, amount);
 
+    const savedBankAccount = await this.databaseService.bankAccount.findUnique({
+      where: { customerId: payoutCustomer.id },
+    });
+    if (!savedBankAccount) {
+      throw new BadRequestException('Add a bank account before initiating a withdrawal');
+    }
+    this.assertSavedBankAccountDestination(
+      savedBankAccount,
+      initiateDto.toAccountNumber,
+      initiateDto.bankCode,
+    );
+
     // Get destination account name if not provided (via name enquiry)
     let destinationAccountName = initiateDto.recipientName;
     if (!destinationAccountName) {
@@ -679,25 +692,13 @@ export class WalletmoduleService {
 
       const toAccount = (payoutData.toAccountNumber as string).trim();
       const bankCode = (payoutData.bankCode as string).trim();
-      let bankAccount = await tx.bankAccount.findFirst({
-        where: {
-          customerId: fromWallet.customerId,
-          accountNumber: toAccount,
-          bankCode,
-        },
+      const bankAccount = await tx.bankAccount.findUnique({
+        where: { customerId: fromWallet.customerId },
       });
       if (!bankAccount) {
-        bankAccount = await tx.bankAccount.create({
-          data: {
-            customerId: fromWallet.customerId,
-            accountName: (payoutData.recipientName as string) || 'Unknown',
-            accountNumber: toAccount,
-            bankCode,
-            isDefault: false,
-            isVerified: true,
-          },
-        });
+        throw new BadRequestException('Add a bank account before initiating a withdrawal');
       }
+      this.assertSavedBankAccountDestination(bankAccount, toAccount, bankCode);
 
       const payoutTxn = await tx.transaction.create({
         data: {
@@ -1062,10 +1063,9 @@ export class WalletmoduleService {
   }
 
   /**
-   * Update bank account details for a user
+   * Update bank account details for a user (one account per customer).
    */
   async updateBankAccount(userId: string, updateDto: UpdateBankAccountDto): Promise<any> {
-    // Find customer by userId
     const customer = await this.databaseService.customer.findUnique({
       where: { userId },
       include: {
@@ -1077,73 +1077,52 @@ export class WalletmoduleService {
       throw new NotFoundException('Customer not found');
     }
 
-    // Get destination account name if not provided (via name enquiry)
-    let accountName = updateDto.accountName;
+    let accountName = updateDto.accountName?.trim();
     if (!accountName) {
       try {
         const nameEnquiry = await this.providerService.bankAccountNameEnquiry(
           updateDto.bankCode,
           updateDto.accountNumber,
         );
-        accountName = nameEnquiry.accountName;
+        accountName = nameEnquiry.accountName?.trim();
       } catch (error) {
-        this.logger.warn(`Name enquiry failed: ${error.message}. Proceeding without account name.`);
-        accountName = 'Unknown';
+        this.logger.warn(`Name enquiry failed: ${error.message}`);
+        throw new BadRequestException('Unable to resolve bank account name. Please try again.');
       }
     }
 
-    // Find existing bank account for this customer
-    const existingBankAccount = await this.databaseService.bankAccount.findFirst({
-      where: {
-        customerId: customer.id,
-        accountNumber: updateDto.accountNumber,
-        bankCode: updateDto.bankCode,
-      },
+    const nameMatch = bankAccountNameMatchesTier1(customer.tier1NubanName, accountName);
+    if (!nameMatch.ok) {
+      throw new BadRequestException(nameMatch.reason);
+    }
+
+    const existingBankAccount = await this.databaseService.bankAccount.findUnique({
+      where: { customerId: customer.id },
     });
 
-    let oldAccountNumber: string | null = null;
-    let bankAccount;
-
-    if (existingBankAccount) {
-      // Update existing bank account
-      oldAccountNumber = existingBankAccount.accountNumber;
-      bankAccount = await this.databaseService.bankAccount.update({
-        where: { id: existingBankAccount.id },
-        data: {
-          accountName,
-          accountNumber: updateDto.accountNumber,
-          bankCode: updateDto.bankCode,
-          isDefault: updateDto.isDefault ?? existingBankAccount.isDefault,
-        },
-      });
-    } else {
-      // Create new bank account
-      // If setting as default, unset other default accounts
-      if (updateDto.isDefault) {
-        await this.databaseService.bankAccount.updateMany({
-          where: {
-            customerId: customer.id,
-            isDefault: true,
-          },
+    const oldAccountNumber = existingBankAccount?.accountNumber ?? null;
+    const bankAccount = existingBankAccount
+      ? await this.databaseService.bankAccount.update({
+          where: { id: existingBankAccount.id },
           data: {
-            isDefault: false,
+            accountName,
+            accountNumber: updateDto.accountNumber,
+            bankCode: updateDto.bankCode,
+            isDefault: true,
+            isVerified: true,
+          },
+        })
+      : await this.databaseService.bankAccount.create({
+          data: {
+            customerId: customer.id,
+            accountName,
+            accountNumber: updateDto.accountNumber,
+            bankCode: updateDto.bankCode,
+            isDefault: true,
+            isVerified: true,
           },
         });
-      }
 
-      bankAccount = await this.databaseService.bankAccount.create({
-        data: {
-          customerId: customer.id,
-          accountName,
-          accountNumber: updateDto.accountNumber,
-          bankCode: updateDto.bankCode,
-          isDefault: updateDto.isDefault ?? false,
-          isVerified: true,
-        },
-      });
-    }
-
-    // Send email notification (don't await to avoid blocking)
     if (customer.user?.email) {
       this.emailService
         .sendBankAccountChangeAlert(
@@ -1165,6 +1144,24 @@ export class WalletmoduleService {
       message: existingBankAccount ? 'Bank account updated successfully' : 'Bank account added successfully',
       bankAccount,
     };
+  }
+
+  private normalizeBankCode(code: string | number | null | undefined): string {
+    if (code === null || code === undefined) return '';
+    return String(code).trim().replace(/^0+/, '') || '0';
+  }
+
+  private assertSavedBankAccountDestination(
+    saved: { accountNumber: string; bankCode: string },
+    toAccountNumber: string,
+    bankCode: string,
+  ): void {
+    if (saved.accountNumber.trim() !== toAccountNumber.trim()) {
+      throw new BadRequestException('Withdrawals must go to your saved bank account');
+    }
+    if (this.normalizeBankCode(saved.bankCode) !== this.normalizeBankCode(bankCode)) {
+      throw new BadRequestException('Withdrawals must go to your saved bank account');
+    }
   }
 
   private async notifyWithdrawalStatus(

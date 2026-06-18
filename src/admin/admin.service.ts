@@ -38,6 +38,7 @@ import {
   SprayStatus,
 } from '../../generated/prisma/enums.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
+import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
@@ -1149,6 +1150,7 @@ export class AdminService {
   async promoteCustomerToTier3(customerId: string, adminId: string, dto?: ApproveKycDto) {
     const customer = await this.databaseService.customer.findUnique({
       where: { id: customerId },
+      select: { id: true, userId: true, tier: true, tier3UpgradeStatus: true },
     });
 
     if (!customer) {
@@ -1160,14 +1162,19 @@ export class AdminService {
     }
 
     if (customer.tier3UpgradeStatus === Tier3UpgradeStatus.COMPLETED) {
-      return customer;
+      return this.finalizeCustomerTier3(customerId, adminId, {
+        action: 'CUSTOMER_TIER3_APPROVED',
+        notes: dto?.notes,
+        partnerKycAudit: null,
+        skipPartnerFetch: true,
+      });
     }
 
     if (customer.tier3UpgradeStatus !== Tier3UpgradeStatus.PENDING) {
       throw new BadRequestException('Customer does not have a pending Tier 3 upgrade to approve');
     }
 
-    let partnerKycAudit: unknown;
+    let partnerKycAudit: unknown = null;
     try {
       partnerKycAudit = await this.customerKycService.fetchPartnerAccountKycStatus(customerId);
     } catch (err) {
@@ -1176,12 +1183,91 @@ export class AdminService {
       );
     }
 
+    return this.finalizeCustomerTier3(customerId, adminId, {
+      action: 'CUSTOMER_TIER3_APPROVED',
+      notes: dto?.notes,
+      partnerKycAudit,
+    });
+  }
+
+  /**
+   * Force-complete Tier 3 after provider-side upgrade (e.g. address verification email).
+   * Sets tier/provider fields, clears balance-cap blocks, and unlocks Tier 3 benefits.
+   */
+  async completeCustomerTier3(customerId: string, adminId: string, dto?: ApproveKycDto) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, userId: true, tier: true, tier3UpgradeStatus: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (customer.tier3UpgradeStatus === Tier3UpgradeStatus.COMPLETED && customer.tier === KycTier.Tier_3) {
+      return this.finalizeCustomerTier3(customerId, adminId, {
+        action: 'CUSTOMER_TIER3_COMPLETED',
+        notes: dto?.notes,
+        partnerKycAudit: null,
+        skipPartnerFetch: true,
+        idempotent: true,
+      });
+    }
+
+    let partnerKycAudit: unknown = null;
+    try {
+      partnerKycAudit = await this.customerKycService.fetchPartnerAccountKycStatus(customerId);
+    } catch (err) {
+      this.logger.warn(
+        `complete-tier-3: partner KYC status fetch failed for ${customerId}: ${(err as Error).message}`,
+      );
+    }
+
+    return this.finalizeCustomerTier3(customerId, adminId, {
+      action: 'CUSTOMER_TIER3_COMPLETED',
+      notes: dto?.notes,
+      partnerKycAudit,
+      forceTierFields: true,
+    });
+  }
+
+  private async finalizeCustomerTier3(
+    customerId: string,
+    adminId: string,
+    options: {
+      action: string;
+      notes?: string;
+      partnerKycAudit: unknown;
+      skipPartnerFetch?: boolean;
+      forceTierFields?: boolean;
+      idempotent?: boolean;
+    },
+  ) {
+    const existing = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+      select: { userId: true },
+    });
+
     const now = new Date();
+    const tierFields = options.forceTierFields
+      ? {
+          tier: KycTier.Tier_3,
+          providerTierCode: 3,
+          tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
+          tier2AddressVerificationStatus: 'COMPLETED',
+        }
+      : {
+          tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
+          tier2AddressVerificationStatus: 'COMPLETED',
+        };
+
     const updated = await this.databaseService.customer.update({
       where: { id: customerId },
       data: {
-        tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
-        tier2AddressVerificationStatus: 'COMPLETED',
+        ...tierFields,
+        isBalanceRestricted: false,
+        balanceRestrictionReason: null,
+        balanceRestrictedAt: null,
       },
     });
 
@@ -1200,22 +1286,36 @@ export class AdminService {
       },
     });
 
-    await this.logAdminAction(
-      adminId,
-      'CUSTOMER_TIER3_APPROVED',
-      'CUSTOMER',
-      customerId,
-      {
-        tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
-        partnerKyc: partnerKycAudit,
-        notes: dto?.notes,
-      },
-      dto?.notes,
+    if (existing?.userId) {
+      await this.cacheService.invalidateUserCache(existing.userId);
+    }
+
+    if (!options.idempotent) {
+      await this.logAdminAction(
+        adminId,
+        options.action,
+        'CUSTOMER',
+        customerId,
+        {
+          tier: updated.tier,
+          tier3UpgradeStatus: updated.tier3UpgradeStatus,
+          providerTierCode: updated.providerTierCode,
+          balanceRestrictionCleared: true,
+          partnerKyc: options.partnerKycAudit,
+          notes: options.notes,
+        },
+        options.notes,
+      );
+    }
+
+    this.logger.log(
+      `${options.action} adminId=${adminId} customerId=${customerId} tier=${updated.tier} tier3=${updated.tier3UpgradeStatus}`,
     );
 
-    this.logger.log(`Tier 3 approved adminId=${adminId} customerId=${customerId} PENDING→COMPLETED`);
-
-    return updated;
+    return {
+      ...updated,
+      hasTier3Benefits: hasTier3Benefits(updated),
+    };
   }
 
   async getPartnerKycStatusForCustomer(customerId: string) {

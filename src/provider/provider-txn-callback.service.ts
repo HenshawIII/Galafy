@@ -28,6 +28,7 @@ import {
 } from '../common/utils/withdrawal-notification.util.js';
 import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { isHostReceiverRole } from '../common/utils/event-role.util.js';
 
 @Injectable()
 export class ProviderTxnCallbackService {
@@ -499,11 +500,7 @@ export class ProviderTxnCallbackService {
               const sprayerUserId = typeof sc.sprayerUserId === 'string' ? sc.sprayerUserId : null;
               const receiverRole = sc.receiverRole as string | undefined;
               const eventTitle = typeof sc.eventTitle === 'string' ? sc.eventTitle : 'Event';
-              if (
-                receiverUserId &&
-                (receiverRole === 'CELEBRANT' || receiverRole === 'PERFORMER') &&
-                sprayerUserId
-              ) {
+              if (receiverUserId && isHostReceiverRole(receiverRole) && sprayerUserId) {
                 this.databaseService.user
                   .findUnique({
                     where: { id: sprayerUserId },

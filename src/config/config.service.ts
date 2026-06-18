@@ -2,6 +2,11 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from '@nes
 import { DatabaseService } from '../database/database.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { ConfigType } from '../../generated/prisma/enums.js';
+import {
+  CLIENT_VISIBLE_CONFIG_CATEGORIES,
+  ClientConfigItem,
+  sanitizeConfigForClient,
+} from '../common/utils/client-config.util.js';
 
 @Injectable()
 export class ConfigService {
@@ -66,6 +71,58 @@ export class ConfigService {
       where,
       orderBy: [{ category: 'asc' }, { key: 'asc' }],
     });
+  }
+
+  /**
+   * Active configs visible to mobile/client apps (allowlisted categories only).
+   */
+  async getClientVisibleConfigs(category?: string): Promise<ClientConfigItem[]> {
+    const trimmedCategory = category?.trim();
+    if (trimmedCategory && !CLIENT_VISIBLE_CONFIG_CATEGORIES.has(trimmedCategory)) {
+      throw new BadRequestException(`Category "${trimmedCategory}" is not available to client applications`);
+    }
+
+    const categories = trimmedCategory ? [trimmedCategory] : [...CLIENT_VISIBLE_CONFIG_CATEGORIES];
+
+    const rows = await this.databaseService.systemConfig.findMany({
+      where: {
+        isActive: true,
+        category: { in: categories },
+      },
+      orderBy: [{ category: 'asc' }, { key: 'asc' }],
+      select: {
+        key: true,
+        category: true,
+        value: true,
+        type: true,
+        description: true,
+      },
+    });
+
+    return rows.map(sanitizeConfigForClient);
+  }
+
+  async getClientVisibleConfigByKey(key: string): Promise<ClientConfigItem> {
+    const row = await this.databaseService.systemConfig.findUnique({
+      where: { key },
+      select: {
+        key: true,
+        category: true,
+        value: true,
+        type: true,
+        description: true,
+        isActive: true,
+      },
+    });
+
+    if (!row || !row.isActive) {
+      throw new NotFoundException(`Configuration key "${key}" not found or inactive`);
+    }
+
+    if (!CLIENT_VISIBLE_CONFIG_CATEGORIES.has(row.category)) {
+      throw new NotFoundException(`Configuration key "${key}" not found or inactive`);
+    }
+    return sanitizeConfigForClient(row);
   }
 
   /**

@@ -95,11 +95,9 @@ enum WebhookProcessingStatus {
   FAILED
 }
 
-// Only these three as requested
 enum EventRole {
-  ATTENDEE
-  PERFORMER
-  CELEBRANT
+  HOST
+  GIFTER
 }
 
 enum SprayStatus {
@@ -554,7 +552,7 @@ model EventParticipant {
   walletId String?
   wallet   Wallet? @relation(fields: [walletId], references: [id])
 
-  role      EventRole @default(ATTENDEE)
+  role      EventRole @default(GIFTER)
   joinedAt  DateTime  @default(now())
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -614,6 +612,8 @@ model BankAccount {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([customerId])
 }
 
 model FundingTransaction {

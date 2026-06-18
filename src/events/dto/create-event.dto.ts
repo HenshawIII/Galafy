@@ -10,7 +10,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { EventRole, EventVisibility } from './event-enums.js';
+import { EventVisibility } from './event-enums.js';
 
 export class CreateEventDto {
   @ApiProperty({ description: 'Event title', example: 'Birthday Celebration' })
@@ -103,24 +103,14 @@ export class CreateEventDto {
   anonSprayersAllowed?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Tagged performer (email or username). Only valid when role is CELEBRANT.',
-    example: 'performer@example.com',
+    description: 'Deprecated — ignored. Always stored as null. The event creator is the sole HOST.',
+    example: null,
+    deprecated: true,
   })
   @IsString()
   @IsOptional()
   @MaxLength(255)
   taggedPerformer?: string;
-
-  @ApiPropertyOptional({
-    description:
-      'Role for event creator. Can be PERFORMER or CELEBRANT. Defaults to CELEBRANT if not specified. If PERFORMER, taggedPerformer field is invalid.',
-    enum: EventRole,
-    default: EventRole.CELEBRANT,
-    example: EventRole.CELEBRANT,
-  })
-  @IsEnum(EventRole)
-  @IsOptional()
-  role?: EventRole;
 
   @ApiPropertyOptional({
     description: 'Event visibility',
