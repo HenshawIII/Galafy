@@ -28,6 +28,7 @@ import { buildStableProviderRef } from '../utils/provider-transaction-reference.
 import { TierLimitService } from '../services/tier-limit.service.js';
 import { ProviderAccountStatusService } from '../provider-account-status/provider-account-status.service.js';
 import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
+import { AdminNotificationService } from '../../admin/admin-notification.service.js';
 import { isProviderOutboundBlocked } from '../provider-account-status/provider-account-status.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
@@ -68,6 +69,7 @@ export class InflowCreditService {
     private readonly tierLimitService: TierLimitService,
     private readonly providerAccountStatusService: ProviderAccountStatusService,
     private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
+    private readonly adminNotificationService: AdminNotificationService,
   ) {}
 
   async processBankInflow(input: BankInflowProcessInput): Promise<BankInflowProcessResult> {
@@ -413,6 +415,21 @@ export class InflowCreditService {
     if (!clientResult.isDuplicate) {
       await this.tierLimitService.evaluateBalanceAfterInflow(wallet.customerId);
       await this.notifyIfProviderAccountInactive(wallet.customerId);
+
+      const customerUser = await this.databaseService.user.findFirst({
+        where: { customer: { id: wallet.customerId } },
+        select: { id: true, email: true },
+      });
+      const netAmount = await this.databaseService.transaction.findUnique({
+        where: { id: clientResult.transactionId },
+        select: { amount: true },
+      });
+      void this.adminNotificationService.notifyInflow({
+        transactionId: clientResult.transactionId!,
+        userId: customerUser?.id,
+        amount: netAmount?.amount?.toString() ?? grossAmount.toString(),
+        email: customerUser?.email,
+      });
     }
 
     if (pendingFeeSweep && !clientResult.isDuplicate) {

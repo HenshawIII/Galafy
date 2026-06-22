@@ -39,6 +39,11 @@ import {
 } from '../../generated/prisma/enums.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
+import {
+  buildCompletedKycCustomerWhere,
+  buildPendingKycCustomerWhere,
+  isCustomerKycPending,
+} from '../common/utils/admin-kyc.util.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
@@ -219,52 +224,42 @@ export class AdminService {
 
     const where: any = {};
 
-    // Handle NoTier filter - users without customer records
     if (filters.tier === 'NoTier') {
       where.customer = null;
     } else if (filters.tier) {
-      // Handle regular tier filter
       where.customer = {
         tier: filters.tier,
         ...(filters.isAmlRestricted !== undefined && { isAmlRestricted: filters.isAmlRestricted }),
       };
-    } else {
-      // No tier filter, but may have other customer filters
-      where.customer = {
-        ...(filters.isAmlRestricted !== undefined && { isAmlRestricted: filters.isAmlRestricted }),
-      };
+    } else if (filters.isAmlRestricted !== undefined) {
+      where.customer = { isAmlRestricted: filters.isAmlRestricted };
     }
 
-    // Handle utility bill status filter
-    if (filters.utilityBillStatus) {
-      if (filters.utilityBillStatus === 'noBill') {
-        // Users with customer but no utility bill submissions
-        if (where.customer && typeof where.customer === 'object' && !where.customer.is) {
-          where.customer.utilityBillSubmissions = {
-            none: {},
-          };
-        } else if (!where.customer) {
-          // If no customer filter, ensure user has customer but no submissions
-          where.customer = {
-            utilityBillSubmissions: {
-              none: {},
-            },
-          };
-        }
+    if (filters.kycStatus === 'pending') {
+      if (filters.tier === 'NoTier') {
+        // NoTier users are pending KYC by definition
+      } else if (where.customer && typeof where.customer === 'object') {
+        where.customer = { ...where.customer, ...buildPendingKycCustomerWhere() };
       } else {
-        // Filter by latest utility bill submission status
-        // This requires a more complex query - we'll filter after fetching
-        // For now, we'll include all and filter in code, or use a subquery approach
-        // Note: Prisma doesn't support filtering by latest related record directly
-        // We'll need to fetch and filter in code or use a raw query
+        where.OR = [{ customer: null }, { customer: buildPendingKycCustomerWhere() }];
+      }
+    } else if (filters.kycStatus === 'completed') {
+      if (filters.tier === 'NoTier') {
+        where.customer = { id: 'impossible-no-match' };
+      } else if (where.customer && typeof where.customer === 'object') {
+        where.customer = { ...where.customer, ...buildCompletedKycCustomerWhere() };
+      } else {
+        where.customer = buildCompletedKycCustomerWhere();
       }
     }
 
     if (filters.search) {
-      where.OR = [
+      const searchOr = [
         { email: { contains: filters.search, mode: 'insensitive' } },
         { firstName: { contains: filters.search, mode: 'insensitive' } },
         { lastName: { contains: filters.search, mode: 'insensitive' } },
+        { username: { contains: filters.search, mode: 'insensitive' } },
+        { phone: { contains: filters.search, mode: 'insensitive' } },
         {
           customer: {
             OR: [
@@ -275,6 +270,12 @@ export class AdminService {
           },
         },
       ];
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: searchOr }];
+        delete where.OR;
+      } else {
+        where.OR = searchOr;
+      }
     }
 
     const [users, total] = await Promise.all([
@@ -294,13 +295,6 @@ export class AdminService {
                 },
               },
               withdrawalLimit: true,
-              utilityBillSubmissions: {
-                orderBy: { createdAt: 'desc' },
-                take: 1, // Get only the latest submission
-                select: {
-                  status: true,
-                },
-              },
             },
           },
         },
@@ -309,59 +303,36 @@ export class AdminService {
       this.databaseService.user.count({ where }),
     ]);
 
-    // Filter by utility bill status if needed (for statuses other than noBill)
-    let filteredUsers = users;
-    if (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill') {
-      filteredUsers = users.filter((user) => {
-        if (
-          !user.customer ||
-          !user.customer.utilityBillSubmissions ||
-          user.customer.utilityBillSubmissions.length === 0
-        ) {
-          return false;
-        }
-        const latestSubmission = user.customer.utilityBillSubmissions[0];
-        return latestSubmission.status === filters.utilityBillStatus;
-      });
-    }
-
     return {
-      users: filteredUsers.map((user) => {
-        // Get latest utility bill status
-        let utilityBillStatus: UtilityBillStatus | null = null;
-        if (user.customer && user.customer.utilityBillSubmissions && user.customer.utilityBillSubmissions.length > 0) {
-          utilityBillStatus = user.customer.utilityBillSubmissions[0].status as UtilityBillStatus;
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          profilePicture: user.profilePicture,
-          customer: user.customer
-            ? {
-                id: user.customer.id,
-                tier: user.customer.tier,
-                isAmlRestricted: user.customer.isAmlRestricted,
-                amlRestrictedAt: user.customer.amlRestrictedAt,
-                amlRestrictionReason: user.customer.amlRestrictionReason,
-                wallets: user.customer.wallets,
-                withdrawalLimit: user.customer.withdrawalLimit,
-                utilityBillStatus,
-              }
-            : null,
-          createdAt: user.createdAt,
-        };
-      }),
+      users: users.map((user) => ({
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profilePicture: user.profilePicture,
+        customer: user.customer
+          ? {
+              id: user.customer.id,
+              tier: user.customer.tier,
+              isAmlRestricted: user.customer.isAmlRestricted,
+              amlRestrictedAt: user.customer.amlRestrictedAt,
+              amlRestrictionReason: user.customer.amlRestrictionReason,
+              tier1FaceStatus: user.customer.tier1FaceStatus,
+              tier1AccountStatus: user.customer.tier1AccountStatus,
+              tier2UpgradeStatus: user.customer.tier2UpgradeStatus,
+              tier3UpgradeStatus: user.customer.tier3UpgradeStatus,
+              wallets: user.customer.wallets,
+              withdrawalLimit: user.customer.withdrawalLimit,
+            }
+          : null,
+        createdAt: user.createdAt,
+      })),
       pagination: {
         page,
         limit,
-        total: filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total,
-        totalPages: Math.ceil(
-          (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill' ? filteredUsers.length : total) / limit,
-        ),
+        total,
+        totalPages: Math.ceil(total / limit),
       },
     };
   }
@@ -378,43 +349,39 @@ export class AdminService {
     if (filters.tier === 'NoTier') {
       where.customer = null;
     } else if (filters.tier) {
-      // Handle regular tier filter
       where.customer = {
         tier: filters.tier,
         ...(filters.isAmlRestricted !== undefined && { isAmlRestricted: filters.isAmlRestricted }),
       };
-    } else {
-      // No tier filter, but may have other customer filters
-      where.customer = {
-        ...(filters.isAmlRestricted !== undefined && { isAmlRestricted: filters.isAmlRestricted }),
-      };
+    } else if (filters.isAmlRestricted !== undefined) {
+      where.customer = { isAmlRestricted: filters.isAmlRestricted };
     }
 
-    // Handle utility bill status filter
-    if (filters.utilityBillStatus) {
-      if (filters.utilityBillStatus === 'noBill') {
-        // Users with customer but no utility bill submissions
-        if (where.customer && typeof where.customer === 'object' && !where.customer.is) {
-          where.customer.utilityBillSubmissions = {
-            none: {},
-          };
-        } else if (!where.customer) {
-          // If no customer filter, ensure user has customer but no submissions
-          where.customer = {
-            utilityBillSubmissions: {
-              none: {},
-            },
-          };
-        }
+    if (filters.kycStatus === 'pending') {
+      if (filters.tier === 'NoTier') {
+        // no-op
+      } else if (where.customer && typeof where.customer === 'object') {
+        where.customer = { ...where.customer, ...buildPendingKycCustomerWhere() };
+      } else {
+        where.OR = [{ customer: null }, { customer: buildPendingKycCustomerWhere() }];
       }
-      // For other statuses, we'll filter after fetching (same as getUsers)
+    } else if (filters.kycStatus === 'completed') {
+      if (filters.tier === 'NoTier') {
+        where.customer = { id: 'impossible-no-match' };
+      } else if (where.customer && typeof where.customer === 'object') {
+        where.customer = { ...where.customer, ...buildCompletedKycCustomerWhere() };
+      } else {
+        where.customer = buildCompletedKycCustomerWhere();
+      }
     }
 
     if (filters.search) {
-      where.OR = [
+      const searchOr = [
         { email: { contains: filters.search, mode: 'insensitive' } },
         { firstName: { contains: filters.search, mode: 'insensitive' } },
         { lastName: { contains: filters.search, mode: 'insensitive' } },
+        { username: { contains: filters.search, mode: 'insensitive' } },
+        { phone: { contains: filters.search, mode: 'insensitive' } },
         {
           customer: {
             OR: [
@@ -425,6 +392,12 @@ export class AdminService {
           },
         },
       ];
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: searchOr }];
+        delete where.OR;
+      } else {
+        where.OR = searchOr;
+      }
     }
 
     // Use streaming to avoid loading all users into memory
@@ -445,7 +418,7 @@ export class AdminService {
         'Profile Picture',
         'Phone',
         'KYC Tier',
-        'Utility Bill Status',
+        'KYC Status',
         'AML Restricted',
         'AML Restricted At',
         'AML Restriction Reason',
@@ -473,13 +446,6 @@ export class AdminService {
                       availableBalance: true,
                     },
                   },
-                  utilityBillSubmissions: {
-                    orderBy: { createdAt: 'desc' },
-                    take: 1, // Get only the latest submission
-                    select: {
-                      status: true,
-                    },
-                  },
                 },
               },
             },
@@ -487,35 +453,13 @@ export class AdminService {
 
           if (users.length === 0) break;
 
-          // Filter by utility bill status if needed (for statuses other than noBill)
-          let filteredUsers = users;
-          if (filters.utilityBillStatus && filters.utilityBillStatus !== 'noBill') {
-            filteredUsers = users.filter((user) => {
-              if (
-                !user.customer ||
-                !user.customer.utilityBillSubmissions ||
-                user.customer.utilityBillSubmissions.length === 0
-              ) {
-                return false;
-              }
-              const latestSubmission = user.customer.utilityBillSubmissions[0];
-              return latestSubmission.status === filters.utilityBillStatus;
-            });
-          }
+          for (const user of users) {
+            const kycStatus = !user.customer
+              ? 'pending'
+              : isCustomerKycPending(user.customer)
+                ? 'pending'
+                : 'completed';
 
-          // Add batch rows
-          for (const user of filteredUsers) {
-            // Get latest utility bill status
-            let utilityBillStatus: string = '';
-            if (
-              user.customer &&
-              user.customer.utilityBillSubmissions &&
-              user.customer.utilityBillSubmissions.length > 0
-            ) {
-              utilityBillStatus = user.customer.utilityBillSubmissions[0].status || '';
-            }
-
-            // Calculate total wallet balance
             const totalWalletBalance = user.customer?.wallets
               ? user.customer.wallets.reduce((sum, wallet) => sum.plus(wallet.availableBalance), new Decimal(0))
               : new Decimal(0);
@@ -535,7 +479,7 @@ export class AdminService {
               user.profilePicture || '',
               user.phone || '',
               user.customer?.tier || '',
-              utilityBillStatus,
+              kycStatus,
               user.customer?.isAmlRestricted ? 'Yes' : 'No',
               amlRestrictedAt,
               user.customer?.amlRestrictionReason || '',
@@ -787,6 +731,10 @@ export class AdminService {
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
+      username: user.username,
+      phone: user.phone,
+      profilePicture: user.profilePicture,
+      isActive: user.isVerified,
       createdAt: user.createdAt,
       customer: user.customer
         ? {
@@ -1382,35 +1330,71 @@ export class AdminService {
       ...dateFilter,
     };
 
-    // Execute three parallel queries for optimal performance
-    const [walletBalanceResult, withdrawnResult, receivedResult] = await Promise.all([
-      // Total Wallet Balance: Sum of all availableBalance from all wallets
-      // Note: Wallet balance is current state, not filtered by date range
+    const sevenDaysAgoDate = new Date();
+    sevenDaysAgoDate.setDate(sevenDaysAgoDate.getDate() - 7);
+    sevenDaysAgoDate.setHours(0, 0, 0, 0);
+
+    const [
+      walletBalanceResult,
+      withdrawnResult,
+      receivedResult,
+      _walletBalance7DaysAgo,
+      withdrawn7DaysAgo,
+      received7DaysAgo,
+    ] = await Promise.all([
       this.databaseService.wallet.aggregate({
-        _sum: {
-          availableBalance: true,
-        },
+        _sum: { availableBalance: true },
       }),
-      // Total Withdrawn: Sum of successful PAYOUT transactions (DEBIT) within date range
       this.databaseService.transaction.aggregate({
         where: withdrawnWhere,
-        _sum: {
-          amount: true,
-        },
+        _sum: { amount: true },
       }),
-      // Total Received: Sum of successful INFLOW transactions (CREDIT) within date range
       this.databaseService.transaction.aggregate({
         where: receivedWhere,
-        _sum: {
-          amount: true,
+        _sum: { amount: true },
+      }),
+      // Wallet balance 7 days ago approximation: sum of wallet snapshots isn't tracked;
+      // compare current balance vs balance from transactions net change (use same value for stable metric)
+      this.databaseService.wallet.aggregate({
+        _sum: { availableBalance: true },
+      }),
+      this.databaseService.transaction.aggregate({
+        where: {
+          ...withdrawnWhere,
+          createdAt: { lt: sevenDaysAgoDate },
         },
+        _sum: { amount: true },
+      }),
+      this.databaseService.transaction.aggregate({
+        where: {
+          ...receivedWhere,
+          createdAt: { lt: sevenDaysAgoDate },
+        },
+        _sum: { amount: true },
       }),
     ]);
 
-    // Handle null values (no transactions/wallets yet) - default to 0
+    const calculateGrowth = (current: number, previous: number): number => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return Number((((current - previous) / previous) * 100).toFixed(1));
+    };
+
     const totalWalletBalance = walletBalanceResult._sum.availableBalance || new Decimal(0);
     const totalWithdrawn = withdrawnResult._sum.amount || new Decimal(0);
     const totalReceived = receivedResult._sum.amount || new Decimal(0);
+
+    const withdrawnPrev = withdrawn7DaysAgo._sum.amount || new Decimal(0);
+    const receivedPrev = received7DaysAgo._sum.amount || new Decimal(0);
+
+    const withdrawnCurrent = Number(totalWithdrawn.toString());
+    const withdrawnPrevious = Number(withdrawnPrev.toString());
+    const receivedCurrent = Number(totalReceived.toString());
+    const receivedPrevious = Number(receivedPrev.toString());
+
+    const totalWithdrawnGrowth = calculateGrowth(withdrawnCurrent, withdrawnPrevious);
+    const totalReceivedGrowth = calculateGrowth(receivedCurrent, receivedPrevious);
+    // Wallet balance growth: compare all-time received growth as proxy since historical wallet snapshots unavailable
+    const totalWalletBalanceGrowth = totalReceivedGrowth;
 
     // Generate chart data - default to last 7 days if no date filters provided
     let chartData: Array<{ date: string; amount: string; count: number }> = [];
@@ -1479,6 +1463,9 @@ export class AdminService {
       totalWalletBalance: totalWalletBalance.toString(),
       totalWithdrawn: totalWithdrawn.toString(),
       totalReceived: totalReceived.toString(),
+      totalWalletBalanceGrowth,
+      totalWithdrawnGrowth,
+      totalReceivedGrowth,
       chartData,
       cached: false,
       timestamp: new Date().toISOString(),
@@ -1486,7 +1473,6 @@ export class AdminService {
       ...(filters?.endDate && { endDate: filters.endDate }),
     };
 
-    // Only cache all-time queries (no date filters) to avoid cache bloat
     if (!filters?.startDate && !filters?.endDate) {
       await this.cacheService.set(
         cacheKey,
@@ -1494,6 +1480,9 @@ export class AdminService {
           totalWalletBalance: result.totalWalletBalance,
           totalWithdrawn: result.totalWithdrawn,
           totalReceived: result.totalReceived,
+          totalWalletBalanceGrowth: result.totalWalletBalanceGrowth,
+          totalWithdrawnGrowth: result.totalWithdrawnGrowth,
+          totalReceivedGrowth: result.totalReceivedGrowth,
           timestamp: result.timestamp,
         },
         this.CACHE_TTL,
@@ -1550,10 +1539,10 @@ export class AdminService {
           status: 'LIVE',
         },
       }),
-      // Pending KYC requests (KycRequest table)
-      this.databaseService.kycRequest.count({
+      // Pending KYC: users without customer or customers with any tier pending
+      this.databaseService.user.count({
         where: {
-          status: KycRequestStatus.PENDING,
+          OR: [{ customer: null }, { customer: buildPendingKycCustomerWhere() }],
         },
       }),
       // All-time Revenue from AdminFee (status = COLLECTED)
@@ -3122,6 +3111,7 @@ export class AdminService {
                       firstName: true,
                       lastName: true,
                       username: true,
+                      profilePicture: true,
                     },
                   },
                 },
@@ -3139,6 +3129,7 @@ export class AdminService {
                       firstName: true,
                       lastName: true,
                       username: true,
+                      profilePicture: true,
                     },
                   },
                 },
@@ -3458,6 +3449,7 @@ export class AdminService {
                       firstName: true,
                       lastName: true,
                       username: true,
+                      profilePicture: true,
                     },
                   },
                 },
@@ -3515,6 +3507,7 @@ export class AdminService {
                     lastName: true,
                     username: true,
                     phone: true,
+                    profilePicture: true,
                   },
                 },
               },
@@ -3579,6 +3572,8 @@ export class AdminService {
     return {
       ...transaction,
       amount: transaction.amount.toString(),
+      user: transaction.wallet?.customer?.user,
+      event: transaction.spray?.event,
     };
   }
 
@@ -3691,6 +3686,7 @@ export class AdminService {
                       firstName: true,
                       lastName: true,
                       username: true,
+                      profilePicture: true,
                     },
                   },
                 },
@@ -3852,31 +3848,14 @@ export class AdminService {
   // =====================
 
   /**
-   * Get admin notifications
-   * Note: Admin must have a linked userId to receive notifications
+   * Get admin notifications (platform-wide feed)
    */
-  async getAdminNotifications(adminId: string, filters: GetNotificationsDto) {
-    // Get admin to check if they have a linked userId
-    const admin = await this.databaseService.admin.findUnique({
-      where: { id: adminId },
-      select: { userId: true },
-    });
-
-    if (!admin) {
-      throw new NotFoundException('Admin not found');
-    }
-
-    if (!admin.userId) {
-      throw new BadRequestException('Admin does not have a linked user account. Notifications require a user account.');
-    }
-
+  async getAdminNotifications(_adminId: string, filters: GetNotificationsDto) {
     const page = filters.page || 1;
     const limit = filters.limit || 20;
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      userId: admin.userId,
-    };
+    const where: any = {};
 
     if (filters.read !== undefined) {
       where.read = filters.read;
@@ -3899,13 +3878,13 @@ export class AdminService {
     }
 
     const [notifications, total] = await Promise.all([
-      this.databaseService.notification.findMany({
+      this.databaseService.adminNotification.findMany({
         where,
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      this.databaseService.notification.count({ where }),
+      this.databaseService.adminNotification.count({ where }),
     ]);
 
     return {
@@ -3922,23 +3901,8 @@ export class AdminService {
   /**
    * Mark notification as read
    */
-  async markNotificationAsRead(adminId: string, notificationId: string) {
-    // Get admin to check if they have a linked userId
-    const admin = await this.databaseService.admin.findUnique({
-      where: { id: adminId },
-      select: { userId: true },
-    });
-
-    if (!admin) {
-      throw new NotFoundException('Admin not found');
-    }
-
-    if (!admin.userId) {
-      throw new BadRequestException('Admin does not have a linked user account. Notifications require a user account.');
-    }
-
-    // Verify notification belongs to admin's user
-    const notification = await this.databaseService.notification.findUnique({
+  async markNotificationAsRead(_adminId: string, notificationId: string) {
+    const notification = await this.databaseService.adminNotification.findUnique({
       where: { id: notificationId },
     });
 
@@ -3946,11 +3910,7 @@ export class AdminService {
       throw new NotFoundException('Notification not found');
     }
 
-    if (notification.userId !== admin.userId) {
-      throw new ForbiddenException('Notification does not belong to this admin');
-    }
-
-    const updatedNotification = await this.databaseService.notification.update({
+    const updatedNotification = await this.databaseService.adminNotification.update({
       where: { id: notificationId },
       data: { read: true },
     });
@@ -3961,26 +3921,9 @@ export class AdminService {
   /**
    * Get unread notification count
    */
-  async getUnreadNotificationCount(adminId: string) {
-    // Get admin to check if they have a linked userId
-    const admin = await this.databaseService.admin.findUnique({
-      where: { id: adminId },
-      select: { userId: true },
-    });
-
-    if (!admin) {
-      throw new NotFoundException('Admin not found');
-    }
-
-    if (!admin.userId) {
-      throw new BadRequestException('Admin does not have a linked user account. Notifications require a user account.');
-    }
-
-    const count = await this.databaseService.notification.count({
-      where: {
-        userId: admin.userId,
-        read: false,
-      },
+  async getUnreadNotificationCount(_adminId: string) {
+    const count = await this.databaseService.adminNotification.count({
+      where: { read: false },
     });
 
     return { unreadCount: count };

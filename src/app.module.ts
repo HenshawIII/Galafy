@@ -24,11 +24,13 @@ import { BvnCryptoModule } from './common/crypto/bvn-crypto.module.js';
 import { TierLimitModule } from './common/tier-limit/tier-limit.module.js';
 import { EmailModule } from './users/email.module.js';
 import { ConfigModule } from './config/config.module.js';
+import { AdminNotificationModule } from './admin/admin-notification.module.js';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(), // Enable scheduled tasks
     CacheModule, // Redis cache module (global)
+    AdminNotificationModule,
     BvnCryptoModule,
     EmailModule,
     TierLimitModule,

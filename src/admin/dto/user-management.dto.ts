@@ -2,7 +2,6 @@ import { IsOptional, IsString, IsEnum, IsBoolean, IsInt, Min, IsNotEmpty } from 
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { KycTier } from '../../users/dto/create-user-dto.js';
-import { UtilityBillStatus } from '../../../generated/prisma/enums.js';
 
 export enum UserTierFilter {
   Tier_0 = 'Tier_0',
@@ -12,11 +11,9 @@ export enum UserTierFilter {
   NoTier = 'NoTier',
 }
 
-export enum UtilityBillStatusFilter {
-  PENDING = 'PENDING',
-  APPROVED = 'APPROVED',
-  REJECTED = 'REJECTED',
-  noBill = 'noBill',
+export enum KycStatusFilter {
+  pending = 'pending',
+  completed = 'completed',
 }
 
 export class GetUsersDto {
@@ -50,13 +47,12 @@ export class GetUsersDto {
 
   @ApiProperty({
     required: false,
-    enum: UtilityBillStatusFilter,
-    description:
-      'Filter by utility bill submission status. Use "noBill" to filter users with no utility bill submissions.',
+    enum: KycStatusFilter,
+    description: 'Filter by overall KYC completion status across all tiers',
   })
   @IsOptional()
-  @IsEnum(UtilityBillStatusFilter)
-  utilityBillStatus?: UtilityBillStatusFilter;
+  @IsEnum(KycStatusFilter)
+  kycStatus?: KycStatusFilter;
 
   @ApiProperty({ required: false, example: true, description: 'Filter by AML restriction status' })
   @IsOptional()

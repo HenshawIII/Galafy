@@ -43,6 +43,7 @@ import {
   WithdrawalNotificationKind,
 } from '../common/utils/withdrawal-notification.util.js';
 import { bankAccountNameMatchesTier1 } from '../common/utils/bank-account-name-match.util.js';
+import { AdminNotificationService } from '../admin/admin-notification.service.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -65,6 +66,7 @@ export class WalletmoduleService {
     private readonly debitWalletMandateService: DebitWalletMandateService,
     private readonly nipChargesService: NipChargesService,
     private readonly notificationsService: NotificationsService,
+    private readonly adminNotificationService: AdminNotificationService,
   ) {}
 
   async getNipCharges() {
@@ -866,6 +868,14 @@ export class WalletmoduleService {
       transactionReference,
       destinationAccountNumber: payoutData.toAccountNumber as string,
       firstName: previewWallet.customer.user?.firstName ?? previewWallet.customer.firstName ?? undefined,
+    });
+
+    void this.adminNotificationService.notifyWithdrawal({
+      payoutId: transactionReference,
+      userId: previewWallet.customer.userId,
+      amount: amount.toFixed(2),
+      status: 'PROCESSING',
+      email: previewWallet.customer.user?.email ?? undefined,
     });
 
     const quote = await this.buildPayoutQuote({

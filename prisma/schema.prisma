@@ -962,6 +962,24 @@ model AdminActionLog {
 }
 
 // =====================
+// ADMIN NOTIFICATIONS
+// =====================
+
+model AdminNotification {
+  id        String   @id @default(uuid())
+  type      String   // NEW_USER | WITHDRAWAL | TIER_UPGRADE | INFLOW
+  title     String
+  message   String
+  data      Json?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([read])
+  @@index([type])
+}
+
+// =====================
 // AML ALERTS
 // =====================
 

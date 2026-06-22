@@ -10,6 +10,7 @@ import { BvnCryptoService } from '../common/crypto/bvn-crypto.service.js';
 import { resolvePartnershipAccountNumber } from '../common/utils/customer-account.util.js';
 import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
 import type { AlatPartnerAccountKycStatusData } from '../provider/dto/provider-account-upgrade.dto.js';
+import { AdminNotificationService } from '../admin/admin-notification.service.js';
 
 @Injectable()
 export class CustomerKycService {
@@ -19,6 +20,7 @@ export class CustomerKycService {
     private readonly databaseService: DatabaseService,
     private readonly providerService: ProviderService,
     private readonly bvnCrypto: BvnCryptoService,
+    private readonly adminNotificationService: AdminNotificationService,
   ) {}
 
   /**
@@ -444,6 +446,18 @@ export class CustomerKycService {
     this.logger.log(
       `Tier 3 upgrade submitted userId=${userId} accountNumber=${maskedAcct} tier3UpgradeStatus=PENDING`,
     );
+
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    void this.adminNotificationService.notifyTierUpgrade({
+      customerId: customer.id,
+      userId,
+      tier: 'Tier 3',
+      status: 'PENDING',
+      email: user?.email,
+    });
 
     return {
       tier: KycTier.Tier_3,

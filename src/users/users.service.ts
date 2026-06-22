@@ -31,6 +31,7 @@ import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
 import type { Prisma } from '../../generated/prisma/client.js';
+import { AdminNotificationService } from '../admin/admin-notification.service.js';
 
 @Injectable()
 export class UsersService {
@@ -42,6 +43,7 @@ export class UsersService {
     private readonly cacheService: CacheService,
     private readonly customerKycService: CustomerKycService,
     private readonly tierLimitService: TierLimitService,
+    private readonly adminNotificationService: AdminNotificationService,
   ) {}
 
   private async buildAccountLimitsForUser(
@@ -148,6 +150,13 @@ export class UsersService {
         isVerified: false,
         verificationCode,
       },
+    });
+
+    void this.adminNotificationService.notifyNewUser({
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
     });
 
     // Create default user settings for new user
