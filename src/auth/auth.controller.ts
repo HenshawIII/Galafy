@@ -57,6 +57,8 @@ export class AuthController {
           customerId: 'uuid',
           tier: 'Tier_1',
           providerTierCode: 'TIER_1',
+          tier2UpgradeStatus: null,
+          tier3UpgradeStatus: null,
           hasNin: false,
           hasBvn: true,
           hasAddressVerification: false,

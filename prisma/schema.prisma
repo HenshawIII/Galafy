@@ -26,6 +26,11 @@ enum KycTier {
   Tier_3
 }
 
+enum Tier2UpgradeStatus {
+  PENDING
+  COMPLETED
+}
+
 enum Tier3UpgradeStatus {
   PENDING
   COMPLETED
@@ -288,6 +293,7 @@ model Customer {
   // Tier 2 flow
   tier2TrackingId                  String?
   tier2AddressVerificationStatus     String?
+  tier2UpgradeStatus               Tier2UpgradeStatus?
 
   // Tier 3 upgrade (provider account-upgrade API)
   tier3UpgradeStatus Tier3UpgradeStatus?

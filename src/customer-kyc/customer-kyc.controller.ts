@@ -139,7 +139,19 @@ export class CustomerKycController {
 
   @Get('kyc-status')
   @ApiOperation({ summary: 'Get customer KYC status' })
-  @ApiResponse({ status: 200, description: 'KYC status retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'KYC status retrieved successfully',
+    schema: {
+      example: {
+        customerId: 'uuid',
+        tier: 'Tier_2',
+        tier2UpgradeStatus: 'COMPLETED',
+        tier3UpgradeStatus: null,
+        hasTier3Benefits: false,
+      },
+    },
+  })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
   async getCustomerKycStatus(@Request() req: any) {
@@ -226,7 +238,18 @@ export class CustomerKycController {
   @Post('kyc/tier2')
   @ApiOperation({ summary: 'Submit Tier 2 account upgrade (NIN + face)' })
   @ApiBody({ type: StartTier2Dto })
-  @ApiResponse({ status: 200, description: 'Tier 2 upgrade completed' })
+  @ApiResponse({
+    status: 200,
+    description: 'Tier 2 upgrade completed; tier2UpgradeStatus set to COMPLETED',
+    schema: {
+      example: {
+        tier: 'Tier_2',
+        tier2UpgradeStatus: 'COMPLETED',
+        message: 'Tier 2 upgrade completed successfully.',
+        addressVerificationStatus: 'PENDING',
+      },
+    },
+  })
   async startTier2(@Request() req: any, @Body(ValidationPipe) dto: StartTier2Dto) {
     const userId = req.user?.id;
     if (!userId) throw new Error('User ID is required. Please ensure you are authenticated.');

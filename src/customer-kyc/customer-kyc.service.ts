@@ -5,7 +5,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto.js';
 import { UpdateCustomerNameDto, UpdateCustomerContactsDto } from './dto/update-customer.dto.js';
 import { GetAllCustomersQueryDto } from './dto/customer-query.dto.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
-import { Tier1FaceStatus, Tier3UpgradeStatus } from '../../generated/prisma/enums.js';
+import { Tier1FaceStatus, Tier2UpgradeStatus, Tier3UpgradeStatus } from '../../generated/prisma/enums.js';
 import { BvnCryptoService } from '../common/crypto/bvn-crypto.service.js';
 import { resolvePartnershipAccountNumber } from '../common/utils/customer-account.util.js';
 import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
@@ -298,21 +298,36 @@ export class CustomerKycService {
       `Tier 2 upgrade start customerId=${customer.id} accountNumber=${maskedAcct} nin=present bvnIncluded=${!!bvn}`,
     );
 
-    await this.providerService.partnerAccountUpgradeTier2({
-      accountNumber,
-      nin: dto.nin,
-      liveImageOfFace: dto.liveImageOfFace,
-      ...(bvn ? { bvn } : {}),
+    await this.databaseService.customer.update({
+      where: { id: customer.id },
+      data: { tier2UpgradeStatus: Tier2UpgradeStatus.PENDING },
     });
+
+    try {
+      await this.providerService.partnerAccountUpgradeTier2({
+        accountNumber,
+        nin: dto.nin,
+        liveImageOfFace: dto.liveImageOfFace,
+        ...(bvn ? { bvn } : {}),
+      });
+    } catch (err) {
+      await this.databaseService.customer.update({
+        where: { id: customer.id },
+        data: { tier2UpgradeStatus: null },
+      });
+      throw err;
+    }
 
     const tier2CustomerUpdate: {
       tier: KycTier;
       providerTierCode: number;
+      tier2UpgradeStatus: Tier2UpgradeStatus;
       tier1PendingBvn?: string;
       tier1BvnHash?: string;
     } = {
       tier: KycTier.Tier_2,
       providerTierCode: 2,
+      tier2UpgradeStatus: Tier2UpgradeStatus.COMPLETED,
     };
     if (bvn && customer.tier1PendingBvn && this.bvnCrypto.isLegacyPlaintext(customer.tier1PendingBvn)) {
       tier2CustomerUpdate.tier1PendingBvn = this.bvnCrypto.encrypt(bvn);
@@ -350,6 +365,7 @@ export class CustomerKycService {
 
     return {
       tier: KycTier.Tier_2,
+      tier2UpgradeStatus: Tier2UpgradeStatus.COMPLETED,
       message: 'Tier 2 upgrade completed successfully.',
       addressVerificationStatus,
     };
@@ -780,6 +796,7 @@ export class CustomerKycService {
       tier1NubanName: customer.tier1NubanName,
       tier2TrackingId: customer.tier2TrackingId,
       tier2AddressVerificationStatus: customer.tier2AddressVerificationStatus,
+      tier2UpgradeStatus: customer.tier2UpgradeStatus,
       tier3UpgradeStatus: customer.tier3UpgradeStatus,
       hasTier3Benefits: hasTier3Benefits(customer),
       hasNin: !!customer.ninVerification,

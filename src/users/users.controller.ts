@@ -111,6 +111,8 @@ export class UsersController {
           customerId: 'uuid',
           tier: 'Tier_1',
           providerTierCode: 'TIER_1',
+          tier2UpgradeStatus: null,
+          tier3UpgradeStatus: null,
           hasNin: false,
           hasBvn: true,
           hasAddressVerification: false,
@@ -197,7 +199,9 @@ export class UsersController {
         internalWalletStatus: 'active',
         isPinSet: true,
         kycStatus: {
-          tier: 'Tier_1',
+          tier: 'Tier_2',
+          tier2UpgradeStatus: 'COMPLETED',
+          tier3UpgradeStatus: null,
           partnerAccount: {
             accountNumber: '0446920038',
             accountName: 'AYOMIDE ADEBAYO',

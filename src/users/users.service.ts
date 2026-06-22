@@ -728,6 +728,8 @@ export class UsersService {
           tier1NubanName: null,
           tier2TrackingId: null,
           tier2AddressVerificationStatus: null,
+          tier2UpgradeStatus: null,
+          tier3UpgradeStatus: null,
           hasNin: false,
           hasBvn: false,
           hasAddressVerification: false,
