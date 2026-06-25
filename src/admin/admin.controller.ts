@@ -673,7 +673,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get dashboard overview metrics',
     description:
-      'Returns dashboard metrics: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count. Includes growth percentages comparing last 7 days vs previous 7 days.',
+      'Returns dashboard metrics: Total Users, Verified Users, Total Events, Active Events, Revenue, Pending KYC count (Tier 1/2/3 users with incomplete KYC only). Includes growth percentages comparing last 7 days vs previous 7 days.',
   })
   @ApiResponse({
     status: 200,

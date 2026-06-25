@@ -48,7 +48,8 @@ export class GetUsersDto {
   @ApiProperty({
     required: false,
     enum: KycStatusFilter,
-    description: 'Filter by overall KYC completion status across all tiers',
+    description:
+      'Filter by KYC status. pending = Tier 1/2/3 users with incomplete KYC at their current tier (admin action may be needed). Excludes Tier_0 and users without a customer profile.',
   })
   @IsOptional()
   @IsEnum(KycStatusFilter)

@@ -42,6 +42,8 @@ import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
 import {
   buildCompletedKycCustomerWhere,
   buildPendingKycCustomerWhere,
+  buildPendingKycUserWhere,
+  deriveExportKycStatus,
   isCustomerKycPending,
 } from '../common/utils/admin-kyc.util.js';
 import {
@@ -241,14 +243,12 @@ export class AdminService {
     }
 
     if (filters.kycStatus === 'pending') {
-      if (filters.tier === 'NoTier') {
-        // NoTier users are pending KYC by definition
-      } else if (filters.tier === 'Tier_0') {
+      if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
         where.customer = { id: 'impossible-no-match' };
       } else if (where.customer && typeof where.customer === 'object') {
         where.customer = { ...where.customer, ...buildPendingKycCustomerWhere() };
       } else {
-        where.OR = [{ customer: null }, { customer: buildPendingKycCustomerWhere() }];
+        where.customer = buildPendingKycCustomerWhere();
       }
     } else if (filters.kycStatus === 'completed') {
       if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
@@ -365,14 +365,12 @@ export class AdminService {
     }
 
     if (filters.kycStatus === 'pending') {
-      if (filters.tier === 'NoTier') {
-        // no-op
-      } else if (filters.tier === 'Tier_0') {
+      if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
         where.customer = { id: 'impossible-no-match' };
       } else if (where.customer && typeof where.customer === 'object') {
         where.customer = { ...where.customer, ...buildPendingKycCustomerWhere() };
       } else {
-        where.OR = [{ customer: null }, { customer: buildPendingKycCustomerWhere() }];
+        where.customer = buildPendingKycCustomerWhere();
       }
     } else if (filters.kycStatus === 'completed') {
       if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
@@ -463,11 +461,7 @@ export class AdminService {
           if (users.length === 0) break;
 
           for (const user of users) {
-            const kycStatus = !user.customer
-              ? 'pending'
-              : isCustomerKycPending(user.customer)
-                ? 'pending'
-                : 'completed';
+            const kycStatus = deriveExportKycStatus(user.customer);
 
             const totalWalletBalance = user.customer?.wallets
               ? user.customer.wallets.reduce((sum, wallet) => sum.plus(wallet.availableBalance), new Decimal(0))
@@ -1580,11 +1574,9 @@ export class AdminService {
           status: 'LIVE',
         },
       }),
-      // Pending KYC: users without customer or customers with any tier pending
+      // Pending KYC: Tier 1/2/3 users with incomplete KYC at their current tier
       this.databaseService.user.count({
-        where: {
-          OR: [{ customer: null }, { customer: buildPendingKycCustomerWhere() }],
-        },
+        where: buildPendingKycUserWhere(),
       }),
       // All-time Revenue from AdminFee (status = COLLECTED)
       this.databaseService.adminFee.aggregate({

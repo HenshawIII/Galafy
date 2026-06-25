@@ -44,6 +44,22 @@ export function isCustomerKycCompleted(customer: CustomerKycFields): boolean {
   return !isCustomerKycPending(customer) && customer.tier !== KycTier.Tier_0;
 }
 
+/** CSV / display label: only Tier 1/2/3 incomplete KYC is "pending". */
+export function deriveExportKycStatus(customer: CustomerKycFields | null | undefined): string {
+  if (!customer || customer.tier === KycTier.Tier_0) {
+    return 'not_started';
+  }
+  if (isCustomerKycPending(customer)) {
+    return 'pending';
+  }
+  return 'completed';
+}
+
+/** Prisma where clause for users on Tier 1/2/3 with incomplete KYC (admin may need to help). */
+export function buildPendingKycUserWhere(): Prisma.UserWhereInput {
+  return { customer: buildPendingKycCustomerWhere() };
+}
+
 /** Prisma where clause for customers with pending KYC at their current tier (excludes Tier_0). */
 export function buildPendingKycCustomerWhere(): Prisma.CustomerWhereInput {
   return {
