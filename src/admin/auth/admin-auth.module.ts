@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AdminAuthService } from './admin-auth.service.js';
+import { AdminSecretCryptoService } from './admin-secret-crypto.service.js';
 import { AdminAuthController } from './admin-auth.controller.js';
 import { AdminJwtStrategy } from './admin-jwt.strategy.js';
 import { AdminJwtAuthGuard } from './admin-jwt-auth.guard.js';
@@ -25,7 +26,7 @@ config();
     }),
   ],
   controllers: [AdminAuthController],
-  providers: [AdminAuthService, AdminJwtStrategy, AdminJwtAuthGuard, RolesGuard, PermissionsGuard],
+  providers: [AdminAuthService, AdminSecretCryptoService, AdminJwtStrategy, AdminJwtAuthGuard, RolesGuard, PermissionsGuard],
   exports: [AdminAuthService, AdminJwtAuthGuard, RolesGuard, PermissionsGuard],
 })
 export class AdminAuthModule {}

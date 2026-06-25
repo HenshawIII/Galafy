@@ -534,6 +534,7 @@ model Event {
   participants EventParticipant[]
   sprays       Spray[]
   visibility   EventVisibility    @default(PUBLIC)
+  deletedAt    DateTime?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
@@ -544,6 +545,7 @@ model Event {
   @@index([location]) // Index for location filter
   @@index([startsAt]) // Index for date/time filter
   @@index([endsAt]) // Index for end date filter
+  @@index([deletedAt])
 }
 
 model EventParticipant {
@@ -784,6 +786,11 @@ model Admin {
   // Password reset
   passwordResetToken         String?   @unique
   passwordResetTokenExpiresAt DateTime?
+
+  // Two-factor authentication (TOTP)
+  twoFactorEnabled   Boolean   @default(false)
+  twoFactorSecret    String?   // AES-encrypted TOTP secret
+  twoFactorEnabledAt DateTime?
 
   kycRequests KycRequest[]
   utilityBillReviews UtilityBillSubmission[]

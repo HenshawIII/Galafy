@@ -40,6 +40,7 @@ export class EventStatusTask {
       const eventsToGoLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
+          deletedAt: null,
           startsAt: {
             lte: now, // startsAt (UTC) is less than or equal to now (UTC)
           },

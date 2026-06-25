@@ -958,6 +958,7 @@ If you did not expect this invitation, please ignore this email.`,
       firstName?: string | null;
       lastName?: string | null;
       username?: string | null;
+      kycUrl: string;
     },
   ): Promise<void> {
     // Get user's display name: prefer firstName, then username, then lastName, then default
@@ -970,7 +971,10 @@ If you did not expect this invitation, please ignore this email.`,
       userName = userData.lastName.trim();
     }
 
-    const kycUrl = process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL}/kyc` : '#';
+    const kycUrl = userData?.kycUrl;
+    if (!kycUrl) {
+      throw new Error('KYC verification URL is required to send reminder email');
+    }
 
     const msg = {
       to: email,
@@ -1024,6 +1028,10 @@ If you did not expect this invitation, please ignore this email.`,
                   Complete KYC Verification
                 </a>
               </div>
+              <p style="color: #666666; font-size: 13px; line-height: 1.6; margin: 0 0 20px 0; text-align: center; word-break: break-all;">
+                Or copy and paste this link into your browser:<br>
+                <a href="${kycUrl}" style="color: #007bff;">${kycUrl}</a>
+              </p>
               
               <!-- Info Box (Light Yellow) -->
               <div style="background-color: #fff3cd; padding: 20px; margin: 20px 0; border-radius: 4px;">

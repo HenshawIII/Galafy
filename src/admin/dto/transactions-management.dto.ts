@@ -53,7 +53,7 @@ export class GetTransactionsDto {
   @IsDateString()
   endDate?: string;
 
-  @ApiPropertyOptional({ example: 'reference', description: 'Search by reference, narration, or user email' })
+  @ApiPropertyOptional({ example: 'reference', description: 'Search by reference, narration, or user email/name/username' })
   @IsOptional()
   @IsString()
   search?: string;

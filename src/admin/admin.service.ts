@@ -44,6 +44,10 @@ import {
   buildPendingKycCustomerWhere,
   isCustomerKycPending,
 } from '../common/utils/admin-kyc.util.js';
+import {
+  buildEffectivePayoutStatusWhere,
+  deriveEffectivePayoutStatus,
+} from '../common/utils/admin-payout-status.util.js';
 import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/events-management.dto.js';
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
@@ -63,6 +67,7 @@ import { OrganizationWalletService } from '../common/services/organization-walle
 import { WalletReconciliationService } from '../common/wallet-reconciliation/wallet-reconciliation.service.js';
 import { ProviderService } from '../provider/provider.service.js';
 import { ProviderTransactionHistoryQueryDto } from '../provider/dto/provider-account-maintenance.dto.js';
+import { formatWATDate } from '../common/utils/timezone.util.js';
 
 @Injectable()
 export class AdminService {
@@ -238,13 +243,15 @@ export class AdminService {
     if (filters.kycStatus === 'pending') {
       if (filters.tier === 'NoTier') {
         // NoTier users are pending KYC by definition
+      } else if (filters.tier === 'Tier_0') {
+        where.customer = { id: 'impossible-no-match' };
       } else if (where.customer && typeof where.customer === 'object') {
         where.customer = { ...where.customer, ...buildPendingKycCustomerWhere() };
       } else {
         where.OR = [{ customer: null }, { customer: buildPendingKycCustomerWhere() }];
       }
     } else if (filters.kycStatus === 'completed') {
-      if (filters.tier === 'NoTier') {
+      if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
         where.customer = { id: 'impossible-no-match' };
       } else if (where.customer && typeof where.customer === 'object') {
         where.customer = { ...where.customer, ...buildCompletedKycCustomerWhere() };
@@ -360,13 +367,15 @@ export class AdminService {
     if (filters.kycStatus === 'pending') {
       if (filters.tier === 'NoTier') {
         // no-op
+      } else if (filters.tier === 'Tier_0') {
+        where.customer = { id: 'impossible-no-match' };
       } else if (where.customer && typeof where.customer === 'object') {
         where.customer = { ...where.customer, ...buildPendingKycCustomerWhere() };
       } else {
         where.OR = [{ customer: null }, { customer: buildPendingKycCustomerWhere() }];
       }
     } else if (filters.kycStatus === 'completed') {
-      if (filters.tier === 'NoTier') {
+      if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
         where.customer = { id: 'impossible-no-match' };
       } else if (where.customer && typeof where.customer === 'object') {
         where.customer = { ...where.customer, ...buildCompletedKycCustomerWhere() };
@@ -860,6 +869,15 @@ export class AdminService {
         lastName: true,
         username: true,
         isVerified: true,
+        customer: {
+          select: {
+            tier: true,
+            tier1FaceStatus: true,
+            tier1AccountStatus: true,
+            tier2UpgradeStatus: true,
+            tier3UpgradeStatus: true,
+          },
+        },
       },
     });
 
@@ -871,11 +889,34 @@ export class AdminService {
       throw new BadRequestException('Cannot send KYC reminder to unverified email address');
     }
 
+    if (!user.customer) {
+      throw new BadRequestException('User has no customer profile; KYC reminder not applicable');
+    }
+
+    if (user.customer.tier === KycTier.Tier_0) {
+      throw new BadRequestException('KYC reminder is not applicable for Tier 0 users');
+    }
+
+    if (!isCustomerKycPending(user.customer)) {
+      throw new BadRequestException('User has already completed KYC for their current tier');
+    }
+
+    const consumerBase =
+      process.env.CONSUMER_APP_URL || process.env.PUBLIC_URL || process.env.FRONTEND_URL;
+    const kycUrl = consumerBase ? `${consumerBase.replace(/\/$/, '')}/kyc` : null;
+
+    if (!kycUrl) {
+      throw new BadRequestException(
+        'CONSUMER_APP_URL is not configured; cannot send KYC reminder with a valid verification link',
+      );
+    }
+
     try {
       await this.emailService.sendKycReminderEmail(user.email, {
         firstName: user.firstName,
         lastName: user.lastName,
         username: user.username,
+        kycUrl,
       });
 
       await this.logAdminAction(adminId, 'KYC_REMINDER_SENT', 'USER', user.id, { userId: user.id, email: user.email });
@@ -1631,7 +1672,7 @@ export class AdminService {
       totalEventsGrowth,
       activeEvents,
       pendingKyc: pendingKycRequests,
-      revenue: allTimeRevenue.toString(), // All-time AdminFee total in kobo
+      revenue: allTimeRevenue.toString(), // All-time AdminFee total in Naira
       revenueGrowth,
       totalSprayers: 0, // TODO: Calculate from sprays if needed
       totalAttendees: 0, // TODO: Calculate from event participants if needed
@@ -2083,7 +2124,7 @@ export class AdminService {
 
     // Generate invite link
     const adminPortalUrl = process.env.ADMIN_PORTAL_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
-    const inviteLink = `${adminPortalUrl}/admin/accept-invite?token=${token}`;
+    const inviteLink = `${adminPortalUrl}/accept-invite?token=${token}`;
 
     // Send invite email
     try {
@@ -2368,7 +2409,7 @@ export class AdminService {
     const limit = filters?.limit || 20;
     const skip = (page - 1) * limit;
 
-    const [admins, total] = await Promise.all([
+    const [admins, total, pendingInvites] = await Promise.all([
       this.databaseService.admin.findMany({
         where: { role: roleName, isActive: true },
         skip,
@@ -2386,11 +2427,27 @@ export class AdminService {
       this.databaseService.admin.count({
         where: { role: roleName, isActive: true },
       }),
+      this.databaseService.adminInvite.findMany({
+        where: {
+          role: roleName,
+          accepted: false,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          expiresAt: true,
+          createdAt: true,
+        },
+      }),
     ]);
 
     return {
       role: roleName,
       admins,
+      pendingInvites,
       pagination: {
         page,
         limit,
@@ -2442,6 +2499,12 @@ export class AdminService {
 
     const where: any = {};
 
+    if (filters.includeDeleted) {
+      where.deletedAt = { not: null };
+    } else {
+      where.deletedAt = null;
+    }
+
     if (filters.status) {
       where.status = filters.status;
     }
@@ -2467,11 +2530,15 @@ export class AdminService {
     }
 
     if (filters.search) {
+      const search = filters.search.trim();
       where.OR = [
-        { title: { contains: filters.search, mode: 'insensitive' } },
-        { hostUser: { firstName: { contains: filters.search, mode: 'insensitive' } } },
-        { hostUser: { lastName: { contains: filters.search, mode: 'insensitive' } } },
-        { hostUser: { email: { contains: filters.search, mode: 'insensitive' } } },
+        { title: { contains: search, mode: 'insensitive' } },
+        { code: { contains: search, mode: 'insensitive' } },
+        { hostUserId: search },
+        { hostUser: { id: search } },
+        { hostUser: { firstName: { contains: search, mode: 'insensitive' } } },
+        { hostUser: { lastName: { contains: search, mode: 'insensitive' } } },
+        { hostUser: { email: { contains: search, mode: 'insensitive' } } },
       ];
     }
 
@@ -2480,7 +2547,7 @@ export class AdminService {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { startsAt: 'desc' },
         include: {
           hostUser: {
             select: {
@@ -2503,6 +2570,15 @@ export class AdminService {
             select: {
               id: true,
               totalAmount: true,
+              sprayerWallet: {
+                select: {
+                  customer: {
+                    select: {
+                      userId: true,
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -2515,7 +2591,11 @@ export class AdminService {
       const participantCount = event.participants.length;
       const sprayCount = event.sprays.length;
       const totalSprayed = event.sprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
-      const uniqueSprayers = new Set(event.sprays.map((s) => s.id)).size;
+      const uniqueSprayers = new Set(
+        event.sprays
+          .map((s) => s.sprayerWallet?.customer?.userId)
+          .filter((userId): userId is string => !!userId),
+      ).size;
 
       return {
         ...event,
@@ -2548,6 +2628,12 @@ export class AdminService {
     // Build where clause (same logic as getEvents)
     const where: any = {};
 
+    if (filters.includeDeleted) {
+      where.deletedAt = { not: null };
+    } else {
+      where.deletedAt = null;
+    }
+
     if (filters.status) {
       where.status = filters.status;
     }
@@ -2573,11 +2659,15 @@ export class AdminService {
     }
 
     if (filters.search) {
+      const search = filters.search.trim();
       where.OR = [
-        { title: { contains: filters.search, mode: 'insensitive' } },
-        { hostUser: { firstName: { contains: filters.search, mode: 'insensitive' } } },
-        { hostUser: { lastName: { contains: filters.search, mode: 'insensitive' } } },
-        { hostUser: { email: { contains: filters.search, mode: 'insensitive' } } },
+        { title: { contains: search, mode: 'insensitive' } },
+        { code: { contains: search, mode: 'insensitive' } },
+        { hostUserId: search },
+        { hostUser: { id: search } },
+        { hostUser: { firstName: { contains: search, mode: 'insensitive' } } },
+        { hostUser: { lastName: { contains: search, mode: 'insensitive' } } },
+        { hostUser: { email: { contains: search, mode: 'insensitive' } } },
       ];
     }
 
@@ -2613,7 +2703,7 @@ export class AdminService {
             where,
             skip,
             take: batchSize,
-            orderBy: { createdAt: 'desc' },
+            orderBy: { startsAt: 'desc' },
             include: {
               hostUser: {
                 select: {
@@ -2729,11 +2819,12 @@ export class AdminService {
     const [totalEvents, activeEvents, allSprays, allSprays7DaysAgo, totalEvents7DaysAgo, activeEvents7DaysAgo] =
       await Promise.all([
         // Total Events (current)
-        this.databaseService.event.count(),
+        this.databaseService.event.count({ where: { deletedAt: null } }),
         // Active Events (LIVE status)
         this.databaseService.event.count({
           where: {
             status: 'LIVE',
+            deletedAt: null,
           },
         }),
         // All sprays (for unique sprayers and total sprayed)
@@ -2779,6 +2870,7 @@ export class AdminService {
             createdAt: {
               lt: sevenDaysAgo,
             },
+            deletedAt: null,
           },
         }),
         // Active Events 7 days ago (LIVE status AND created before 7 days ago)
@@ -2788,6 +2880,7 @@ export class AdminService {
             createdAt: {
               lt: sevenDaysAgo,
             },
+            deletedAt: null,
           },
         }),
       ]);
@@ -3217,8 +3310,9 @@ export class AdminService {
       const userId = spray.sprayerWallet.customer.userId;
       if (!userId) continue;
 
-      // Skip anonymous if not including them
-      if (!filters.includeAnonymous && !spray.sprayerWallet.customer.user) {
+      // Skip anonymous sprayers when not including them
+      const showOnLeaderboard = spray.sprayerWallet.customer.user?.settings?.showOnLeaderboard ?? true;
+      if (!filters.includeAnonymous && showOnLeaderboard === false) {
         continue;
       }
 
@@ -3250,11 +3344,16 @@ export class AdminService {
       .map((entry, index) => ({
         rank: index + 1,
         userId: entry.user?.id,
-        username: entry.user?.username,
-        email: entry.user?.email,
-        firstName: entry.user?.firstName,
-        lastName: entry.user?.lastName,
-        profilePicture: entry.user?.profilePicture,
+        user: entry.user
+          ? {
+              id: entry.user.id,
+              username: entry.user.username,
+              email: entry.user.email,
+              firstName: entry.user.firstName,
+              lastName: entry.user.lastName,
+              profilePicture: entry.user.profilePicture,
+            }
+          : undefined,
         showOnLeaderboard: entry.user?.settings?.showOnLeaderboard ?? false,
         totalAmount: entry.totalAmount.toString(),
         sprayCount: entry.sprayCount,
@@ -3423,6 +3522,7 @@ export class AdminService {
                   { email: { contains: filters.search, mode: 'insensitive' } },
                   { firstName: { contains: filters.search, mode: 'insensitive' } },
                   { lastName: { contains: filters.search, mode: 'insensitive' } },
+                  { username: { contains: filters.search, mode: 'insensitive' } },
                 ],
               },
             },
@@ -3590,7 +3690,7 @@ export class AdminService {
     csvRows.push('Transaction Receipt');
     csvRows.push(`Transaction ID: ${transaction.id}`);
     csvRows.push(`Reference: ${transaction.reference}`);
-    csvRows.push(`Date: ${transaction.createdAt.toISOString()}`);
+    csvRows.push(`Date: ${formatWATDate(new Date(transaction.createdAt))} WAT`);
     csvRows.push('');
 
     // Transaction Details
@@ -3645,7 +3745,7 @@ export class AdminService {
     const where: any = {};
 
     if (filters.status) {
-      where.status = filters.status;
+      Object.assign(where, buildEffectivePayoutStatusWhere(filters.status as PayoutStatus));
     }
 
     if (filters.userId) {
@@ -3715,19 +3815,27 @@ export class AdminService {
     ]);
 
     return {
-      withdrawals: withdrawals.map((withdrawal) => ({
-        ...withdrawal,
-        amount: withdrawal.amount.toString(),
-        fee: withdrawal.fee.toString(),
-        user: withdrawal.wallet?.customer?.user,
-        requiresApproval: withdrawal.requiresApproval,
-        approvalReason: withdrawal.approvalReason,
-        approvedBy: withdrawal.approvedBy,
-        approvedAt: withdrawal.approvedAt,
-        rejectedBy: withdrawal.rejectedBy,
-        rejectedAt: withdrawal.rejectedAt,
-        rejectionReason: withdrawal.rejectionReason,
-      })),
+      withdrawals: withdrawals.map((withdrawal) => {
+        const effectiveStatus = deriveEffectivePayoutStatus(
+          withdrawal.status,
+          withdrawal.transaction?.status,
+        );
+
+        return {
+          ...withdrawal,
+          status: effectiveStatus,
+          amount: withdrawal.amount.toString(),
+          fee: withdrawal.fee.toString(),
+          user: withdrawal.wallet?.customer?.user,
+          requiresApproval: withdrawal.requiresApproval,
+          approvalReason: withdrawal.approvalReason,
+          approvedBy: withdrawal.approvedBy,
+          approvedAt: withdrawal.approvedAt,
+          rejectedBy: withdrawal.rejectedBy,
+          rejectedAt: withdrawal.rejectedAt,
+          rejectionReason: withdrawal.rejectionReason,
+        };
+      }),
       pagination: {
         page,
         limit,

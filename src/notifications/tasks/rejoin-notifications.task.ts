@@ -36,6 +36,7 @@ export class RejoinNotificationsTask {
       const liveEvents = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.LIVE,
+          deletedAt: null,
         },
         select: {
           id: true,

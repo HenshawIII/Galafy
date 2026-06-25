@@ -148,8 +148,8 @@ export class SpraysService {
     }
 
     // Validate event exists and is LIVE
-    const event = await this.databaseService.event.findUnique({
-      where: { id: eventId },
+    const event = await this.databaseService.event.findFirst({
+      where: { id: eventId, deletedAt: null },
       select: { id: true, status: true, minSprayAmount: true, title: true },
     });
 

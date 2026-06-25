@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, ValidationPipe, Request } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, ValidationPipe, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AdminAuthService } from './admin-auth.service.js';
@@ -8,6 +8,7 @@ import {
   AdminForgotPasswordDto,
   AdminResetPasswordDto,
 } from './dto/admin-login.dto.js';
+import { AdminTwoFactorCodeDto, AdminVerifyTwoFactorLoginDto } from './dto/admin-2fa.dto.js';
 import { AdminJwtAuthGuard } from './admin-jwt-auth.guard.js';
 import { AdminPublic } from './decorators/public.decorator.js';
 
@@ -150,5 +151,51 @@ export class AdminAuthController {
   })
   async resetPassword(@Body(ValidationPipe) resetPasswordDto: AdminResetPasswordDto) {
     return this.adminAuthService.resetPassword(resetPasswordDto);
+  }
+
+  @Get('2fa/status')
+  @UseGuards(AdminJwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Get admin 2FA status' })
+  async getTwoFactorStatus(@Request() req: { admin?: { id: string } }) {
+    return this.adminAuthService.getTwoFactorStatus(req.admin!.id);
+  }
+
+  @Post('2fa/setup')
+  @UseGuards(AdminJwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Start TOTP 2FA setup (returns QR / secret)' })
+  async setupTwoFactor(@Request() req: { admin?: { id: string } }) {
+    return this.adminAuthService.setupTwoFactor(req.admin!.id);
+  }
+
+  @Post('2fa/enable')
+  @UseGuards(AdminJwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Enable TOTP 2FA after verifying setup code' })
+  async enableTwoFactor(
+    @Request() req: { admin?: { id: string } },
+    @Body(ValidationPipe) dto: AdminTwoFactorCodeDto,
+  ) {
+    return this.adminAuthService.enableTwoFactor(req.admin!.id, dto);
+  }
+
+  @Post('2fa/disable')
+  @UseGuards(AdminJwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Disable TOTP 2FA' })
+  async disableTwoFactor(
+    @Request() req: { admin?: { id: string } },
+    @Body(ValidationPipe) dto: AdminTwoFactorCodeDto,
+  ) {
+    return this.adminAuthService.disableTwoFactor(req.admin!.id, dto);
+  }
+
+  @Post('verify-2fa')
+  @AdminPublic()
+  @Throttle({ default: { limit: 10, ttl: 900000 } })
+  @ApiOperation({ summary: 'Complete login with TOTP code' })
+  async verifyTwoFactorLogin(@Body(ValidationPipe) dto: AdminVerifyTwoFactorLoginDto) {
+    return this.adminAuthService.verifyTwoFactorLogin(dto);
   }
 }

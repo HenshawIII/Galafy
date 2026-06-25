@@ -152,6 +152,21 @@ async function seedConfig() {
       type: ConfigType.NUMBER,
       description: 'Default duration in hours for events without an end date',
     },
+
+    // Admin Notifications
+    {
+      key: 'ADMIN_NOTIFICATION_TYPES_ENABLED',
+      category: 'NOTIFICATIONS',
+      value: JSON.stringify({
+        NEW_USER: true,
+        WITHDRAWAL: true,
+        TIER_UPGRADE: true,
+        INFLOW: true,
+        EVENT_DELETED: true,
+      }),
+      type: ConfigType.JSON,
+      description: 'Enabled admin dashboard notification types',
+    },
   ];
 
   for (const config of configs) {

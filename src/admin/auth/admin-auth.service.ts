@@ -7,7 +7,10 @@ import {
   AdminForgotPasswordDto,
   AdminResetPasswordDto,
 } from './dto/admin-login.dto.js';
+import { AdminTwoFactorCodeDto, AdminVerifyTwoFactorLoginDto } from './dto/admin-2fa.dto.js';
+import { AdminSecretCryptoService } from './admin-secret-crypto.service.js';
 import { EmailService } from '../../users/email.service.js';
+import { generateSecret, generateURI, verify } from 'otplib';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -21,6 +24,7 @@ export class AdminAuthService {
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly secretCrypto: AdminSecretCryptoService,
   ) {}
 
   /**
@@ -165,19 +169,173 @@ export class AdminAuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Reset failed attempts on successful login
+    // Reset failed attempts on successful password verification
     await this.resetFailedAttempts(admin.id);
+
+    if (admin.twoFactorEnabled) {
+      const tempToken = this.jwtService.sign(
+        {
+          sub: admin.id,
+          email: admin.email,
+          type: 'admin_2fa_pending',
+        },
+        {
+          expiresIn: '5m',
+          secret: process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
+        } as any,
+      );
+
+      return {
+        requires2FA: true,
+        tempToken,
+      };
+    }
 
     // Generate tokens
     const tokens = await this.generateTokens(admin);
 
     // Remove sensitive data from response
-    const { password, ...adminWithoutPassword } = admin;
+    const { password, twoFactorSecret, ...adminWithoutPassword } = admin;
 
     return {
       ...tokens,
       admin: adminWithoutPassword,
     };
+  }
+
+  async getTwoFactorStatus(adminId: string) {
+    const admin = await this.databaseService.admin.findUnique({
+      where: { id: adminId },
+      select: {
+        twoFactorEnabled: true,
+        twoFactorEnabledAt: true,
+      },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    return {
+      twoFactorEnabled: admin.twoFactorEnabled,
+      twoFactorEnabledAt: admin.twoFactorEnabledAt,
+    };
+  }
+
+  async setupTwoFactor(adminId: string) {
+    const admin = await this.databaseService.admin.findUnique({ where: { id: adminId } });
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
+
+    const secret = generateSecret();
+    const encryptedSecret = this.secretCrypto.encrypt(secret);
+    const issuer = process.env.ADMIN_2FA_ISSUER || 'Galafy Admin';
+    const otpauthUrl = generateURI({
+      issuer,
+      label: admin.email,
+      secret,
+    });
+
+    await this.databaseService.admin.update({
+      where: { id: adminId },
+      data: {
+        twoFactorSecret: encryptedSecret,
+        twoFactorEnabled: false,
+        twoFactorEnabledAt: null,
+      },
+    });
+
+    return {
+      otpauthUrl,
+      secret,
+    };
+  }
+
+  async enableTwoFactor(adminId: string, dto: AdminTwoFactorCodeDto) {
+    const admin = await this.databaseService.admin.findUnique({ where: { id: adminId } });
+    if (!admin?.twoFactorSecret) {
+      throw new BadRequestException('2FA setup has not been started. Call setup first.');
+    }
+
+    const secret = this.secretCrypto.decrypt(admin.twoFactorSecret);
+    if (!secret || !(await this.verifyTotpCode(secret, dto.code))) {
+      throw new UnauthorizedException('Invalid authentication code');
+    }
+
+    await this.databaseService.admin.update({
+      where: { id: adminId },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorEnabledAt: new Date(),
+      },
+    });
+
+    return { message: 'Two-factor authentication enabled' };
+  }
+
+  async disableTwoFactor(adminId: string, dto: AdminTwoFactorCodeDto) {
+    const admin = await this.databaseService.admin.findUnique({ where: { id: adminId } });
+    if (!admin?.twoFactorEnabled || !admin.twoFactorSecret) {
+      throw new BadRequestException('Two-factor authentication is not enabled');
+    }
+
+    const secret = this.secretCrypto.decrypt(admin.twoFactorSecret);
+    if (!secret || !(await this.verifyTotpCode(secret, dto.code))) {
+      throw new UnauthorizedException('Invalid authentication code');
+    }
+
+    await this.databaseService.admin.update({
+      where: { id: adminId },
+      data: {
+        twoFactorEnabled: false,
+        twoFactorSecret: null,
+        twoFactorEnabledAt: null,
+      },
+    });
+
+    return { message: 'Two-factor authentication disabled' };
+  }
+
+  async verifyTwoFactorLogin(dto: AdminVerifyTwoFactorLoginDto) {
+    let payload: { sub: string; email: string; type: string };
+    try {
+      payload = this.jwtService.verify(dto.tempToken, {
+        secret: process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
+      }) as typeof payload;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired verification session. Please log in again.');
+    }
+
+    if (payload.type !== 'admin_2fa_pending') {
+      throw new UnauthorizedException('Invalid verification session');
+    }
+
+    const admin = await this.databaseService.admin.findUnique({ where: { id: payload.sub } });
+    if (!admin || !admin.isActive || !admin.twoFactorEnabled || !admin.twoFactorSecret) {
+      throw new UnauthorizedException('Two-factor authentication is not available for this account');
+    }
+
+    const secret = this.secretCrypto.decrypt(admin.twoFactorSecret);
+    if (!secret || !(await this.verifyTotpCode(secret, dto.code))) {
+      await this.handleFailedLogin(admin.id);
+      throw new UnauthorizedException('Invalid authentication code');
+    }
+
+    await this.resetFailedAttempts(admin.id);
+
+    const tokens = await this.generateTokens(admin);
+    const { password, twoFactorSecret, ...adminWithoutPassword } = admin;
+
+    return {
+      ...tokens,
+      admin: adminWithoutPassword,
+    };
+  }
+
+  private async verifyTotpCode(secret: string, code: string): Promise<boolean> {
+    const result = await verify({ secret, token: code, epochTolerance: 1 });
+    return result.valid;
   }
 
   /**

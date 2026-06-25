@@ -19,6 +19,8 @@ import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ConfigService } from '../config/config.service.js';
+import { AdminNotificationService } from '../admin/admin-notification.service.js';
+import { AdminRole } from '../../generated/prisma/enums.js';
 import {
   getWATDateForComparison,
   parseWATDate,
@@ -37,7 +39,17 @@ export class EventsService {
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
     private readonly configService: ConfigService,
+    private readonly adminNotificationService: AdminNotificationService,
   ) {}
+
+  private throwIfEventDeleted<T extends { deletedAt: Date | null }>(
+    event: T | null,
+    notFoundMessage: string,
+  ): asserts event is T {
+    if (!event || event.deletedAt) {
+      throw new NotFoundException(notFoundMessage);
+    }
+  }
 
   /**
    * Generate a unique event code
@@ -87,6 +99,7 @@ export class EventsService {
     const existingEvents = await this.databaseService.event.findMany({
       where: {
         hostUserId: userId,
+        deletedAt: null,
         status: {
           in: [EventStatus.SCHEDULED, EventStatus.LIVE],
         },
@@ -210,8 +223,8 @@ export class EventsService {
     let attempts = 0;
     while (!isUnique && attempts < 10) {
       eventCode = this.generateEventCode();
-      const existing = await this.databaseService.event.findUnique({
-        where: { code: eventCode },
+      const existing = await this.databaseService.event.findFirst({
+        where: { code: eventCode, deletedAt: null },
       });
       if (!existing) {
         isUnique = true;
@@ -383,7 +396,7 @@ export class EventsService {
     const pageSize = filters?.pageSize || 20;
     const skip = (page - 1) * pageSize;
 
-    const where: any = {};
+    const where: any = { deletedAt: null };
     if (filters?.status) where.status = filters.status;
     if (filters?.visibility) where.visibility = filters.visibility;
     if (filters?.category) where.category = filters.category;
@@ -566,8 +579,8 @@ export class EventsService {
       return cached;
     }
 
-    const event = await this.databaseService.event.findUnique({
-      where: { id },
+    const event = await this.databaseService.event.findFirst({
+      where: { id, deletedAt: null },
       include: {
         hostUser: {
           select: {
@@ -624,8 +637,8 @@ export class EventsService {
    * Get event by code
    */
   async findByCode(code: string) {
-    const event = await this.databaseService.event.findUnique({
-      where: { code },
+    const event = await this.databaseService.event.findFirst({
+      where: { code, deletedAt: null },
       include: {
         hostUser: {
           select: {
@@ -681,9 +694,7 @@ export class EventsService {
       where: { id: eventId },
     });
 
-    if (!event) {
-      throw new NotFoundException(`Event with ID ${eventId} not found`);
-    }
+    this.throwIfEventDeleted(event, `Event with ID ${eventId} not found`);
 
     // Only host can update
     if (event.hostUserId !== userId) {
@@ -786,8 +797,45 @@ export class EventsService {
       throw new ForbiddenException('Only the event host can delete this event');
     }
 
-    await this.databaseService.event.delete({
+    if (event.deletedAt) {
+      throw new BadRequestException('Event has already been deleted');
+    }
+
+    const deletedAt = new Date();
+
+    await this.databaseService.event.update({
       where: { id: eventId },
+      data: { deletedAt },
+    });
+
+    const systemAdmin = await this.databaseService.admin.findFirst({
+      where: { role: AdminRole.SUPER_ADMIN, isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (systemAdmin) {
+      await this.databaseService.adminActionLog.create({
+        data: {
+          adminId: systemAdmin.id,
+          actionType: 'EVENT_DELETED',
+          targetType: 'EVENT',
+          targetId: eventId,
+          details: {
+            hostUserId: userId,
+            eventTitle: event.title,
+            eventCode: event.code,
+            deletedAt: deletedAt.toISOString(),
+            actor: 'HOST',
+          },
+        },
+      });
+    }
+
+    await this.adminNotificationService.notifyAdmins({
+      type: 'EVENT_DELETED',
+      title: 'Event deleted',
+      message: `Event "${event.title}" (${event.code}) was deleted by the host.`,
+      data: { eventId, hostUserId: userId, deletedAt: deletedAt.toISOString() },
     });
 
     // Invalidate event cache
@@ -800,8 +848,8 @@ export class EventsService {
    * Join an event as a GIFTER participant.
    */
   async joinEvent(eventId: string, userId: string, joinEventDto: JoinEventDto) {
-    const event = await this.databaseService.event.findUnique({
-      where: { id: eventId },
+    const event = await this.databaseService.event.findFirst({
+      where: { id: eventId, deletedAt: null },
     });
 
     if (!event) {
@@ -961,8 +1009,8 @@ export class EventsService {
     }
 
     // Host cannot leave their own event
-    const event = await this.databaseService.event.findUnique({
-      where: { id: eventId },
+    const event = await this.databaseService.event.findFirst({
+      where: { id: eventId, deletedAt: null },
     });
 
     if (event?.hostUserId === userId) {
@@ -984,7 +1032,10 @@ export class EventsService {
     if (role) where.role = role;
 
     const participants = await this.databaseService.eventParticipant.findMany({
-      where,
+      where: {
+        ...where,
+        event: { deletedAt: null },
+      },
       include: {
         event: {
           include: {
@@ -1027,8 +1078,8 @@ export class EventsService {
    */
   async getEventParticipants(eventId: string) {
     // First verify the event exists
-    const event = await this.databaseService.event.findUnique({
-      where: { id: eventId },
+    const event = await this.databaseService.event.findFirst({
+      where: { id: eventId, deletedAt: null },
       select: { id: true },
     });
 
@@ -1107,8 +1158,8 @@ export class EventsService {
     }
 
     // Verify event exists
-    const event = await this.databaseService.event.findUnique({
-      where: { id: eventId },
+    const event = await this.databaseService.event.findFirst({
+      where: { id: eventId, deletedAt: null },
       select: { id: true, title: true },
     });
 
@@ -1259,7 +1310,7 @@ export class EventsService {
     const pageSize = searchDto.pageSize || 20;
     const skip = (page - 1) * pageSize;
 
-    const where: Prisma.EventWhereInput = {};
+    const where: Prisma.EventWhereInput = { deletedAt: null };
 
     // Search by title (case-insensitive partial match)
     if (searchDto.query && searchDto.query.trim()) {

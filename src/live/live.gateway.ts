@@ -128,8 +128,8 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       }
 
       // Fetch event with participants and sprays
-      const event = await this.databaseService.event.findUnique({
-        where: { id: eventId },
+      const event = await this.databaseService.event.findFirst({
+        where: { id: eventId, deletedAt: null },
         include: {
           participants: {
             select: {

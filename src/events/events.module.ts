@@ -6,9 +6,16 @@ import { EventStatusTask } from './tasks/event-status.task.js';
 import { CacheModule } from '../cache/cache.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConfigModule } from '../config/config.module.js';
+import { AdminNotificationModule } from '../admin/admin-notification.module.js';
 
 @Module({
-  imports: [DatabaseModule, CacheModule, forwardRef(() => NotificationsModule), ConfigModule],
+  imports: [
+    DatabaseModule,
+    CacheModule,
+    forwardRef(() => NotificationsModule),
+    ConfigModule,
+    AdminNotificationModule,
+  ],
   controllers: [EventsController],
   providers: [EventsService, EventStatusTask],
   exports: [EventsService],

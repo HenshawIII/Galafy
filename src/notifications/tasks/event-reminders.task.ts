@@ -36,6 +36,7 @@ export class EventRemindersTask {
       const events = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
+          deletedAt: null,
           startsAt: {
             gte: new Date(tenMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before
             lte: new Date(tenMinutesFromNow.getTime() + 30 * 1000), // 30 seconds after
@@ -110,6 +111,7 @@ export class EventRemindersTask {
       const events = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
+          deletedAt: null,
           startsAt: {
             gte: new Date(now.getTime() - 30 * 1000), // 30 seconds before now (UTC)
             lte: new Date(now.getTime() + 30 * 1000), // 30 seconds after now (UTC)
@@ -198,6 +200,7 @@ export class EventRemindersTask {
       const eventsToLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
+          deletedAt: null,
           startsAt: {
             lte: now, // startsAt (UTC) is in the past
           },
@@ -261,6 +264,7 @@ export class EventRemindersTask {
           status: {
             in: [EventStatus.LIVE, EventStatus.SCHEDULED],
           },
+          deletedAt: null,
           endsAt: {
             not: null,
             lte: now, // endsAt (UTC) is in the past

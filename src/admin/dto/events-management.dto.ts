@@ -60,6 +60,16 @@ export class GetEventsDto {
   hostUserId?: string;
 
   @ApiPropertyOptional({
+    example: false,
+    description: 'Include soft-deleted events (admin only)',
+    default: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  includeDeleted?: boolean;
+
+  @ApiPropertyOptional({
     example: '2025-01-01T00:00:00.000Z',
     description:
       'Filter events starting from this date. Quick options (Today, This Week, This Month, Last 90 days) are calculated on frontend and sent as startDate/endDate',
