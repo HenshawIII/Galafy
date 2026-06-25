@@ -169,6 +169,46 @@ export class ProviderService {
     return process.env.PROVIDER_DEBIT_WALLET_APIM_KEY || this.kycSubscriptionKey;
   }
 
+  /**
+   * Debit-wallet sends partner access in the `access` header.
+   */
+  private assertDebitWalletCredentials(logLabel: string): void {
+    const access = this.getDebitWalletAccessKey().trim();
+    const apim = this.getDebitWalletApimKey().trim();
+    const missing: string[] = [];
+    if (!access) {
+      missing.push('PROVIDER_DEBIT_WALLET_ACCESS_KEY or PROVIDER_API_KEY');
+    }
+    if (!apim) {
+      missing.push('PROVIDER_DEBIT_WALLET_APIM_KEY or PROVIDER_KYC_SUBSCRIPTION_KEY');
+    }
+    if (missing.length > 0) {
+      throw new HttpException(
+        `${logLabel}: provider credentials are not configured (${missing.join('; ')}). Set these on the server and redeploy.`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
+
+  /** ws-acct-mgt uses `x-api-key` + `Ocp-Apim-Subscription-Key` (same as KYC / account-upgrade). */
+  private assertAccountMaintenanceCredentials(logLabel: string): void {
+    const apiKey = this.apiKey.trim();
+    const apim = this.kycSubscriptionKey.trim();
+    const missing: string[] = [];
+    if (!apiKey) {
+      missing.push('PROVIDER_API_KEY');
+    }
+    if (!apim) {
+      missing.push('PROVIDER_KYC_SUBSCRIPTION_KEY');
+    }
+    if (missing.length > 0) {
+      throw new HttpException(
+        `${logLabel}: provider credentials are not configured (${missing.join('; ')}). Set these on the server and redeploy.`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
+
   private debitWalletErrorMessage(parsed: unknown): string {
     if (typeof parsed !== 'object' || parsed === null) {
       return 'Debit-wallet request failed';
@@ -200,6 +240,7 @@ export class ProviderService {
   ): Promise<T> {
     const url = typeof pathOrOptions === 'string' ? this.buildDebitWalletUrl(pathOrOptions) : pathOrOptions.absoluteUrl;
     const logLabel = options?.logLabel ?? 'Debit-wallet API';
+    this.assertDebitWalletCredentials(logLabel);
     const access = this.getDebitWalletAccessKey();
     const apim = this.getDebitWalletApimKey();
     const headers: Record<string, string> = {
@@ -287,7 +328,7 @@ export class ProviderService {
   }
 
   /**
-   * ALAT ws-acct-mgt API: `access` + `Ocp-Apim-Subscription-Key`, envelope with `successful` / `result`.
+   * ALAT ws-acct-mgt API: `x-api-key` + `Ocp-Apim-Subscription-Key`, envelope with `successful` / `result`.
    */
   private async makeAccountMaintenanceRequest<T>(
     pathOrOptions: string | { absoluteUrl: string },
@@ -301,12 +342,11 @@ export class ProviderService {
     const url =
       typeof pathOrOptions === 'string' ? this.buildAccountMaintenanceUrl(pathOrOptions) : pathOrOptions.absoluteUrl;
     const logLabel = options?.logLabel ?? 'Account-maintenance API';
-    const access = this.getDebitWalletAccessKey();
-    const apim = this.getDebitWalletApimKey();
+    this.assertAccountMaintenanceCredentials(logLabel);
     const headers: Record<string, string> = {
-      access,
+      'x-api-key': this.apiKey,
       'Cache-Control': 'no-cache',
-      'Ocp-Apim-Subscription-Key': apim,
+      'Ocp-Apim-Subscription-Key': this.kycSubscriptionKey,
     };
     if (method === 'POST') {
       headers['Content-Type'] = options?.contentType ?? 'application/json';
