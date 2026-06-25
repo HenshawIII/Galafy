@@ -397,7 +397,13 @@ export class ProviderTxnCallbackService {
             });
 
             const isPayoutRefundCredit = txnDebitMeta?.payoutRefundCredit === true;
-            const creditType = isPayoutRefundCredit ? TransactionType.PAYOUT : TransactionType.INFLOW;
+            const isSprayCredit =
+              txnDebitMeta?.eventSpray === true || txnDebitMeta?.walletToWalletSpray === true;
+            const creditType = isPayoutRefundCredit
+              ? TransactionType.PAYOUT
+              : isSprayCredit
+                ? TransactionType.SPRAY
+                : TransactionType.INFLOW;
 
             if (!creditTxn) {
               await tx.transaction.create({
@@ -421,6 +427,12 @@ export class ProviderTxnCallbackService {
                       ? {
                           payoutRefundCredit: true,
                           originalPayoutPaymentRef: txn.externalReference ?? null,
+                        }
+                      : {}),
+                    ...(isSprayCredit
+                      ? {
+                          sprayCredit: true,
+                          linkedSprayDebitRef: transactionReference,
                         }
                       : {}),
                   },
@@ -825,10 +837,27 @@ export class ProviderTxnCallbackService {
     }
 
     if (kind === 'internal_transfer_credit') {
+      if (!accountNumber) {
+        throw new BadRequestException('accountNumber is required for internal transfer credit notifications');
+      }
+      const amountRaw = raw?.amount;
+      if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
+        throw new BadRequestException('amount is required for internal transfer credit notifications');
+      }
+      const narration =
+        typeof raw?.narration === 'string' && raw.narration.trim()
+          ? raw.narration.trim()
+          : 'Internal transfer credit';
+      const ledgerResult = await this.notificationLedger.recordInternalTransferCreditNotification({
+        accountNumber,
+        amount: normalizeToKobo(amountRaw),
+        narration,
+        kind,
+        raw: raw as Record<string, unknown>,
+      });
       this.logger.log(
-        `Internal transfer credit notification detected; skipping inflow credit to prevent double-posting: account=${this.mask(accountNumber)} txRef=${this.mask(raw?.transactionReference)} platformRef=${this.mask(raw?.platformTransactionReference)}`,
+        `Internal transfer credit notification linked: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
       );
-      await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
       return { received: true };
     }
 

@@ -215,6 +215,91 @@ describe('ProviderNotificationLedgerService', () => {
     expect(walletUpdated).toBe(false);
   });
 
+  it('links internal transfer credit notification without crediting wallet', async () => {
+    const creditTxn = {
+      id: 'spray-credit-1',
+      walletId: 'w1',
+      status: 'SUCCESS',
+      amount: new Decimal(500),
+      metadata: { sprayCredit: true, linkedSprayDebitRef: 'SPRAY-abc123' },
+      reference: 'CREDIT-330052014056',
+      type: 'SPRAY',
+      direction: 'CREDIT',
+    };
+    db.transaction.findUnique = mockFn(async (args: { where: { reference?: string } }) => {
+      if (args?.where?.reference === 'CREDIT-330052014056') return creditTxn;
+      return null;
+    });
+    db.transaction.findFirst = mockFn(async () => null);
+    db.transaction.findMany = mockFn(async () => []);
+    let walletUpdated = false;
+    db.$transaction = mockFn(async (cb: (tx: typeof db) => Promise<unknown>) => {
+      const tx = { transaction: { update: mockFn(async () => creditTxn) } };
+      return cb(tx as unknown as typeof db);
+    });
+    db.wallet.findFirst = mockFn(async () => ({ id: 'w1' }));
+    db.wallet.update = mockFn(async () => {
+      walletUpdated = true;
+      return wallet;
+    });
+
+    const result = await service.recordInternalTransferCreditNotification({
+      accountNumber: '1234567890',
+      amount: new Decimal(500),
+      narration: 'Spray in event FAM AND FRIENDS , EventId: 42fe5e31-9623-4899-b223-17b1d9c39648',
+      kind: 'internal_transfer_credit',
+      raw: {
+        accountNumber: '1234567890',
+        amount: 500,
+        transactionType: 'Credit',
+        narration: 'Spray in event FAM AND FRIENDS , EventId: 42fe5e31-9623-4899-b223-17b1d9c39648',
+        referenceId: '330052014056',
+      },
+    });
+
+    expect(result.transactionId).toBe('spray-credit-1');
+    expect(walletUpdated).toBe(false);
+  });
+
+  it('skips inflow admin fee notification when linked inflow is spray transfer', async () => {
+    const feeTxn = {
+      id: 'fee-tx-spray',
+      walletId: 'w1',
+      status: 'PENDING',
+      amount: new Decimal(45.45),
+      metadata: { inflowAdminFeeSweep: true, inflowTransactionId: 'inflow-spray-1' },
+      reference: 'FEE-spray123',
+    };
+    db.transaction.findUnique = mockFn(async (args: { where: { reference?: string; id?: string } }) => {
+      if (args?.where?.reference === 'FEE-spray123') return feeTxn;
+      if (args?.where?.id === 'inflow-spray-1') {
+        return {
+          id: 'inflow-spray-1',
+          narration: 'Spray in event FAM AND FRIENDS , EventId: 42fe5e31-9623-4899-b223-17b1d9c39648',
+          metadata: {},
+        };
+      }
+      return null;
+    });
+    db.wallet.findFirst = mockFn(async () => ({ id: 'w1' }));
+
+    const result = await service.recordInflowAdminFeeNotification({
+      accountNumber: '1234567890',
+      amount: new Decimal(45.45),
+      narration: 'Admin funding fee FEE-spray123',
+      kind: 'inflow_admin_fee',
+      raw: {
+        accountNumber: '1234567890',
+        amount: 45.45,
+        transactionType: 'Debit',
+        narration: 'Admin funding fee FEE-spray123',
+      },
+    });
+
+    expect(result.transactionId).toBe('');
+    expect(db.$transaction.calls.length).toBe(0);
+  });
+
   it('records unclassified provider debit on wallet', async () => {
     const result = await service.recordNotificationDebit({
       accountNumber: '1234567890',

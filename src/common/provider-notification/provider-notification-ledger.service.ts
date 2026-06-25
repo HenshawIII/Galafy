@@ -14,6 +14,10 @@ import {
   parsePayoutFeeSweepReferenceFromNotification,
   parsePayoutTransactionReferenceFromNotification,
 } from '../utils/payout-notification.util.js';
+import {
+  isInternalSprayTransferNarration,
+  parseEventIdFromSprayNarration,
+} from '../utils/spray-notification.util.js';
 import type { ProviderNotificationKind } from '../../provider/provider-notification-classifier.util.js';
 
 type LinkableTxnRow = {
@@ -160,6 +164,35 @@ export class ProviderNotificationLedgerService {
         providerReference,
         isDuplicate: false,
       };
+    }
+
+    const feeMeta = this.getTxnMetadata(feeTxn.metadata);
+    const linkedInflowId =
+      typeof feeMeta.inflowTransactionId === 'string' ? (feeMeta.inflowTransactionId as string) : null;
+    if (linkedInflowId) {
+      const linkedInflow = await this.databaseService.transaction.findUnique({
+        where: { id: linkedInflowId },
+        select: { narration: true, metadata: true },
+      });
+      if (
+        linkedInflow &&
+        (isInternalSprayTransferNarration(linkedInflow.narration) ||
+          isInternalSprayTransferNarration(
+            typeof linkedInflow.metadata === 'object' && linkedInflow.metadata !== null
+              ? (linkedInflow.metadata as Record<string, unknown>).narration
+              : null,
+          ))
+      ) {
+        this.logger.warn(
+          `Inflow admin fee notification skipped: linked inflow is internal spray transfer feeTx=${feeTxn.reference}`,
+        );
+        return {
+          walletId: wallet.id,
+          transactionId: '',
+          providerReference,
+          isDuplicate: false,
+        };
+      }
     }
 
     const existingMeta =
@@ -324,6 +357,51 @@ export class ProviderNotificationLedgerService {
       txn: settlementTxn,
       providerReference,
       notificationKind: 'payout_settlement',
+      markSuccessIfPending: false,
+      collectAdminFee: false,
+    });
+  }
+
+  /**
+   * Credit notification for internal ProcessClientTransfer (spray / wallet transfer).
+   * Links to existing receiver credit — no wallet credit or funding fee logic.
+   */
+  async recordInternalTransferCreditNotification(
+    input: NotificationLedgerInput,
+  ): Promise<NotificationLedgerResult> {
+    const providerReference = this.buildProviderReference(input.raw);
+    const amount = normalizeToKobo(input.amount);
+
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: input.accountNumber },
+      select: { id: true },
+    });
+    if (!wallet) {
+      throw new NotFoundException(`Wallet not found for account number: ${input.accountNumber}`);
+    }
+
+    const creditTxn = await this.findInternalTransferCreditTxn(
+      wallet.id,
+      amount,
+      input.raw,
+      input.narration,
+    );
+    if (!creditTxn) {
+      this.logger.warn(
+        `Internal transfer credit notification: no matching credit for wallet=${wallet.id} amount=${amount.toFixed(2)} ref=${providerReference}; skipping wallet credit`,
+      );
+      return {
+        walletId: wallet.id,
+        transactionId: '',
+        providerReference,
+        isDuplicate: false,
+      };
+    }
+
+    return this.linkProviderNotificationToTxn({
+      txn: creditTxn,
+      providerReference,
+      notificationKind: 'internal_transfer_credit',
       markSuccessIfPending: false,
       collectAdminFee: false,
     });
@@ -524,6 +602,186 @@ export class ProviderNotificationLedgerService {
         normalizeToKobo(payoutNetAmount).equals(amount)
       ) {
         return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private parsePlatformReferenceFromNotification(raw: Record<string, unknown>): string | null {
+    for (const field of [
+      raw.referenceId,
+      raw.reference,
+      raw.platformTransactionReference,
+      raw.transactionReference,
+    ]) {
+      if (typeof field === 'string' && field.trim()) {
+        return field.trim();
+      }
+    }
+    return null;
+  }
+
+  private async findInternalTransferCreditTxn(
+    walletId: string,
+    amount: Decimal,
+    raw: Record<string, unknown>,
+    narration: string,
+  ): Promise<LinkableTxnRow | null> {
+    const platformRef = this.parsePlatformReferenceFromNotification(raw);
+    if (platformRef) {
+      const creditRef = `CREDIT-${platformRef}`;
+      const byRef = await this.databaseService.transaction.findUnique({
+        where: { reference: creditRef },
+        select: {
+          id: true,
+          walletId: true,
+          status: true,
+          amount: true,
+          metadata: true,
+          reference: true,
+          type: true,
+          direction: true,
+        },
+      });
+      if (
+        byRef &&
+        byRef.walletId === walletId &&
+        byRef.direction === TransactionDirection.CREDIT
+      ) {
+        return {
+          id: byRef.id,
+          walletId: byRef.walletId,
+          status: byRef.status,
+          amount: byRef.amount,
+          metadata: byRef.metadata,
+          reference: byRef.reference,
+          type: byRef.type,
+        };
+      }
+
+      const byExternal = await this.databaseService.transaction.findFirst({
+        where: {
+          walletId,
+          direction: TransactionDirection.CREDIT,
+          externalReference: platformRef,
+          type: { in: [TransactionType.SPRAY, TransactionType.INFLOW] },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          walletId: true,
+          status: true,
+          amount: true,
+          metadata: true,
+          reference: true,
+          type: true,
+        },
+      });
+      if (byExternal && byExternal.amount.equals(amount)) {
+        return byExternal;
+      }
+    }
+
+    const sprayDebitRef = parsePayoutTransactionReferenceFromNotification({
+      narration: raw.narration,
+      reference: raw.reference,
+      transactionReference: raw.transactionReference,
+      platformTransactionReference: raw.platformTransactionReference,
+    });
+    if (sprayDebitRef) {
+      const debitTxn = await this.databaseService.transaction.findUnique({
+        where: { reference: sprayDebitRef },
+        select: { reference: true, groupReference: true },
+      });
+      if (debitTxn?.reference) {
+        const linkedCredit = await this.databaseService.transaction.findFirst({
+          where: {
+            walletId,
+            direction: TransactionDirection.CREDIT,
+            amount,
+            OR: [
+              {
+                metadata: {
+                  path: ['linkedSprayDebitRef'],
+                  equals: debitTxn.reference,
+                },
+              },
+              ...(debitTxn.groupReference
+                ? [{ groupReference: debitTxn.groupReference }]
+                : []),
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            walletId: true,
+            status: true,
+            amount: true,
+            metadata: true,
+            reference: true,
+            type: true,
+          },
+        });
+        if (linkedCredit) {
+          return linkedCredit;
+        }
+      }
+    }
+
+    const eventId = parseEventIdFromSprayNarration(narration);
+    if (eventId) {
+      const sprayCredit = await this.databaseService.transaction.findFirst({
+        where: {
+          walletId,
+          direction: TransactionDirection.CREDIT,
+          amount,
+          type: { in: [TransactionType.SPRAY, TransactionType.INFLOW] },
+          narration: { contains: eventId, mode: 'insensitive' },
+          status: { in: [TransactionStatus.PENDING, TransactionStatus.PROCESSING, TransactionStatus.SUCCESS] },
+          createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          walletId: true,
+          status: true,
+          amount: true,
+          metadata: true,
+          reference: true,
+          type: true,
+        },
+      });
+      if (sprayCredit) {
+        return sprayCredit;
+      }
+    }
+
+    const recentCredit = await this.databaseService.transaction.findFirst({
+      where: {
+        walletId,
+        direction: TransactionDirection.CREDIT,
+        amount,
+        type: { in: [TransactionType.SPRAY, TransactionType.INFLOW] },
+        status: { in: [TransactionStatus.PENDING, TransactionStatus.PROCESSING, TransactionStatus.SUCCESS] },
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        walletId: true,
+        status: true,
+        amount: true,
+        metadata: true,
+        reference: true,
+        type: true,
+      },
+    });
+
+    if (recentCredit) {
+      const meta = this.getTxnMetadata(recentCredit.metadata);
+      if (meta.sprayCredit === true || meta.providerCallback) {
+        return recentCredit;
       }
     }
 

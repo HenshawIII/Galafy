@@ -30,6 +30,7 @@ import { ProviderAccountStatusService } from '../provider-account-status/provide
 import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
 import { AdminNotificationService } from '../../admin/admin-notification.service.js';
 import { isProviderOutboundBlocked } from '../provider-account-status/provider-account-status.util.js';
+import { isInternalSprayTransferNarration } from '../utils/spray-notification.util.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -88,6 +89,22 @@ export class InflowCreditService {
     this.logger.log(
       `INFLOW start: account=${accountNumber}, providerReference=${providerReference}, grossAmount=${grossAmount.toString()}, providerFee=${providerFee.toString()}, event=${webhookEvent.event}`,
     );
+
+    if (isInternalSprayTransferNarration(narration)) {
+      this.logger.warn(
+        `INFLOW skipped: internal spray transfer must not run funding logic account=${accountNumber} providerReference=${providerReference}`,
+      );
+      const sprayWallet = await this.databaseService.wallet.findFirst({
+        where: { virtualAccountNumber: accountNumber },
+        select: { id: true },
+      });
+      return {
+        status: 'success',
+        message: 'Skipped inflow processing for internal spray transfer',
+        isDuplicate: true,
+        walletId: sprayWallet?.id,
+      };
+    }
 
     const wallet = await this.databaseService.wallet.findFirst({
       where: { virtualAccountNumber: accountNumber },

@@ -4,6 +4,7 @@ import {
   isPayoutSettlementDebitNarration,
   parsePayoutTransactionReferenceFromNotification,
 } from '../common/utils/payout-notification.util.js';
+import { isInternalSprayTransferNarration } from '../common/utils/spray-notification.util.js';
 
 export type ProviderNotificationKind =
   | 'bank_inflow'
@@ -62,6 +63,9 @@ export function classifyTransactionNotification(raw: {
       return 'nip_reversal';
     }
     if (parsePayoutTransactionReferenceFromNotification(raw) !== null) {
+      return 'internal_transfer_credit';
+    }
+    if (isInternalSprayTransferNarration(raw?.narration)) {
       return 'internal_transfer_credit';
     }
     return 'bank_inflow';

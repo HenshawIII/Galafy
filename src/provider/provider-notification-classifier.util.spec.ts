@@ -37,6 +37,15 @@ describe('provider-notification-classifier.util', () => {
     ).toBe('bank_inflow');
   });
 
+  it('classifies event spray credit as internal transfer (not bank inflow)', () => {
+    expect(
+      classifyTransactionNotification({
+        transactionType: 'Credit',
+        narration: 'Spray in event FAM AND FRIENDS , EventId: 42fe5e31-9623-4899-b223-17b1d9c39648',
+      }),
+    ).toBe('internal_transfer_credit');
+  });
+
   it('classifies internal transfer credit by TXN/SPRAY reference', () => {
     expect(
       classifyTransactionNotification({
