@@ -32,7 +32,7 @@ const PAYOUT_ADMIN_FEE_NARRATION = /ADMIN\s+PAYOUT\s+FEE/i;
 const PAYOUT_SETTLEMENT_NARRATION = /WALLET\s+PAYOUT\s+TO/i;
 const WALLET_TRANSFER_NARRATION = /WALLET\s+TRANSFER\s+TO/i;
 const FEEP_SWEEP_REF_IN_TEXT = /\b(FEEP-[A-F0-9]+)\b/i;
-const TXN_REF_IN_TEXT = /\b(TXN-[A-F0-9]+)\b/i;
+const TRANSFER_REF_IN_TEXT = /\b((?:TXN|SPRAY)-[A-F0-9]+)\b/i;
 
 export function isPayoutAdminFeeDebitNarration(narration: unknown): boolean {
   const n = typeof narration === 'string' ? narration.trim() : '';
@@ -56,7 +56,7 @@ export function parsePayoutFeeSweepReferenceFromText(text: unknown): string | nu
 export function parsePayoutTransactionReferenceFromText(text: unknown): string | null {
   const s = typeof text === 'string' ? text.trim() : '';
   if (!s) return null;
-  const match = s.match(TXN_REF_IN_TEXT);
+  const match = s.match(TRANSFER_REF_IN_TEXT);
   return match?.[1] ?? null;
 }
 
@@ -101,5 +101,5 @@ export function parsePayoutTransactionReferenceFromNotification(raw: {
   transactionReference?: unknown;
   platformTransactionReference?: unknown;
 }): string | null {
-  return parseRefFromFields(raw, /^TXN-[A-F0-9]+$/i, parsePayoutTransactionReferenceFromText);
+  return parseRefFromFields(raw, /^(TXN|SPRAY)-[A-F0-9]+$/i, parsePayoutTransactionReferenceFromText);
 }

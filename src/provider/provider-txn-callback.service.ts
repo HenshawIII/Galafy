@@ -824,6 +824,14 @@ export class ProviderTxnCallbackService {
       return { received: true };
     }
 
+    if (kind === 'internal_transfer_credit') {
+      this.logger.log(
+        `Internal transfer credit notification detected; skipping inflow credit to prevent double-posting: account=${this.mask(accountNumber)} txRef=${this.mask(raw?.transactionReference)} platformRef=${this.mask(raw?.platformTransactionReference)}`,
+      );
+      await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
+      return { received: true };
+    }
+
     if (kind === 'bank_inflow') {
       this.logger.log(
         `Transaction notification inflow path entered: account=${this.mask(accountNumber)} rawAmount=${raw?.amount != null ? String(raw.amount) : 'n/a'}`,

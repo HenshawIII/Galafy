@@ -36,7 +36,7 @@ describe('payout-notification.util', () => {
     ).toBe('500');
   });
 
-  it('parses FEEP and TXN references from notification payload', () => {
+  it('parses FEEP and transfer references from notification payload', () => {
     expect(
       parsePayoutFeeSweepReferenceFromNotification({
         narration: 'Admin payout fee FEEP-deadbeef',
@@ -47,5 +47,10 @@ describe('payout-notification.util', () => {
         transactionReference: 'TXN-abc123',
       }),
     ).toBe('TXN-abc123');
+    expect(
+      parsePayoutTransactionReferenceFromNotification({
+        narration: 'Event spray payment SPRAY-deadbeef',
+      }),
+    ).toBe('SPRAY-deadbeef');
   });
 });

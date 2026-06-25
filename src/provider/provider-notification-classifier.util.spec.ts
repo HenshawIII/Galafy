@@ -37,6 +37,23 @@ describe('provider-notification-classifier.util', () => {
     ).toBe('bank_inflow');
   });
 
+  it('classifies internal transfer credit by TXN/SPRAY reference', () => {
+    expect(
+      classifyTransactionNotification({
+        transactionType: 'Credit',
+        narration: 'Transfer credit',
+        transactionReference: 'TXN-abc123def',
+      }),
+    ).toBe('internal_transfer_credit');
+    expect(
+      classifyTransactionNotification({
+        transactionType: 'Credit',
+        narration: 'Event credit',
+        transactionReference: 'SPRAY-abc123def',
+      }),
+    ).toBe('internal_transfer_credit');
+  });
+
   it('classifies unknown debit as unclassified', () => {
     expect(
       classifyTransactionNotification({
@@ -64,7 +81,7 @@ describe('provider-notification-classifier.util', () => {
     ).toBe('payout_admin_fee');
   });
 
-  it('classifies payout settlement debit by narration or TXN ref', () => {
+  it('classifies payout settlement debit by narration or transfer ref', () => {
     expect(
       classifyTransactionNotification({
         transactionType: 'Debit',
@@ -76,6 +93,13 @@ describe('provider-notification-classifier.util', () => {
         transactionType: 'Debit',
         narration: 'Transfer',
         transactionReference: 'TXN-abc123def',
+      }),
+    ).toBe('payout_settlement');
+    expect(
+      classifyTransactionNotification({
+        transactionType: 'Debit',
+        narration: 'Transfer',
+        transactionReference: 'SPRAY-abc123def',
       }),
     ).toBe('payout_settlement');
   });

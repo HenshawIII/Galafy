@@ -7,6 +7,7 @@ import {
 
 export type ProviderNotificationKind =
   | 'bank_inflow'
+  | 'internal_transfer_credit'
   | 'nip_commission'
   | 'nip_vat'
   | 'nip_reversal'
@@ -59,6 +60,9 @@ export function classifyTransactionNotification(raw: {
   if (direction === 'credit') {
     if (narration.includes('ALAT NIP TRANSFER REVERSAL')) {
       return 'nip_reversal';
+    }
+    if (parsePayoutTransactionReferenceFromNotification(raw) !== null) {
+      return 'internal_transfer_credit';
     }
     return 'bank_inflow';
   }
