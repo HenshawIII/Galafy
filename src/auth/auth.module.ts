@@ -5,9 +5,10 @@ import { UsersModule } from '../users/users.module.js';
 import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 import { DatabaseModule } from '../database/database.module.js';
 import { JwtAuthModule } from './jwt-auth.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
-  imports: [JwtAuthModule, UsersModule, CustomerKycModule, DatabaseModule],
+  imports: [JwtAuthModule, UsersModule, CustomerKycModule, DatabaseModule, NotificationsModule],
   providers: [AuthService],
   controllers: [AuthController],
   exports: [JwtAuthModule],

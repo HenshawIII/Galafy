@@ -396,7 +396,7 @@ export class EventsService {
     const pageSize = filters?.pageSize || 20;
     const skip = (page - 1) * pageSize;
 
-    const where: any = { deletedAt: null };
+    const where: any = {};
     if (filters?.status) where.status = filters.status;
     if (filters?.visibility) where.visibility = filters.visibility;
     if (filters?.category) where.category = filters.category;
@@ -580,7 +580,7 @@ export class EventsService {
     }
 
     const event = await this.databaseService.event.findFirst({
-      where: { id, deletedAt: null },
+      where: { id },
       include: {
         hostUser: {
           select: {
@@ -638,7 +638,7 @@ export class EventsService {
    */
   async findByCode(code: string) {
     const event = await this.databaseService.event.findFirst({
-      where: { code, deletedAt: null },
+      where: { code },
       include: {
         hostUser: {
           select: {
@@ -805,7 +805,7 @@ export class EventsService {
 
     await this.databaseService.event.update({
       where: { id: eventId },
-      data: { deletedAt },
+      data: { deletedAt, status: EventStatus.DELETED },
     });
 
     const systemAdmin = await this.databaseService.admin.findFirst({
@@ -849,12 +849,10 @@ export class EventsService {
    */
   async joinEvent(eventId: string, userId: string, joinEventDto: JoinEventDto) {
     const event = await this.databaseService.event.findFirst({
-      where: { id: eventId, deletedAt: null },
+      where: { id: eventId },
     });
 
-    if (!event) {
-      throw new NotFoundException(`Event with ID ${eventId} not found`);
-    }
+    this.throwIfEventDeleted(event, `Event with ID ${eventId} not found`);
 
     if (event.hostUserId === userId) {
       throw new ForbiddenException(
@@ -1010,10 +1008,12 @@ export class EventsService {
 
     // Host cannot leave their own event
     const event = await this.databaseService.event.findFirst({
-      where: { id: eventId, deletedAt: null },
+      where: { id: eventId },
     });
 
-    if (event?.hostUserId === userId) {
+    this.throwIfEventDeleted(event, `Event with ID ${eventId} not found`);
+
+    if (event.hostUserId === userId) {
       throw new BadRequestException('Event host cannot leave their own event');
     }
 
@@ -1034,7 +1034,6 @@ export class EventsService {
     const participants = await this.databaseService.eventParticipant.findMany({
       where: {
         ...where,
-        event: { deletedAt: null },
       },
       include: {
         event: {
@@ -1079,7 +1078,7 @@ export class EventsService {
   async getEventParticipants(eventId: string) {
     // First verify the event exists
     const event = await this.databaseService.event.findFirst({
-      where: { id: eventId, deletedAt: null },
+      where: { id: eventId },
       select: { id: true },
     });
 
@@ -1159,7 +1158,7 @@ export class EventsService {
 
     // Verify event exists
     const event = await this.databaseService.event.findFirst({
-      where: { id: eventId, deletedAt: null },
+      where: { id: eventId },
       select: { id: true, title: true },
     });
 
@@ -1310,7 +1309,7 @@ export class EventsService {
     const pageSize = searchDto.pageSize || 20;
     const skip = (page - 1) * pageSize;
 
-    const where: Prisma.EventWhereInput = { deletedAt: null };
+    const where: Prisma.EventWhereInput = {};
 
     // Search by title (case-insensitive partial match)
     if (searchDto.query && searchDto.query.trim()) {

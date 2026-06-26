@@ -4,6 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import {
@@ -35,6 +36,10 @@ import { AdminNotificationService } from '../admin/admin-notification.service.js
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+  private readonly MAX_FAILED_LOGIN_ATTEMPTS = 5;
+  private readonly LOCKOUT_DURATION_MINUTES = 30;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
@@ -280,33 +285,84 @@ export class UsersService {
     };
   }
 
+  private isAccountLocked(user: { lockedUntil: Date | null }): boolean {
+    if (!user.lockedUntil) {
+      return false;
+    }
+    if (user.lockedUntil.getTime() <= Date.now()) {
+      return false;
+    }
+    return true;
+  }
+
+  private async handleFailedLogin(userId: string): Promise<void> {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { failedLoginAttempts: true },
+    });
+    if (!user) {
+      return;
+    }
+
+    const newFailedAttempts = user.failedLoginAttempts + 1;
+    const updateData: { failedLoginAttempts: number; lockedUntil?: Date } = {
+      failedLoginAttempts: newFailedAttempts,
+    };
+
+    if (newFailedAttempts >= this.MAX_FAILED_LOGIN_ATTEMPTS) {
+      const lockedUntil = new Date();
+      lockedUntil.setMinutes(lockedUntil.getMinutes() + this.LOCKOUT_DURATION_MINUTES);
+      updateData.lockedUntil = lockedUntil;
+      this.logger.warn(`User account locked after ${newFailedAttempts} failed login attempts userId=${userId}`);
+    }
+
+    await this.databaseService.user.update({
+      where: { id: userId },
+      data: updateData,
+    });
+  }
+
+  private async resetFailedLoginAttempts(userId: string): Promise<void> {
+    await this.databaseService.user.update({
+      where: { id: userId },
+      data: {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+  }
+
   async login(loginDto: LoginDto) {
-    // Find user by email (case-insensitive)
     const user = await this.findUserByEmailCaseInsensitive(loginDto.email);
 
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Check if account is verified
+    if (this.isAccountLocked(user)) {
+      const minutesRemaining = Math.ceil((user.lockedUntil!.getTime() - Date.now()) / 60000);
+      throw new UnauthorizedException(`Account is locked. Please try again in ${minutesRemaining} minute(s).`);
+    }
+
     if (!user.isVerified) {
       throw new UnauthorizedException(
         'Please verify your account before logging in. Check your email for verification code.',
       );
     }
 
-    // Check if user signed up with Google OAuth (no password set)
     if (!user.password) {
       throw new UnauthorizedException(
         'This account was created with Google sign-in. Please use Google authentication to login.',
       );
     }
 
-    // Verify password
     const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
     if (!isPasswordValid) {
+      await this.handleFailedLogin(user.id);
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    await this.resetFailedLoginAttempts(user.id);
 
     return this.issueLoginSession(user.id);
   }

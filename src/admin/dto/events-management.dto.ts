@@ -61,8 +61,8 @@ export class GetEventsDto {
 
   @ApiPropertyOptional({
     example: false,
-    description: 'Include soft-deleted events (admin only)',
-    default: false,
+    description:
+      'Deprecated: when true, returns only DELETED events; when false, excludes deleted. Omit to return all events.',
   })
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true')

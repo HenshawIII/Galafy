@@ -31,6 +31,7 @@ import { AccountRestrictionNotifyService } from '../account-restriction/account-
 import { AdminNotificationService } from '../../admin/admin-notification.service.js';
 import { isProviderOutboundBlocked } from '../provider-account-status/provider-account-status.util.js';
 import { isInternalSprayTransferNarration } from '../utils/spray-notification.util.js';
+import { SprayTransferLookupService } from '../provider-notification/spray-transfer-lookup.service.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -71,6 +72,7 @@ export class InflowCreditService {
     private readonly providerAccountStatusService: ProviderAccountStatusService,
     private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
     private readonly adminNotificationService: AdminNotificationService,
+    private readonly sprayTransferLookup: SprayTransferLookupService,
   ) {}
 
   async processBankInflow(input: BankInflowProcessInput): Promise<BankInflowProcessResult> {
@@ -115,6 +117,34 @@ export class InflowCreditService {
         `INFLOW failed at initial wallet lookup: account=${accountNumber}, providerReference=${providerReference}`,
       );
       throw new NotFoundException(`Wallet not found for account number: ${accountNumber}`);
+    }
+
+    const pendingSprayDebit = await this.sprayTransferLookup.findPendingSprayDebitForReceiver({
+      receiverAccountNumber: accountNumber,
+      amount: grossAmount,
+    });
+    if (pendingSprayDebit) {
+      this.logger.warn(
+        `INFLOW skipped: pending spray debit matches receiver account=${accountNumber} sprayRef=${pendingSprayDebit.reference} providerReference=${providerReference}`,
+      );
+      return {
+        status: 'success',
+        message: 'Skipped inflow processing for pending spray transfer',
+        isDuplicate: true,
+        walletId: wallet.id,
+      };
+    }
+
+    if (await this.sprayTransferLookup.hasRecentSprayCreditForAmount(wallet.id, grossAmount)) {
+      this.logger.warn(
+        `INFLOW skipped: recent spray credit already settled walletId=${wallet.id} providerReference=${providerReference}`,
+      );
+      return {
+        status: 'success',
+        message: 'Skipped inflow processing for settled spray credit',
+        isDuplicate: true,
+        walletId: wallet.id,
+      };
     }
 
     const customerForInflow = await this.tierLimitService.getCustomerForLimits(wallet.customerId);

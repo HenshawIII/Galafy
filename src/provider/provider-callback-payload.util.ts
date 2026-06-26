@@ -155,3 +155,87 @@ export function extractTransactionCallbackFields(raw: unknown): {
 
   return { dataSource: 'none' };
 }
+
+function pickNumber(obj: unknown, ...keys: string[]): number | undefined {
+  if (!isRecord(obj)) return undefined;
+  for (const key of keys) {
+    for (const k of Object.keys(obj)) {
+      if (k.toLowerCase() === key.toLowerCase()) {
+        const v = obj[k];
+        if (typeof v === 'number' && !Number.isNaN(v)) return v;
+        if (typeof v === 'string' && v.trim() && !Number.isNaN(Number(v))) return Number(v);
+      }
+    }
+  }
+  return undefined;
+}
+
+export type TransactionNotificationFields = {
+  accountNumber?: string;
+  transactionType?: string;
+  amount?: number;
+  narration?: string;
+  reference?: string;
+  referenceId?: string;
+  transactionReference?: string;
+  platformTransactionReference?: string;
+  transactionDate?: string;
+  dataSource: string;
+};
+
+/** Flatten ALAT transaction-notification payloads from nested envelopes. */
+export function extractTransactionNotificationFields(raw: unknown): TransactionNotificationFields {
+  const sources: { label: string; node: unknown }[] = [
+    { label: 'data', node: isRecord(raw) ? raw.data : undefined },
+    { label: 'result.data', node: isRecord(raw) && isRecord(raw.result) ? raw.result.data : undefined },
+    { label: 'result', node: isRecord(raw) ? raw.result : undefined },
+    { label: 'root', node: raw },
+  ];
+
+  for (const { label, node } of sources) {
+    const accountNumber = pickString(node, 'accountNumber', 'AccountNumber');
+    const transactionType = pickString(node, 'transactionType', 'TransactionType');
+    if (accountNumber || transactionType) {
+      return {
+        accountNumber,
+        transactionType,
+        amount: pickNumber(node, 'amount', 'Amount'),
+        narration: pickString(node, 'narration', 'Narration'),
+        reference: pickString(node, 'reference', 'Reference'),
+        referenceId: pickString(node, 'referenceId', 'ReferenceId'),
+        transactionReference: pickString(node, 'transactionReference', 'TransactionReference'),
+        platformTransactionReference: pickString(
+          node,
+          'platformTransactionReference',
+          'PlatformTransactionReference',
+          'platformReference',
+        ),
+        transactionDate: pickString(node, 'transactionDate', 'TransactionDate'),
+        dataSource: label,
+      };
+    }
+  }
+
+  return { dataSource: 'none' };
+}
+
+/** Merge extracted notification fields onto the raw webhook body for downstream handlers. */
+export function normalizeTransactionNotificationPayload(raw: unknown): Record<string, unknown> {
+  const extracted = extractTransactionNotificationFields(raw);
+  const base = isRecord(raw) ? { ...raw } : {};
+  const merged: Record<string, unknown> = { ...base };
+
+  if (extracted.accountNumber) merged.accountNumber = extracted.accountNumber;
+  if (extracted.transactionType) merged.transactionType = extracted.transactionType;
+  if (extracted.amount !== undefined) merged.amount = extracted.amount;
+  if (extracted.narration) merged.narration = extracted.narration;
+  if (extracted.reference) merged.reference = extracted.reference;
+  if (extracted.referenceId) merged.referenceId = extracted.referenceId;
+  if (extracted.transactionReference) merged.transactionReference = extracted.transactionReference;
+  if (extracted.platformTransactionReference) {
+    merged.platformTransactionReference = extracted.platformTransactionReference;
+  }
+  if (extracted.transactionDate) merged.transactionDate = extracted.transactionDate;
+
+  return merged;
+}

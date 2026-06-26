@@ -10,6 +10,7 @@ import { TierLimitService } from '../services/tier-limit.service.js';
 import { ProviderAccountStatusService } from '../provider-account-status/provider-account-status.service.js';
 import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
 import { AdminNotificationService } from '../../admin/admin-notification.service.js';
+import { SprayTransferLookupService } from '../provider-notification/spray-transfer-lookup.service.js';
 
 function mockFn<T extends (...args: unknown[]) => unknown>(impl?: T) {
   const fn = (...args: Parameters<T>) => {
@@ -28,9 +29,16 @@ describe('InflowCreditService', () => {
     $transaction: mockFn(),
   };
 
+  const sprayLookup = {
+    findPendingSprayDebitForReceiver: mockFn(async () => null),
+    hasRecentSprayCreditForAmount: mockFn(async () => false),
+  };
+
   beforeEach(async () => {
     db.wallet.findFirst = mockFn(async () => ({ id: 'w-receiver' }));
     db.$transaction = mockFn();
+    sprayLookup.findPendingSprayDebitForReceiver = mockFn(async () => null);
+    sprayLookup.hasRecentSprayCreditForAmount = mockFn(async () => false);
 
     const module = await Test.createTestingModule({
       providers: [
@@ -44,6 +52,7 @@ describe('InflowCreditService', () => {
         { provide: ProviderAccountStatusService, useValue: {} },
         { provide: AccountRestrictionNotifyService, useValue: {} },
         { provide: AdminNotificationService, useValue: {} },
+        { provide: SprayTransferLookupService, useValue: sprayLookup },
       ],
     }).compile();
 
@@ -65,6 +74,30 @@ describe('InflowCreditService', () => {
     expect(result.isDuplicate).toBe(true);
     expect(result.walletId).toBe('w-receiver');
     expect(result.transactionId).toBeUndefined();
+    expect(db.$transaction.calls.length).toBe(0);
+  });
+
+  it('skips processBankInflow when a pending spray debit matches receiver and amount', async () => {
+    sprayLookup.findPendingSprayDebitForReceiver = mockFn(async () => ({
+      id: 'spray-debit-1',
+      reference: 'SPRAY-abc123',
+      walletId: 'w-sprayer',
+      amount: new Decimal(500),
+      metadata: {},
+    }));
+
+    const result = await service.processBankInflow({
+      accountNumber: '1234567890',
+      grossAmount: new Decimal(500),
+      providerFee: new Decimal(0),
+      providerReference: 'provider-ref-spray-2',
+      narration: 'Inflow payment',
+      providerPayload: {},
+      webhookEvent: { event: 'transaction-notification', paymentReference: 'provider-ref-spray-2' },
+    });
+
+    expect(result.isDuplicate).toBe(true);
+    expect(result.walletId).toBe('w-receiver');
     expect(db.$transaction.calls.length).toBe(0);
   });
 });

@@ -32,6 +32,10 @@ export function normalizeTransactionType(transactionType: unknown): string {
 export function classifyTransactionNotification(raw: {
   transactionType?: unknown;
   narration?: unknown;
+  reference?: unknown;
+  referenceId?: unknown;
+  transactionReference?: unknown;
+  platformTransactionReference?: unknown;
 }): ProviderNotificationKind {
   const direction = normalizeTransactionType(raw?.transactionType);
   const narration = normalizeNotificationNarration(raw?.narration);

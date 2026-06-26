@@ -6,7 +6,9 @@ import { classifyTransactionNotification } from './provider-notification-classif
 import { ProviderNotificationLedgerService } from '../common/provider-notification/provider-notification-ledger.service.js';
 import {
   extractTransactionCallbackFields,
+  extractTransactionNotificationFields,
   mapProviderStatusToTransactionStatus,
+  normalizeTransactionNotificationPayload,
   sanitizeProviderCallbackForLog,
 } from './provider-callback-payload.util.js';
 import { DatabaseService } from '../database/database.service.js';
@@ -21,7 +23,8 @@ import { Prisma } from '@prisma/client';
 import { InflowCreditService } from '../common/inflow-credit/inflow-credit.service.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
-import { resolvePayoutSourceWalletDebitAmount } from '../common/utils/payout-notification.util.js';
+import { resolvePayoutSourceWalletDebitAmount, parsePayoutTransactionReferenceFromNotification } from '../common/utils/payout-notification.util.js';
+import { SprayTransferLookupService } from '../common/provider-notification/spray-transfer-lookup.service.js';
 import {
   buildWithdrawalPushNotification,
   resolveWithdrawalDisplayAmount,
@@ -42,6 +45,7 @@ export class ProviderTxnCallbackService {
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
     private readonly notificationLedger: ProviderNotificationLedgerService,
+    private readonly sprayTransferLookup: SprayTransferLookupService,
   ) {}
 
   private mask(value: unknown, visibleTail = 4): string {
@@ -679,11 +683,16 @@ export class ProviderTxnCallbackService {
   }
 
   async handleTransactionNotification(raw: any): Promise<{ received: true }> {
-    this.logger.log(`Transaction notification received: account=${this.mask(raw?.accountNumber)} transactionType=${raw?.transactionType ?? 'n/a'}`);
+    const extracted = extractTransactionNotificationFields(raw);
+    const notification = normalizeTransactionNotificationPayload(raw);
 
-    const accountNumber: string | undefined = raw?.accountNumber?.toString()?.trim() || undefined;
-    const transactionTypeRaw: string | undefined = raw?.transactionType?.toString();
-    const kind = classifyTransactionNotification(raw);
+    this.logger.log(
+      `Transaction notification received: account=${this.mask(extracted.accountNumber)} transactionType=${extracted.transactionType ?? 'n/a'} dataSource=${extracted.dataSource}`,
+    );
+
+    const accountNumber: string | undefined = extracted.accountNumber?.trim() || undefined;
+    const transactionTypeRaw: string | undefined = extracted.transactionType;
+    const kind = classifyTransactionNotification(notification);
     this.logger.log(
       `Transaction notification classified: account=${this.mask(accountNumber)} kind=${kind} transactionType=${transactionTypeRaw ?? 'n/a'}`,
     );
@@ -698,20 +707,20 @@ export class ProviderTxnCallbackService {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for inflow admin fee debit notifications');
       }
-      const amountRaw = raw?.amount;
+      const amountRaw = extracted.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
         throw new BadRequestException('amount is required for inflow admin fee debit notifications');
       }
       const narration =
-        typeof raw?.narration === 'string' && raw.narration.trim()
-          ? raw.narration.trim()
+        typeof notification.narration === 'string' && notification.narration.trim()
+          ? notification.narration.trim()
           : 'Admin funding fee';
       const ledgerResult = await this.notificationLedger.recordInflowAdminFeeNotification({
         accountNumber,
         amount: normalizeToKobo(amountRaw),
         narration,
         kind,
-        raw: raw as Record<string, unknown>,
+        raw: notification,
       });
       this.logger.log(
         `Inflow admin fee notification linked: walletId=${ledgerResult.walletId} feeTxId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
@@ -723,20 +732,20 @@ export class ProviderTxnCallbackService {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for payout admin fee debit notifications');
       }
-      const amountRaw = raw?.amount;
+      const amountRaw = extracted.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
         throw new BadRequestException('amount is required for payout admin fee debit notifications');
       }
       const narration =
-        typeof raw?.narration === 'string' && raw.narration.trim()
-          ? raw.narration.trim()
+        typeof notification.narration === 'string' && notification.narration.trim()
+          ? notification.narration.trim()
           : 'Admin payout fee';
       const ledgerResult = await this.notificationLedger.recordPayoutAdminFeeNotification({
         accountNumber,
         amount: normalizeToKobo(amountRaw),
         narration,
         kind,
-        raw: raw as Record<string, unknown>,
+        raw: notification,
       });
       this.logger.log(
         `Payout admin fee notification linked: walletId=${ledgerResult.walletId} feeTxId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
@@ -748,20 +757,20 @@ export class ProviderTxnCallbackService {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for payout settlement debit notifications');
       }
-      const amountRaw = raw?.amount;
+      const amountRaw = extracted.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
         throw new BadRequestException('amount is required for payout settlement debit notifications');
       }
       const narration =
-        typeof raw?.narration === 'string' && raw.narration.trim()
-          ? raw.narration.trim()
+        typeof notification.narration === 'string' && notification.narration.trim()
+          ? notification.narration.trim()
           : 'Payout settlement';
       const ledgerResult = await this.notificationLedger.recordPayoutSettlementNotification({
         accountNumber,
         amount: normalizeToKobo(amountRaw),
         narration,
         kind,
-        raw: raw as Record<string, unknown>,
+        raw: notification,
       });
       this.logger.log(
         `Payout settlement notification linked: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
@@ -773,13 +782,13 @@ export class ProviderTxnCallbackService {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for debit transaction notifications');
       }
-      const amountRaw = raw?.amount;
+      const amountRaw = extracted.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
         throw new BadRequestException('amount is required for debit transaction notifications');
       }
       const narration =
-        typeof raw?.narration === 'string' && raw.narration.trim()
-          ? raw.narration.trim()
+        typeof notification.narration === 'string' && notification.narration.trim()
+          ? notification.narration.trim()
           : kind === 'unclassified_debit'
             ? 'Provider debit'
             : 'NIP transfer fee';
@@ -790,7 +799,7 @@ export class ProviderTxnCallbackService {
           amount: normalizeToKobo(amountRaw),
           narration,
           kind,
-          raw: raw as Record<string, unknown>,
+          raw: notification,
         });
         if (linked) {
           this.logger.log(
@@ -805,7 +814,7 @@ export class ProviderTxnCallbackService {
         amount: normalizeToKobo(amountRaw),
         narration,
         kind,
-        raw: raw as Record<string, unknown>,
+        raw: notification,
       });
       this.logger.log(
         `Debit notification ledger: kind=${kind} walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
@@ -817,18 +826,20 @@ export class ProviderTxnCallbackService {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for NIP reversal notifications');
       }
-      const amountRaw = raw?.amount;
+      const amountRaw = extracted.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
         throw new BadRequestException('amount is required for NIP reversal notifications');
       }
       const narration =
-        typeof raw?.narration === 'string' && raw.narration.trim() ? raw.narration.trim() : 'NIP transfer reversal';
+        typeof notification.narration === 'string' && notification.narration.trim()
+          ? notification.narration.trim()
+          : 'NIP transfer reversal';
       const ledgerResult = await this.notificationLedger.recordNipReversalCredit({
         accountNumber,
         amount: normalizeToKobo(amountRaw),
         narration,
         kind,
-        raw: raw as Record<string, unknown>,
+        raw: notification,
       });
       this.logger.log(
         `NIP reversal notification ledger: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
@@ -840,20 +851,20 @@ export class ProviderTxnCallbackService {
       if (!accountNumber) {
         throw new BadRequestException('accountNumber is required for internal transfer credit notifications');
       }
-      const amountRaw = raw?.amount;
+      const amountRaw = extracted.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
         throw new BadRequestException('amount is required for internal transfer credit notifications');
       }
       const narration =
-        typeof raw?.narration === 'string' && raw.narration.trim()
-          ? raw.narration.trim()
+        typeof notification.narration === 'string' && notification.narration.trim()
+          ? notification.narration.trim()
           : 'Internal transfer credit';
       const ledgerResult = await this.notificationLedger.recordInternalTransferCreditNotification({
         accountNumber,
         amount: normalizeToKobo(amountRaw),
         narration,
         kind,
-        raw: raw as Record<string, unknown>,
+        raw: notification,
       });
       this.logger.log(
         `Internal transfer credit notification linked: walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
@@ -863,13 +874,13 @@ export class ProviderTxnCallbackService {
 
     if (kind === 'bank_inflow') {
       this.logger.log(
-        `Transaction notification inflow path entered: account=${this.mask(accountNumber)} rawAmount=${raw?.amount != null ? String(raw.amount) : 'n/a'}`,
+        `Transaction notification inflow path entered: account=${this.mask(accountNumber)} rawAmount=${extracted.amount != null ? String(extracted.amount) : 'n/a'}`,
       );
       if (!accountNumber) {
         this.logger.error('Transaction notification inflow validation failed: missing accountNumber');
         throw new BadRequestException('accountNumber is required for credit transaction notifications');
       }
-      const amountRaw = raw?.amount;
+      const amountRaw = extracted.amount;
       if (amountRaw === undefined || amountRaw === null || Number.isNaN(Number(amountRaw))) {
         this.logger.error(
           `Transaction notification inflow validation failed: invalid amount account=${this.mask(accountNumber)} rawAmount=${amountRaw != null ? String(amountRaw) : 'n/a'}`,
@@ -878,13 +889,42 @@ export class ProviderTxnCallbackService {
       }
 
       const grossAmount = normalizeToKobo(amountRaw);
+      const sprayDebitRef = parsePayoutTransactionReferenceFromNotification(notification);
+      const pendingSprayDebit = await this.sprayTransferLookup.findPendingSprayDebitForReceiver({
+        receiverAccountNumber: accountNumber,
+        amount: grossAmount,
+        sprayDebitRef,
+      });
+      if (pendingSprayDebit) {
+        this.logger.warn(
+          `Transaction notification rerouted from bank_inflow: pending spray debit account=${this.mask(accountNumber)} sprayRef=${this.mask(pendingSprayDebit.reference)}`,
+        );
+        const narration =
+          typeof notification.narration === 'string' && notification.narration.trim()
+            ? notification.narration.trim()
+            : 'Internal transfer credit';
+        const ledgerResult = await this.notificationLedger.recordInternalTransferCreditNotification({
+          accountNumber,
+          amount: grossAmount,
+          narration,
+          kind: 'internal_transfer_credit',
+          raw: notification,
+        });
+        this.logger.log(
+          `Internal transfer credit notification linked (spray reroute): walletId=${ledgerResult.walletId} txId=${ledgerResult.transactionId} ref=${this.mask(ledgerResult.providerReference)} duplicate=${ledgerResult.isDuplicate}`,
+        );
+        return { received: true };
+      }
+
       const providerFee = normalizeToKobo(0);
-      const providerReference = buildTransactionNotificationProviderReference(raw);
+      const providerReference = buildTransactionNotificationProviderReference(notification);
       const narration =
-        typeof raw?.narration === 'string' && raw.narration.trim() ? raw.narration.trim() : 'Inflow payment';
+        typeof notification.narration === 'string' && notification.narration.trim()
+          ? notification.narration.trim()
+          : 'Inflow payment';
 
       const providerPayload = {
-        ...raw,
+        ...notification,
         walletId: wallet?.id ?? null,
         virtualAccountNumber: accountNumber,
         transactionType: transactionTypeRaw ?? null,
@@ -993,14 +1033,14 @@ export class ProviderTxnCallbackService {
       this.logger.warn(
         `Unknown transaction-notification (missing or invalid transactionType): account=${this.mask(accountNumber)} transactionType=${transactionTypeRaw ?? 'n/a'}`,
       );
-      await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
+      await this.persistGenericNotification(notification, accountNumber, wallet?.id, transactionTypeRaw);
       return { received: true };
     }
 
     this.logger.warn(
       `Unhandled transaction-notification kind=${kind} account=${this.mask(accountNumber)} — persisting generic event`,
     );
-    await this.persistGenericNotification(raw, accountNumber, wallet?.id, transactionTypeRaw);
+    await this.persistGenericNotification(notification, accountNumber, wallet?.id, transactionTypeRaw);
     return { received: true };
   }
 }

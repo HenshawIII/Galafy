@@ -1,7 +1,9 @@
 import { TransactionStatus } from '../../generated/prisma/enums.js';
 import {
   extractTransactionCallbackFields,
+  extractTransactionNotificationFields,
   mapProviderStatusToTransactionStatus,
+  normalizeTransactionNotificationPayload,
   sanitizeProviderCallbackForLog,
 } from './provider-callback-payload.util.js';
 
@@ -58,5 +60,35 @@ describe('provider-callback-payload.util', () => {
     expect(log).toContain('[REDACTED]');
     expect(log).not.toContain('secret-mandate');
     expect(log).toContain('6789');
+  });
+
+  it('extracts transaction notification fields from data envelope', () => {
+    const fields = extractTransactionNotificationFields({
+      data: {
+        AccountNumber: '0123456789',
+        TransactionType: 'Credit',
+        Amount: 500,
+        Narration: 'Transfer credit',
+        ReferenceId: '330052014056',
+      },
+    });
+    expect(fields.accountNumber).toBe('0123456789');
+    expect(fields.transactionType).toBe('Credit');
+    expect(fields.amount).toBe(500);
+    expect(fields.referenceId).toBe('330052014056');
+    expect(fields.dataSource).toBe('data');
+  });
+
+  it('normalizes nested notification payload onto root', () => {
+    const normalized = normalizeTransactionNotificationPayload({
+      data: {
+        accountNumber: '0123456789',
+        transactionType: 'Credit',
+        amount: 500,
+        narration: 'EventId:42fe5e31-9623-4899-b223-17b1d9c39648 Spray in Party',
+      },
+    });
+    expect(normalized.accountNumber).toBe('0123456789');
+    expect(normalized.narration).toContain('EventId:');
   });
 });

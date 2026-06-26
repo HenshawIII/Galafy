@@ -64,6 +64,7 @@ function parseRefFromFields(
   raw: {
     narration?: unknown;
     reference?: unknown;
+    referenceId?: unknown;
     transactionReference?: unknown;
     platformTransactionReference?: unknown;
   },
@@ -73,7 +74,12 @@ function parseRefFromFields(
   const fromNarration = parseFromText(raw.narration);
   if (fromNarration) return fromNarration;
 
-  for (const field of [raw.reference, raw.transactionReference, raw.platformTransactionReference]) {
+  for (const field of [
+    raw.reference,
+    raw.referenceId,
+    raw.transactionReference,
+    raw.platformTransactionReference,
+  ]) {
     if (typeof field !== 'string') continue;
     const trimmed = field.trim();
     if (pattern.test(trimmed)) {
@@ -89,6 +95,7 @@ function parseRefFromFields(
 export function parsePayoutFeeSweepReferenceFromNotification(raw: {
   narration?: unknown;
   reference?: unknown;
+  referenceId?: unknown;
   transactionReference?: unknown;
   platformTransactionReference?: unknown;
 }): string | null {
@@ -98,6 +105,7 @@ export function parsePayoutFeeSweepReferenceFromNotification(raw: {
 export function parsePayoutTransactionReferenceFromNotification(raw: {
   narration?: unknown;
   reference?: unknown;
+  referenceId?: unknown;
   transactionReference?: unknown;
   platformTransactionReference?: unknown;
 }): string | null {

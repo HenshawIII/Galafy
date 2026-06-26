@@ -18,6 +18,7 @@ import {
   isInternalSprayTransferNarration,
   parseEventIdFromSprayNarration,
 } from '../utils/spray-notification.util.js';
+import { SprayTransferLookupService } from './spray-transfer-lookup.service.js';
 import type { ProviderNotificationKind } from '../../provider/provider-notification-classifier.util.js';
 
 type LinkableTxnRow = {
@@ -49,7 +50,10 @@ export type NotificationLedgerResult = {
 export class ProviderNotificationLedgerService {
   private readonly logger = new Logger(ProviderNotificationLedgerService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly sprayTransferLookup: SprayTransferLookupService,
+  ) {}
 
   buildProviderReference(raw: Record<string, unknown>): string {
     return buildTransactionNotificationProviderReference(raw);
@@ -686,6 +690,7 @@ export class ProviderNotificationLedgerService {
     const sprayDebitRef = parsePayoutTransactionReferenceFromNotification({
       narration: raw.narration,
       reference: raw.reference,
+      referenceId: raw.referenceId,
       transactionReference: raw.transactionReference,
       platformTransactionReference: raw.platformTransactionReference,
     });
@@ -782,6 +787,52 @@ export class ProviderNotificationLedgerService {
       const meta = this.getTxnMetadata(recentCredit.metadata);
       if (meta.sprayCredit === true || meta.providerCallback) {
         return recentCredit;
+      }
+    }
+
+    const receiverWallet = await this.databaseService.wallet.findUnique({
+      where: { id: walletId },
+      select: { virtualAccountNumber: true },
+    });
+    if (receiverWallet?.virtualAccountNumber) {
+      const pendingSprayDebit = await this.sprayTransferLookup.findPendingSprayDebitForReceiver({
+        receiverAccountNumber: receiverWallet.virtualAccountNumber,
+        amount,
+        sprayDebitRef,
+      });
+      if (pendingSprayDebit) {
+        const creditFromPendingDebit = await this.databaseService.transaction.findFirst({
+          where: {
+            walletId,
+            direction: TransactionDirection.CREDIT,
+            amount,
+            OR: [
+              {
+                metadata: {
+                  path: ['linkedSprayDebitRef'],
+                  equals: pendingSprayDebit.reference,
+                },
+              },
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            walletId: true,
+            status: true,
+            amount: true,
+            metadata: true,
+            reference: true,
+            type: true,
+          },
+        });
+        if (creditFromPendingDebit) {
+          return creditFromPendingDebit;
+        }
+        this.logger.log(
+          `Internal transfer credit notification: pending spray debit ${pendingSprayDebit.reference} — mirror credit not created yet; skipping wallet credit`,
+        );
+        return null;
       }
     }
 

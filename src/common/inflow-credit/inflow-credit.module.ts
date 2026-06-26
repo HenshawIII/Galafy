@@ -7,6 +7,7 @@ import { ProviderModule } from '../../provider/provider.module.js';
 import { DebitMandateModule } from '../debit-mandate/debit-mandate.module.js';
 import { ProviderAccountStatusModule } from '../provider-account-status/provider-account-status.module.js';
 import { AccountRestrictionNotifyModule } from '../account-restriction/account-restriction-notify.module.js';
+import { ProviderNotificationModule } from '../provider-notification/provider-notification.module.js';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { AccountRestrictionNotifyModule } from '../account-restriction/account-r
     forwardRef(() => ProviderModule),
     ProviderAccountStatusModule,
     AccountRestrictionNotifyModule,
+    ProviderNotificationModule,
   ],
   providers: [InflowCreditService, OrganizationWalletService],
   exports: [InflowCreditService],

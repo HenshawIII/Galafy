@@ -2,11 +2,17 @@ const EVENT_SPRAY_NARRATION = /Spray in event/i;
 const EVENT_ID_IN_NARRATION = /EventId[:\s]+([0-9a-f-]{36})/i;
 const WALLET_TRANSFER_NARRATION = /Wallet transfer to/i;
 
-/** Matches event spray narrations created by SpraysService.startTier2 spray flow. */
+/** Matches event spray narrations created by SpraysService (legacy and EventId-first formats). */
 export function isEventSprayNarration(narration: unknown): boolean {
   const n = typeof narration === 'string' ? narration.trim() : '';
   if (!n) return false;
-  return EVENT_SPRAY_NARRATION.test(n) && EVENT_ID_IN_NARRATION.test(n);
+  if (!EVENT_ID_IN_NARRATION.test(n)) return false;
+  return EVENT_SPRAY_NARRATION.test(n) || /^EventId:/i.test(n);
+}
+
+/** Default narration for event sprays — EventId first so provider truncation keeps the UUID. */
+export function buildEventSprayNarration(eventId: string, eventTitle: string): string {
+  return `EventId:${eventId} Spray in ${eventTitle}`;
 }
 
 export function parseEventIdFromSprayNarration(narration: unknown): string | null {

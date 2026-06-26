@@ -52,5 +52,10 @@ describe('payout-notification.util', () => {
         narration: 'Event spray payment SPRAY-deadbeef',
       }),
     ).toBe('SPRAY-deadbeef');
+    expect(
+      parsePayoutTransactionReferenceFromNotification({
+        referenceId: 'SPRAY-deadbeef',
+      }),
+    ).toBe('SPRAY-deadbeef');
   });
 });

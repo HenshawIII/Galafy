@@ -350,6 +350,17 @@ export class NotificationsService {
   }
 
   /**
+   * Deactivate all push devices for a user (e.g. on logout).
+   */
+  async deactivateAllDevicesForUser(userId: string): Promise<{ deactivated: number }> {
+    const result = await this.databaseService.notificationDevice.updateMany({
+      where: { userId, isActive: true },
+      data: { isActive: false },
+    });
+    return { deactivated: result.count };
+  }
+
+  /**
    * Deactivate a device (soft delete)
    */
   async deactivateDevice(deviceId: string, userId: string) {

@@ -2491,9 +2491,9 @@ export class AdminService {
 
     const where: any = {};
 
-    if (filters.includeDeleted) {
-      where.deletedAt = { not: null };
-    } else {
+    if (filters.includeDeleted === true) {
+      where.status = EventStatus.DELETED;
+    } else if (filters.includeDeleted === false) {
       where.deletedAt = null;
     }
 
@@ -2620,9 +2620,9 @@ export class AdminService {
     // Build where clause (same logic as getEvents)
     const where: any = {};
 
-    if (filters.includeDeleted) {
-      where.deletedAt = { not: null };
-    } else {
+    if (filters.includeDeleted === true) {
+      where.status = EventStatus.DELETED;
+    } else if (filters.includeDeleted === false) {
       where.deletedAt = null;
     }
 

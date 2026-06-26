@@ -87,6 +87,7 @@ enum EventStatus {
   LIVE
   ENDED
   CANCELLED
+  DELETED
 }
 
 enum EventVisibility {
@@ -173,6 +174,10 @@ model User {
   refreshTokenExpiresAt DateTime?
   // Incremented on every successful login to invalidate previously issued access tokens.
   authSessionVersion   Int       @default(0)
+
+  // Credential login brute-force protection
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
 
   // Payout security
   payoutPin             String?   // Hashed PIN for payout verification

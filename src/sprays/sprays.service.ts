@@ -11,6 +11,7 @@ import { LiveGateway } from '../live/live.gateway.js';
 import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
+import { buildEventSprayNarration } from '../common/utils/spray-notification.util.js';
 import { TierLimitService } from '../common/services/tier-limit.service.js';
 import { ProviderAccountStatusService } from '../common/provider-account-status/provider-account-status.service.js';
 
@@ -320,7 +321,7 @@ export class SpraysService {
       receiverVirtualAccount: receiverWallet.virtualAccountNumber,
       receiverBankCode,
     });
-    const narration = createSprayDto.note || `Spray in event ${event.title}, EventId: ${eventId}`;
+    const narration = createSprayDto.note || buildEventSprayNarration(eventId, event.title);
 
     await this.tierLimitService.assertDailySpendAllowed(sprayerWallet.customerId, amountKobo);
     await this.providerAccountStatusService.assertProviderAllowsOutbound(sprayerWallet.customerId);
@@ -349,7 +350,18 @@ export class SpraysService {
           throw new NotFoundException('Sprayer wallet not found');
         }
 
-        if (lockedSprayer.availableBalance.lt(amountKobo)) {
+        const pendingSprayAggregate = await tx.transaction.aggregate({
+          where: {
+            walletId: sprayerWallet.id,
+            type: TransactionType.SPRAY,
+            direction: TransactionDirection.DEBIT,
+            status: { in: [TransactionStatus.PENDING, TransactionStatus.PROCESSING] },
+          },
+          _sum: { amount: true },
+        });
+        const pendingSprayTotal = pendingSprayAggregate._sum.amount ?? new Decimal(0);
+        const effectiveAvailable = lockedSprayer.availableBalance.minus(pendingSprayTotal);
+        if (effectiveAvailable.lt(amountKobo)) {
           throw new BadRequestException('Insufficient balance');
         }
 

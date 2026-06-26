@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { Decimal } from '@prisma/client/runtime/library';
 import { ProviderNotificationLedgerService } from './provider-notification-ledger.service.js';
 import { DatabaseService } from '../../database/database.service.js';
+import { SprayTransferLookupService } from './spray-transfer-lookup.service.js';
 
 function mockFn<T extends (...args: unknown[]) => unknown>(impl?: T) {
   const fn = (...args: Parameters<T>) => {
@@ -52,7 +53,17 @@ describe('ProviderNotificationLedgerService', () => {
     });
 
     const module = await Test.createTestingModule({
-      providers: [ProviderNotificationLedgerService, { provide: DatabaseService, useValue: db }],
+      providers: [
+        ProviderNotificationLedgerService,
+        { provide: DatabaseService, useValue: db },
+        {
+          provide: SprayTransferLookupService,
+          useValue: {
+            findPendingSprayDebitForReceiver: mockFn(async () => null),
+            hasRecentSprayCreditForAmount: mockFn(async () => false),
+          },
+        },
+      ],
     }).compile();
     service = module.get(ProviderNotificationLedgerService);
   });

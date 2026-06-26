@@ -6,6 +6,7 @@ import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { EmailService } from '../users/email.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import {
   authConflictMessage,
   googleLoginCredentialsConflictMessage,
@@ -60,6 +61,10 @@ describe('AuthService google auth', () => {
         { provide: EmailService, useValue: { sendWelcomeEmail: mockFn() } },
         { provide: JwtService, useValue: { sign: mockFn() } },
         { provide: DatabaseService, useValue: { user: { findUnique: mockFn(), update: mockFn() } } },
+        {
+          provide: NotificationsService,
+          useValue: { deactivateAllDevicesForUser: mockFn(async () => ({ deactivated: 1 })) },
+        },
       ],
     }).compile();
 
@@ -119,6 +124,41 @@ describe('AuthService google auth', () => {
       await expect(service.googleSignUp('token')).rejects.toThrow(
         new ConflictException(authConflictMessage({ field: 'email', method: 'credentials' })),
       );
+    });
+  });
+
+  describe('logout', () => {
+    it('clears refresh token and deactivates notification devices', async () => {
+      const notificationsService = {
+        deactivateAllDevicesForUser: mockFn(async () => ({ deactivated: 2 })),
+      };
+      const userUpdate = mockFn(async () => ({}));
+
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          { provide: UsersService, useValue: usersService },
+          { provide: CustomerKycService, useValue: {} },
+          { provide: EmailService, useValue: { sendWelcomeEmail: mockFn() } },
+          { provide: JwtService, useValue: { sign: mockFn() } },
+          { provide: DatabaseService, useValue: { user: { update: userUpdate } } },
+          { provide: NotificationsService, useValue: notificationsService },
+        ],
+      }).compile();
+
+      const authService = module.get(AuthService);
+      const result = await authService.logout('user-1');
+
+      expect(result.message).toBe('Logged out successfully');
+      expect(userUpdate.calls).toEqual([
+        [
+          {
+            where: { id: 'user-1' },
+            data: { refreshToken: null, refreshTokenExpiresAt: null },
+          },
+        ],
+      ]);
+      expect(notificationsService.deactivateAllDevicesForUser.calls).toEqual([['user-1']]);
     });
   });
 });

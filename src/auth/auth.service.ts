@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import {
   authConflictMessage,
   googleLoginCredentialsConflictMessage,
@@ -9,6 +9,7 @@ import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { EmailService } from '../users/email.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { config } from 'dotenv';
@@ -16,6 +17,7 @@ config();
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private client: OAuth2Client;
 
   constructor(
@@ -24,6 +26,7 @@ export class AuthService {
     private readonly emailService: EmailService,
     private readonly jwtService: JwtService,
     private readonly databaseService: DatabaseService,
+    private readonly notificationsService: NotificationsService,
   ) {
     // Validate Google OAuth configuration
     const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -313,7 +316,6 @@ export class AuthService {
    * Logout - invalidate refresh token (requires access token)
    */
   async logout(userId: string) {
-    // Clear refresh token from database
     await this.databaseService.user.update({
       where: { id: userId },
       data: {
@@ -322,7 +324,20 @@ export class AuthService {
       },
     });
 
+    await this.deactivatePushDevicesOnLogout(userId);
+
     return { message: 'Logged out successfully' };
+  }
+
+  private async deactivatePushDevicesOnLogout(userId: string): Promise<void> {
+    try {
+      const { deactivated } = await this.notificationsService.deactivateAllDevicesForUser(userId);
+      if (deactivated > 0) {
+        this.logger.log(`Logout deactivated ${deactivated} notification device(s) for userId=${userId}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Logout failed to deactivate notification devices for userId=${userId}: ${error?.message}`);
+    }
   }
 
   /**
@@ -362,11 +377,11 @@ export class AuthService {
         },
       });
 
+      await this.deactivatePushDevicesOnLogout(user.id);
+
       return { message: 'Logged out successfully' };
     } catch (error: any) {
       if (error.name === 'TokenExpiredError') {
-        // Token expired, but we can still try to clear it if it exists
-        // This handles edge cases where token expired but wasn't cleared
         try {
           const payload = this.jwtService.decode(refreshToken) as any;
           if (payload && payload.sub) {
@@ -377,6 +392,7 @@ export class AuthService {
                 refreshTokenExpiresAt: null,
               },
             });
+            await this.deactivatePushDevicesOnLogout(payload.sub);
           }
         } catch (clearError) {
           // Ignore errors during cleanup
