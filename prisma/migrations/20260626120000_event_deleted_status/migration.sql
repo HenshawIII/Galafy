@@ -1,7 +1,2 @@
--- Add DELETED to EventStatus and backfill rows already soft-deleted
+-- Add DELETED to EventStatus (must be in its own migration; PG forbids using new enum values in the same transaction)
 ALTER TYPE "EventStatus" ADD VALUE IF NOT EXISTS 'DELETED';
-
-UPDATE "Event"
-SET status = 'DELETED'
-WHERE "deletedAt" IS NOT NULL
-  AND status::text <> 'DELETED';
