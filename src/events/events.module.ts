@@ -7,12 +7,14 @@ import { CacheModule } from '../cache/cache.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConfigModule } from '../config/config.module.js';
 import { AdminNotificationModule } from '../admin/admin-notification.module.js';
+import { LiveModule } from '../live/live.module.js';
 
 @Module({
   imports: [
     DatabaseModule,
     CacheModule,
     forwardRef(() => NotificationsModule),
+    forwardRef(() => LiveModule),
     ConfigModule,
     AdminNotificationModule,
   ],

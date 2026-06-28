@@ -440,6 +440,44 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   /**
+   * Broadcast participant.joined to everyone subscribed to the event room.
+   */
+  emitParticipantJoined(
+    eventId: string,
+    payload: {
+      eventId: string;
+      participant: {
+        id: string;
+        role: string;
+        userId: string;
+        username: string | null;
+        profilePicture: string | null;
+      };
+      participantCount: number;
+    },
+  ) {
+    this.server.to(`event:${eventId}`).emit('participant.joined', payload);
+    this.logger.log(`Emitted participant.joined to event:${eventId} (user ${payload.participant.userId})`);
+  }
+
+  /**
+   * Broadcast participant.left to everyone subscribed to the event room.
+   */
+  emitParticipantLeft(
+    eventId: string,
+    payload: {
+      eventId: string;
+      userId: string;
+      username: string | null;
+      profilePicture: string | null;
+      participantCount: number;
+    },
+  ) {
+    this.server.to(`event:${eventId}`).emit('participant.left', payload);
+    this.logger.log(`Emitted participant.left to event:${eventId} (user ${payload.userId})`);
+  }
+
+  /**
    * Emit spray.created event to event room
    */
   emitSprayCreated(eventId: string, payload: any) {

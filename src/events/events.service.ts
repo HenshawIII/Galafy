@@ -28,6 +28,7 @@ import {
   getWATISOString,
   getCurrentWATAsUTC,
 } from '../common/utils/timezone.util.js';
+import { LiveGateway } from '../live/live.gateway.js';
 
 @Injectable()
 export class EventsService {
@@ -38,6 +39,8 @@ export class EventsService {
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => LiveGateway))
+    private readonly liveGateway: LiveGateway,
     private readonly configService: ConfigService,
     private readonly adminNotificationService: AdminNotificationService,
   ) {}
@@ -944,6 +947,7 @@ export class EventsService {
             firstName: true,
             lastName: true,
             username: true,
+            profilePicture: true,
           },
         },
         wallet: {
@@ -986,6 +990,10 @@ export class EventsService {
       this.logger.warn(`Failed to send participant joined notification: ${notificationError.message}`);
     }
 
+    this.broadcastParticipantJoined(eventId, participant).catch((error: Error) => {
+      this.logger.warn(`Failed to broadcast participant joined: ${error.message}`);
+    });
+
     return participant;
   }
 
@@ -998,6 +1006,15 @@ export class EventsService {
         eventId_userId: {
           eventId,
           userId,
+        },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            profilePicture: true,
+          },
         },
       },
     });
@@ -1021,7 +1038,61 @@ export class EventsService {
       where: { id: participant.id },
     });
 
+    this.broadcastParticipantLeft(eventId, participant.user).catch((error: Error) => {
+      this.logger.warn(`Failed to broadcast participant left: ${error.message}`);
+    });
+
     return { message: 'Successfully left the event' };
+  }
+
+  private async broadcastParticipantJoined(
+    eventId: string,
+    participant: {
+      id: string;
+      role: string;
+      user: {
+        id: string;
+        username: string | null;
+        profilePicture: string | null;
+      };
+    },
+  ): Promise<void> {
+    const participantCount = await this.databaseService.eventParticipant.count({
+      where: { eventId },
+    });
+
+    this.liveGateway.emitParticipantJoined(eventId, {
+      eventId,
+      participant: {
+        id: participant.id,
+        role: participant.role,
+        userId: participant.user.id,
+        username: participant.user.username,
+        profilePicture: participant.user.profilePicture,
+      },
+      participantCount,
+    });
+  }
+
+  private async broadcastParticipantLeft(
+    eventId: string,
+    user: {
+      id: string;
+      username: string | null;
+      profilePicture: string | null;
+    },
+  ): Promise<void> {
+    const participantCount = await this.databaseService.eventParticipant.count({
+      where: { eventId },
+    });
+
+    this.liveGateway.emitParticipantLeft(eventId, {
+      eventId,
+      userId: user.id,
+      username: user.username,
+      profilePicture: user.profilePicture,
+      participantCount,
+    });
   }
 
   /**
