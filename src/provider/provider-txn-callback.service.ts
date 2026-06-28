@@ -32,6 +32,7 @@ import {
 import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { isHostReceiverRole } from '../common/utils/event-role.util.js';
+import { EventSprayLiveBroadcastService } from '../live/event-spray-live-broadcast.service.js';
 
 @Injectable()
 export class ProviderTxnCallbackService {
@@ -46,6 +47,7 @@ export class ProviderTxnCallbackService {
     private readonly notificationsService: NotificationsService,
     private readonly notificationLedger: ProviderNotificationLedgerService,
     private readonly sprayTransferLookup: SprayTransferLookupService,
+    private readonly eventSprayLiveBroadcast: EventSprayLiveBroadcastService,
   ) {}
 
   private mask(value: unknown, visibleTail = 4): string {
@@ -140,6 +142,10 @@ export class ProviderTxnCallbackService {
         firstName?: string;
         kind: 'WITHDRAWAL_SUCCESS' | 'WITHDRAWAL_FAILED';
       } | null;
+    } = { v: null };
+
+    const confirmedEventSprayHolder: {
+      v: { eventId: string; sprayId: string } | null;
     } = { v: null };
 
     await this.databaseService.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -479,6 +485,10 @@ export class ProviderTxnCallbackService {
                     metadata: { ...prev, providerConfirmed: true } as any,
                   },
                 });
+                const eventIdStr = typeof sc.eventId === 'string' ? sc.eventId : existingEventSpray.eventId;
+                if (eventIdStr) {
+                  confirmedEventSprayHolder.v = { eventId: eventIdStr, sprayId: existingEventSpray.id };
+                }
               }
             } else if (txnDebitMeta?.walletToWalletSpray === true) {
               const existingSpray = await tx.spray.findFirst({ where: { transactionId: txn.id } });
@@ -623,6 +633,17 @@ export class ProviderTxnCallbackService {
         });
       }
     });
+
+    const confirmedEventSpray = confirmedEventSprayHolder.v;
+    if (confirmedEventSpray) {
+      this.eventSprayLiveBroadcast
+        .broadcastSprayConfirmed(confirmedEventSpray.eventId, confirmedEventSpray.sprayId)
+        .catch((error: Error) => {
+          this.logger.warn(
+            `Failed to broadcast confirmed spray for event ${confirmedEventSpray.eventId}: ${error.message}`,
+          );
+        });
+    }
 
     const n = notifyHolder.v;
     if (n) {

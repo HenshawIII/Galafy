@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventsService } from './events.service.js';
+import { EventLeaderboardService } from './event-leaderboard.service.js';
 import { EventsController } from './events.controller.js';
 import { DatabaseModule } from '../database/database.module.js';
 import { EventStatusTask } from './tasks/event-status.task.js';
@@ -19,7 +20,7 @@ import { LiveModule } from '../live/live.module.js';
     AdminNotificationModule,
   ],
   controllers: [EventsController],
-  providers: [EventsService, EventStatusTask],
-  exports: [EventsService],
+  providers: [EventsService, EventLeaderboardService, EventStatusTask],
+  exports: [EventsService, EventLeaderboardService],
 })
 export class EventsModule {}

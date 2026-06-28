@@ -7,7 +7,7 @@ import { TransactionType, TransactionDirection, TransactionStatus } from '../../
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { LiveGateway } from '../live/live.gateway.js';
+import { EventSprayLiveBroadcastService } from '../live/event-spray-live-broadcast.service.js';
 import { DebitWalletMandateService } from '../common/debit-mandate/debit-wallet-mandate.service.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
 import { buildStableProviderRef } from '../common/utils/provider-transaction-reference.util.js';
@@ -39,7 +39,7 @@ export class SpraysService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly providerService: ProviderService,
-    private readonly liveGateway: LiveGateway,
+    private readonly eventSprayLiveBroadcast: EventSprayLiveBroadcastService,
     private readonly debitWalletMandateService: DebitWalletMandateService,
     private readonly tierLimitService: TierLimitService,
     private readonly providerAccountStatusService: ProviderAccountStatusService,
@@ -421,10 +421,7 @@ export class SpraysService {
 
     const sprayWithWallets = await this.databaseService.spray.findFirst({
       where: { transaction: { reference: transactionReference } },
-      include: {
-        sprayerWallet: { select: { id: true, availableBalance: true } },
-        receiverWallet: { select: { id: true, availableBalance: true } },
-      },
+      select: { id: true },
     });
 
     const [swAfter, rwAfter] = await Promise.all([
@@ -441,17 +438,11 @@ export class SpraysService {
     const eventTotals = await this.computeEventTotals(eventId);
 
     if (sprayWithWallets) {
-      this.liveGateway.emitSprayCreated(eventId, {
-        eventId,
-        spray: sprayWithWallets,
-        sprayerBalance: swAfter!.availableBalance,
-        receiverBalance: rwAfter!.availableBalance,
-        eventTotals: {
-          totalAmount: eventTotals.totalAmount.toString(),
-          totalCount: eventTotals.totalCount,
-        },
-        pending: true,
-      });
+      this.eventSprayLiveBroadcast
+        .broadcastSprayCreated(eventId, sprayWithWallets.id, true)
+        .catch((error: Error) => {
+          this.logger.warn(`Failed to broadcast spray.created: ${error.message}`);
+        });
     }
 
     try {
@@ -490,7 +481,15 @@ export class SpraysService {
     );
 
     return {
-      spray: sprayWithWallets,
+      spray: sprayWithWallets
+        ? await this.databaseService.spray.findFirst({
+            where: { id: sprayWithWallets.id },
+            include: {
+              sprayerWallet: { select: { id: true, availableBalance: true } },
+              receiverWallet: { select: { id: true, availableBalance: true } },
+            },
+          })
+        : null,
       sprayerBalance: swAfter!.availableBalance,
       receiverBalance: rwAfter!.availableBalance,
       eventTotals,

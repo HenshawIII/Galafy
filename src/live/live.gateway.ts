@@ -12,7 +12,8 @@ import { Server, Socket } from 'socket.io';
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
-import { EventsService } from '../events/events.service.js';
+import { EventLeaderboardService } from '../events/event-leaderboard.service.js';
+import { formatSprayForLive } from '../common/utils/spray-live-payload.util.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { config } from 'dotenv';
 config();
@@ -43,7 +44,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   constructor(
     private readonly jwtService: JwtService,
     private readonly databaseService: DatabaseService,
-    private readonly eventsService: EventsService,
+    private readonly eventLeaderboardService: EventLeaderboardService,
   ) {
     // Log when gateway class is instantiated
     this.logger.log('LiveGateway class instantiated');
@@ -211,24 +212,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       // Format sprays with sprayer and receiver info
       const sprays = (event.sprays || [])
         .filter((spray: any) => spray.sprayerWallet?.customer?.user && spray.receiverWallet?.customer?.user)
-        .map((spray: any) => ({
-          id: spray.id,
-          totalAmount: spray.totalAmount.toString(),
-          note: spray.note,
-          createdAt: spray.createdAt,
-          updatedAt: spray.updatedAt,
-          sprayer: {
-            id: spray.sprayerWallet.customer.user.id,
-            username: spray.sprayerWallet.customer.user.username,
-            profilePicture: spray.sprayerWallet.customer.user.profilePicture,
-            showOnLeaderboard: spray.sprayerWallet.customer.user.settings?.showOnLeaderboard ?? true,
-          },
-          receiver: {
-            id: spray.receiverWallet.customer.user.id,
-            username: spray.receiverWallet.customer.user.username,
-            profilePicture: spray.receiverWallet.customer.user.profilePicture,
-          },
-        }));
+        .map((spray: any) => formatSprayForLive(spray));
 
       // Calculate accumulated spray total
       const accumulatedSprayTotal = (event.sprays || []).reduce((sum: Decimal, spray: any) => {
@@ -311,7 +295,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       // Fetch leaderboard
       let leaderboard: any[] | null = null;
       try {
-        const leaderboardData: any = await this.eventsService.getEventLeaderboard(eventId);
+        const leaderboardData: any = await this.eventLeaderboardService.getEventLeaderboard(eventId);
         if (leaderboardData && Array.isArray(leaderboardData.leaderboard)) {
           leaderboard = leaderboardData.leaderboard; // Extract just the leaderboard array
         }

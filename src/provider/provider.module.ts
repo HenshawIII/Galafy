@@ -13,6 +13,7 @@ import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { ProviderNotificationModule } from '../common/provider-notification/provider-notification.module.js';
 import { AccountRestrictionNotifyModule } from '../common/account-restriction/account-restriction-notify.module.js';
+import { LiveModule } from '../live/live.module.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AccountRestrictionNotifyModule } from '../common/account-restriction/ac
     NotificationsModule,
     ProviderNotificationModule,
     AccountRestrictionNotifyModule,
+    LiveModule,
   ],
   controllers: [ProviderCallbackController, ProviderTxnCallbackController],
   providers: [
