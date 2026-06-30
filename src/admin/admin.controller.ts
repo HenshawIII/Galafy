@@ -570,6 +570,28 @@ export class AdminController {
     return this.adminService.promoteCustomerToTier3(customerId, adminId, dto);
   }
 
+  @Patch('customers/:customerId/reverse-tier-3')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
+  @RequirePermission(PERMISSIONS.APPROVE_KYC)
+  @ApiOperation({
+    summary: 'Reverse Tier 3 approval',
+    description:
+      'Downgrades customer to Tier 2 and clears tier3UpgradeStatus. Does not change address verification or balance restrictions.',
+  })
+  @ApiParam({ name: 'customerId', description: 'Customer ID' })
+  @ApiBody({ type: ApproveKycDto, required: false })
+  @ApiResponse({ status: 200, description: 'Tier 3 approval reversed' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  @ApiResponse({ status: 400, description: 'No completed Tier 3 upgrade to reverse' })
+  async reverseCustomerTier3(
+    @Param('customerId') customerId: string,
+    @Body(new ValidationPipe({ skipMissingProperties: true })) dto: ApproveKycDto,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    return this.adminService.reverseCustomerTier3(customerId, adminId, dto);
+  }
+
   @Patch('customers/:customerId/complete-tier-3')
   @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
   @RequirePermission(PERMISSIONS.APPROVE_KYC)
@@ -1259,6 +1281,21 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Invite not found' })
   async acceptInvite(@Body(ValidationPipe) dto: AcceptInviteDto) {
     return this.adminService.acceptInvite(dto);
+  }
+
+  @Delete('admins/invites/:inviteId')
+  @RequirePermission(PERMISSIONS.MANAGE_ADMINS)
+  @ApiOperation({
+    summary: 'Cancel a pending admin invite',
+    description: 'Deletes a pending admin invitation. Cannot cancel invites that have already been accepted.',
+  })
+  @ApiParam({ name: 'inviteId', description: 'Admin invite ID' })
+  @ApiResponse({ status: 200, description: 'Invite cancelled successfully' })
+  @ApiResponse({ status: 404, description: 'Invite not found' })
+  @ApiResponse({ status: 400, description: 'Invite already accepted' })
+  async cancelAdminInvite(@Param('inviteId') inviteId: string, @Request() req: any) {
+    const adminId = req.admin?.id;
+    return this.adminService.cancelAdminInvite(inviteId, adminId);
   }
 
   @Get('admins')

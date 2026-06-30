@@ -1174,6 +1174,60 @@ export class AdminService {
   }
 
   /**
+   * Reverse Tier 3 approval — downgrade customer to Tier 2 (DB-only).
+   */
+  async reverseCustomerTier3(customerId: string, adminId: string, dto?: ApproveKycDto) {
+    const customer = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, userId: true, tier: true, tier3UpgradeStatus: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (customer.tier !== KycTier.Tier_3 || customer.tier3UpgradeStatus !== Tier3UpgradeStatus.COMPLETED) {
+      throw new BadRequestException('Customer does not have a completed Tier 3 upgrade to reverse');
+    }
+
+    const updated = await this.databaseService.customer.update({
+      where: { id: customerId },
+      data: {
+        tier: KycTier.Tier_2,
+        tier3UpgradeStatus: null,
+        providerTierCode: 2,
+      },
+    });
+
+    if (customer.userId) {
+      await this.cacheService.invalidateUserCache(customer.userId);
+    }
+
+    await this.logAdminAction(
+      adminId,
+      'CUSTOMER_TIER3_REVERSED',
+      'CUSTOMER',
+      customerId,
+      {
+        tier: updated.tier,
+        tier3UpgradeStatus: updated.tier3UpgradeStatus,
+        providerTierCode: updated.providerTierCode,
+        notes: dto?.notes,
+      },
+      dto?.notes,
+    );
+
+    this.logger.log(
+      `CUSTOMER_TIER3_REVERSED adminId=${adminId} customerId=${customerId} tier=${updated.tier}`,
+    );
+
+    return {
+      ...updated,
+      hasTier3Benefits: hasTier3Benefits(updated),
+    };
+  }
+
+  /**
    * Force-complete Tier 3 after provider-side upgrade (e.g. address verification email).
    * Sets tier/provider fields, clears balance-cap blocks, and unlocks Tier 3 benefits.
    */
@@ -2214,6 +2268,34 @@ export class AdminService {
       role: admin.role,
       message: 'Admin account created successfully. You can now log in.',
     };
+  }
+
+  /**
+   * Cancel a pending admin invite
+   */
+  async cancelAdminInvite(inviteId: string, adminId: string) {
+    const invite = await this.databaseService.adminInvite.findUnique({
+      where: { id: inviteId },
+    });
+
+    if (!invite) {
+      throw new NotFoundException('Invite not found');
+    }
+
+    if (invite.accepted) {
+      throw new BadRequestException('Cannot cancel an invite that has already been accepted');
+    }
+
+    await this.databaseService.adminInvite.delete({
+      where: { id: inviteId },
+    });
+
+    await this.logAdminAction(adminId, 'ADMIN_INVITE_CANCELLED', 'ADMIN_INVITE', inviteId, {
+      email: invite.email,
+      role: invite.role,
+    });
+
+    return { message: 'Invite cancelled successfully' };
   }
 
   /**
