@@ -151,10 +151,10 @@ export class WalletExportService {
         doc.text(`Account Name: ${walletInfo.customerName}`);
       }
       if (walletInfo.availableBalance !== undefined) {
-        doc.text(`Available Balance: ₦${walletInfo.availableBalance.toFixed(2)}`);
+        doc.text(`Available Balance (NGN): ${walletInfo.availableBalance.toFixed(2)}`);
       }
       if (walletInfo.ledgerBalance !== undefined) {
-        doc.text(`Ledger Balance: ₦${walletInfo.ledgerBalance.toFixed(2)}`);
+        doc.text(`Ledger Balance (NGN): ${walletInfo.ledgerBalance.toFixed(2)}`);
       }
       doc.moveDown();
 
@@ -165,9 +165,9 @@ export class WalletExportService {
 
       doc.fontSize(14).text('Summary', { underline: true });
       doc.fontSize(10);
-      doc.text(`Total Credits: ₦${totalCredits.toFixed(2)}`);
-      doc.text(`Total Debits: ₦${totalDebits.toFixed(2)}`);
-      doc.text(`Net Amount: ₦${(totalCredits - totalDebits).toFixed(2)}`);
+      doc.text(`Total Credits (NGN): ${totalCredits.toFixed(2)}`);
+      doc.text(`Total Debits (NGN): ${totalDebits.toFixed(2)}`);
+      doc.text(`Net Amount (NGN): ${(totalCredits - totalDebits).toFixed(2)}`);
       doc.text(`Total Transactions: ${transactions.length}`);
       doc.moveDown();
 
@@ -175,101 +175,104 @@ export class WalletExportService {
       doc.moveDown(0.5);
 
       const tableLeft = 50;
-      const colWidths = [80, 60, 80, 80, 100, 120, 80];
-      const rowHeight = 20;
       const rightBoundary = doc.page.width - doc.page.margins.right;
       const tableWidth = rightBoundary - tableLeft;
+      const baseRowHeight = 18;
       const footerReserve = 60;
       const getPageBottom = () => doc.page.height - doc.page.margins.bottom - footerReserve;
 
+      const fixedColWidths = [62, 48, 44, 68, 68, 88];
+      const referenceColWidth = tableWidth - fixedColWidths.reduce((sum, width) => sum + width, 0);
+      const colWidths = [...fixedColWidths, referenceColWidth];
+
+      const colX = (index: number) =>
+        tableLeft + colWidths.slice(0, index).reduce((sum, width) => sum + width, 0);
+
+      const measureWrappedHeight = (text: string, width: number, fontSize: number) => {
+        doc.font('Helvetica').fontSize(fontSize);
+        return Math.max(baseRowHeight, doc.heightOfString(text || '', { width, lineBreak: true }));
+      };
+
       const drawTableHeader = (headerY: number) => {
-        doc.fontSize(10).font('Helvetica-Bold');
-        doc.text('Date', tableLeft, headerY, { width: colWidths[0], lineBreak: false });
-        doc.text('Time', tableLeft + colWidths[0], headerY, { width: colWidths[1], lineBreak: false });
-        doc.text('Type', tableLeft + colWidths[0] + colWidths[1], headerY, { width: colWidths[2], lineBreak: false });
-        doc.text('Amount', tableLeft + colWidths[0] + colWidths[1] + colWidths[2], headerY, {
-          width: colWidths[3],
-          lineBreak: false,
-        });
-        doc.text('Balance', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], headerY, {
-          width: colWidths[4],
-          lineBreak: false,
-        });
-        doc.text('Description', tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], headerY, {
-          width: colWidths[5],
-          lineBreak: false,
-        });
-        doc.text(
-          'Reference',
-          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5],
-          headerY,
-          { width: colWidths[6], lineBreak: false },
-        );
+        doc.fontSize(8).font('Helvetica-Bold');
+        doc.text('Date', colX(0), headerY, { width: colWidths[0], lineBreak: false });
+        doc.text('Time', colX(1), headerY, { width: colWidths[1], lineBreak: false });
+        doc.text('Type', colX(2), headerY, { width: colWidths[2], lineBreak: false });
+        doc.text('Amount (NGN)', colX(3), headerY, { width: colWidths[3], lineBreak: true });
+        doc.text('Balance (NGN)', colX(4), headerY, { width: colWidths[4], lineBreak: true });
+        doc.text('Description', colX(5), headerY, { width: colWidths[5], lineBreak: false });
+        doc.text('Reference', colX(6), headerY, { width: colWidths[6], lineBreak: false });
         doc
-          .moveTo(tableLeft, headerY + 15)
-          .lineTo(tableLeft + tableWidth, headerY + 15)
+          .moveTo(tableLeft, headerY + 22)
+          .lineTo(tableLeft + tableWidth, headerY + 22)
           .stroke();
-        doc.font('Helvetica').fontSize(9);
+        doc.font('Helvetica').fontSize(8);
       };
 
       let yPos = doc.y;
       drawTableHeader(yPos);
-      yPos += rowHeight;
+      yPos += 28;
 
       transactions.forEach((tx, index) => {
+        const date = new Date(tx.timestamp);
+        const dateStr = date.toISOString().split('T')[0];
+        const timeStr = date.toTimeString().split(' ')[0];
+        const description = tx.description || '';
+        const reference = tx.reference || '';
+
+        const rowHeight = Math.max(
+          measureWrappedHeight(description, colWidths[5], 8),
+          measureWrappedHeight(reference, colWidths[6], 8),
+        );
+
         if (yPos + rowHeight > getPageBottom()) {
           doc.addPage();
           yPos = doc.page.margins.top;
           drawTableHeader(yPos);
-          yPos += rowHeight;
+          yPos += 28;
         }
 
-        const date = new Date(tx.timestamp);
-        const dateStr = date.toISOString().split('T')[0];
-        const timeStr = date.toTimeString().split(' ')[0];
-
-        doc.text(dateStr, tableLeft, yPos, { width: colWidths[0], lineBreak: false });
-        doc.text(timeStr, tableLeft + colWidths[0], yPos, { width: colWidths[1], lineBreak: false });
-        doc.text(tx.type === 'CREDIT' ? 'Credit' : 'Debit', tableLeft + colWidths[0] + colWidths[1], yPos, {
+        doc.font('Helvetica').fontSize(8);
+        doc.text(dateStr, colX(0), yPos, { width: colWidths[0], lineBreak: false });
+        doc.text(timeStr, colX(1), yPos, { width: colWidths[1], lineBreak: false });
+        doc.text(tx.type === 'CREDIT' ? 'Credit' : 'Debit', colX(2), yPos, {
           width: colWidths[2],
           lineBreak: false,
         });
-        doc.text(`₦${tx.amount.toFixed(2)}`, tableLeft + colWidths[0] + colWidths[1] + colWidths[2], yPos, {
-          width: colWidths[3],
-          lineBreak: false,
+        doc.text(tx.amount.toFixed(2), colX(3), yPos, { width: colWidths[3], lineBreak: false });
+        doc.text(tx.balance.toFixed(2), colX(4), yPos, { width: colWidths[4], lineBreak: false });
+        doc.text(description, colX(5), yPos, {
+          width: colWidths[5],
+          lineBreak: true,
+          height: rowHeight,
         });
-        doc.text(
-          `₦${tx.balance.toFixed(2)}`,
-          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3],
-          yPos,
-          { width: colWidths[4], lineBreak: false },
-        );
-        doc.text(
-          (tx.description || '').substring(0, 30),
-          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4],
-          yPos,
-          { width: colWidths[5], ellipsis: true, lineBreak: false, height: rowHeight },
-        );
-        doc.text(
-          (tx.reference || '').substring(0, 20),
-          tableLeft + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5],
-          yPos,
-          { width: colWidths[6], ellipsis: true, lineBreak: false, height: rowHeight },
-        );
+        doc.text(reference, colX(6), yPos, {
+          width: colWidths[6],
+          lineBreak: true,
+          height: rowHeight,
+        });
 
         yPos += rowHeight;
+        doc.x = tableLeft;
+        doc.y = yPos;
 
         if (index < transactions.length - 1 && yPos <= getPageBottom()) {
           doc
-            .moveTo(tableLeft, yPos - 5)
-            .lineTo(tableLeft + tableWidth, yPos - 5)
+            .moveTo(tableLeft, yPos - 4)
+            .lineTo(tableLeft + tableWidth, yPos - 4)
             .stroke();
         }
       });
 
+      const pages = doc.bufferedPageRange();
+      doc.switchToPage(pages.start + pages.count - 1);
       doc
         .fontSize(8)
-        .text(`Generated on ${new Date().toLocaleString()}`, 50, doc.page.height - 50, { align: 'center' });
+        .text(`Generated on ${new Date().toLocaleString()}`, tableLeft, doc.page.height - 50, {
+          width: tableWidth,
+          align: 'center',
+          lineBreak: false,
+        });
 
       doc.end();
     });
