@@ -1040,6 +1040,34 @@ export class EventsService {
       where: { id: participant.id },
     });
 
+    try {
+      const eventDetails = await this.databaseService.event.findUnique({
+        where: { id: eventId },
+        select: { title: true, code: true },
+      });
+
+      const participantName = participant.user.username || 'Someone';
+
+      await this.notificationsService.sendNotificationIfEnabled(event.hostUserId, {
+        notification: {
+          title: 'Participant Left',
+          body: `${participantName} left your event "${eventDetails?.title || 'Event'}"`,
+        },
+        data: {
+          type: 'EVENT_PARTICIPANT_LEFT',
+          eventId,
+          eventCode: eventDetails?.code || '',
+          eventTitle: eventDetails?.title || '',
+          participantId: participant.user.id,
+          participantName,
+          participantRole: participant.role,
+          leftAt: new Date().toISOString(),
+        },
+      });
+    } catch (notificationError: any) {
+      this.logger.warn(`Failed to send participant left notification: ${notificationError.message}`);
+    }
+
     this.broadcastParticipantLeft(eventId, participant.user).catch((error: Error) => {
       this.logger.warn(`Failed to broadcast participant left: ${error.message}`);
     });
