@@ -34,23 +34,24 @@ export class EventSprayLiveBroadcastService {
   ) {}
 
   async broadcastSprayCreated(eventId: string, sprayId: string, pending: boolean): Promise<void> {
-    const payload = await this.buildPayload(eventId, sprayId, pending);
-    if (!payload) {
+    const built = await this.buildPayloadWithSpray(eventId, sprayId, pending);
+    if (!built) {
       return;
     }
 
-    this.liveGateway.emitSprayCreated(eventId, payload);
+    this.liveGateway.emitSprayCreated(eventId, built.payload);
   }
 
   async broadcastSprayConfirmed(eventId: string, sprayId: string): Promise<void> {
     await this.cacheService.invalidateEventCache(eventId);
 
-    const payload = await this.buildPayload(eventId, sprayId, false);
-    if (!payload) {
+    const built = await this.buildPayloadWithSpray(eventId, sprayId, false);
+    if (!built) {
       return;
     }
 
-    this.liveGateway.emitSprayCreated(eventId, payload);
+    this.liveGateway.emitSprayCreated(eventId, built.payload);
+    this.emitConfirmedBalanceUpdates(built.spray, built.payload);
 
     try {
       const leaderboard = await this.eventLeaderboardService.getEventLeaderboard(eventId);
@@ -61,11 +62,43 @@ export class EventSprayLiveBroadcastService {
     }
   }
 
-  private async buildPayload(
+  private emitConfirmedBalanceUpdates(
+    spray: {
+      sprayerWalletId: string;
+      receiverWalletId: string;
+      sprayerWallet: { customer: { user: { id: string } } };
+      receiverWallet: { customer: { user: { id: string } } };
+    },
+    payload: EventSprayCreatedPayload,
+  ): void {
+    const eventBalance = payload.eventTotals.totalAmount;
+
+    this.liveGateway.emitBalanceUpdate(spray.sprayerWallet.customer.user.id, {
+      walletId: spray.sprayerWalletId,
+      availableBalance: payload.sprayerBalance,
+      eventBalance,
+    });
+
+    this.liveGateway.emitBalanceUpdate(spray.receiverWallet.customer.user.id, {
+      walletId: spray.receiverWalletId,
+      availableBalance: payload.receiverBalance,
+      eventBalance,
+    });
+  }
+
+  private async buildPayloadWithSpray(
     eventId: string,
     sprayId: string,
     pending: boolean,
-  ): Promise<EventSprayCreatedPayload | null> {
+  ): Promise<{
+    payload: EventSprayCreatedPayload;
+    spray: {
+      sprayerWalletId: string;
+      receiverWalletId: string;
+      sprayerWallet: { customer: { user: { id: string } } };
+      receiverWallet: { customer: { user: { id: string } } };
+    };
+  } | null> {
     const spray = await this.databaseService.spray.findUnique({
       where: { id: sprayId },
       include: SPRAY_LIVE_INCLUDE,
@@ -95,15 +128,23 @@ export class EventSprayLiveBroadcastService {
     const eventTotals = await this.computeEventTotals(eventId);
 
     return {
-      eventId,
-      spray: formatSprayForLive(spray),
-      sprayerBalance: sprayerWallet?.availableBalance.toString() ?? '0',
-      receiverBalance: receiverWallet?.availableBalance.toString() ?? '0',
-      eventTotals: {
-        totalAmount: eventTotals.totalAmount.toString(),
-        totalCount: eventTotals.totalCount,
+      spray: {
+        sprayerWalletId: spray.sprayerWalletId,
+        receiverWalletId: spray.receiverWalletId,
+        sprayerWallet: { customer: { user: { id: spray.sprayerWallet.customer.user.id } } },
+        receiverWallet: { customer: { user: { id: spray.receiverWallet.customer.user.id } } },
       },
-      pending,
+      payload: {
+        eventId,
+        spray: formatSprayForLive(spray),
+        sprayerBalance: sprayerWallet?.availableBalance.toString() ?? '0',
+        receiverBalance: receiverWallet?.availableBalance.toString() ?? '0',
+        eventTotals: {
+          totalAmount: eventTotals.totalAmount.toString(),
+          totalCount: eventTotals.totalCount,
+        },
+        pending,
+      },
     };
   }
 
