@@ -3,7 +3,7 @@ import { DatabaseService } from '../database/database.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { LiveGateway } from './live.gateway.js';
 import { EventLeaderboardService } from '../events/event-leaderboard.service.js';
-import { SprayStatus } from '../../generated/prisma/enums.js';
+import { EventVisibility, SprayStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import {
   formatSprayForLive,
@@ -12,6 +12,7 @@ import {
 
 export type EventSprayCreatedPayload = {
   eventId: string;
+  eventVisibility: EventVisibility;
   spray: ReturnType<typeof formatSprayForLive>;
   sprayerBalance: string;
   receiverBalance: string;
@@ -125,7 +126,18 @@ export class EventSprayLiveBroadcastService {
       }),
     ]);
 
-    const eventTotals = await this.computeEventTotals(eventId);
+    const [eventTotals, eventRecord] = await Promise.all([
+      this.computeEventTotals(eventId),
+      this.databaseService.event.findUnique({
+        where: { id: eventId },
+        select: { visibility: true },
+      }),
+    ]);
+
+    if (!eventRecord) {
+      this.logger.warn(`Event ${eventId} not found while broadcasting spray ${sprayId}`);
+      return null;
+    }
 
     return {
       spray: {
@@ -136,6 +148,7 @@ export class EventSprayLiveBroadcastService {
       },
       payload: {
         eventId,
+        eventVisibility: eventRecord.visibility,
         spray: formatSprayForLive(spray),
         sprayerBalance: sprayerWallet?.availableBalance.toString() ?? '0',
         receiverBalance: receiverWallet?.availableBalance.toString() ?? '0',

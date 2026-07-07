@@ -167,6 +167,13 @@ async function seedConfig() {
       type: ConfigType.JSON,
       description: 'Enabled admin dashboard notification types',
     },
+    {
+      key: 'ADMIN_MANDATORY_2FA_ENABLED',
+      category: 'SECURITY',
+      value: 'false',
+      type: ConfigType.BOOLEAN,
+      description: 'Require all admin accounts to complete TOTP 2FA before signing in',
+    },
   ];
 
   for (const config of configs) {

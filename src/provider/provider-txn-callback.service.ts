@@ -33,6 +33,7 @@ import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { isHostReceiverRole } from '../common/utils/event-role.util.js';
 import { EventSprayLiveBroadcastService } from '../live/event-spray-live-broadcast.service.js';
+import { AdminNotificationService } from '../admin/admin-notification.service.js';
 
 @Injectable()
 export class ProviderTxnCallbackService {
@@ -45,6 +46,7 @@ export class ProviderTxnCallbackService {
     private readonly emailService: EmailService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly adminNotificationService: AdminNotificationService,
     private readonly notificationLedger: ProviderNotificationLedgerService,
     private readonly sprayTransferLookup: SprayTransferLookupService,
     private readonly eventSprayLiveBroadcast: EventSprayLiveBroadcastService,
@@ -142,6 +144,9 @@ export class ProviderTxnCallbackService {
         firstName?: string;
         kind: 'WITHDRAWAL_SUCCESS' | 'WITHDRAWAL_FAILED';
       } | null;
+    } = { v: null };
+    const adminNotifyHolder: {
+      v: { payoutId: string; userId: string; amount: string; status: string; email?: string } | null;
     } = { v: null };
 
     const confirmedEventSprayHolder: {
@@ -321,6 +326,15 @@ export class ProviderTxnCallbackService {
               firstName: payerWallet.customer.user?.firstName ?? payerWallet.customer.firstName ?? undefined,
               kind: 'WITHDRAWAL_FAILED',
             };
+            if (txn.type === TransactionType.PAYOUT) {
+              adminNotifyHolder.v = {
+                payoutId: txn.id,
+                userId: payerWallet.customer.userId,
+                amount: resolveWithdrawalDisplayAmount(txn.amount, txn.metadata),
+                status: 'FAILED',
+                email: payerWallet.customer.user?.email ?? undefined,
+              };
+            }
           }
         }
       }
@@ -626,6 +640,15 @@ export class ProviderTxnCallbackService {
             firstName: payerWallet.customer.user?.firstName ?? payerWallet.customer.firstName ?? undefined,
             kind: 'WITHDRAWAL_SUCCESS',
           };
+          if (txn.type === TransactionType.PAYOUT) {
+            adminNotifyHolder.v = {
+              payoutId: txn.id,
+              userId: payerWallet.customer.userId,
+              amount: resolveWithdrawalDisplayAmount(txn.amount, txn.metadata),
+              status: 'SUCCESS',
+              email: payerWallet.customer.user?.email ?? undefined,
+            };
+          }
         }
 
         this.walletRiskService.updateWalletRiskScore(sourceWalletId).catch((e) => {
@@ -677,6 +700,11 @@ export class ProviderTxnCallbackService {
       } catch (e: any) {
         this.logger.warn(`Failed to send transfer push (${n.kind}): ${e.message}`);
       }
+    }
+
+    const adminN = adminNotifyHolder.v;
+    if (adminN) {
+      void this.adminNotificationService.notifyWithdrawal(adminN);
     }
 
     return { received: true };

@@ -178,7 +178,20 @@ export class AdminService {
    */
   async updateConfig(key: string, data: UpdateConfigDto, adminId: string) {
     await this.checkAdminPermissions(adminId);
-    return this.configService.updateConfig(key, data.value, adminId, data.description);
+    const existing = await this.databaseService.systemConfig.findUnique({
+      where: { key },
+      select: { key: true, category: true, value: true, description: true },
+    });
+    const updated = await this.configService.updateConfig(key, data.value, adminId, data.description);
+    await this.logAdminAction(adminId, 'CONFIG_UPDATED', 'SYSTEM_CONFIG', key, {
+      key,
+      category: updated.category,
+      oldValue: existing?.value ?? null,
+      newValue: updated.value,
+      oldDescription: existing?.description ?? null,
+      newDescription: updated.description ?? null,
+    });
+    return updated;
   }
 
   /**
@@ -186,7 +199,15 @@ export class AdminService {
    */
   async createConfig(data: CreateConfigDto, adminId: string) {
     await this.checkAdminPermissions(adminId);
-    return this.configService.createConfig(data, adminId);
+    const created = await this.configService.createConfig(data, adminId);
+    await this.logAdminAction(adminId, 'CONFIG_CREATED', 'SYSTEM_CONFIG', created.key, {
+      key: created.key,
+      category: created.category,
+      value: created.value,
+      type: created.type,
+      description: created.description ?? null,
+    });
+    return created;
   }
 
   /**
@@ -194,7 +215,19 @@ export class AdminService {
    */
   async deleteConfig(key: string, adminId: string) {
     await this.checkAdminPermissions(adminId);
-    return this.configService.deleteConfig(key);
+    const existing = await this.databaseService.systemConfig.findUnique({
+      where: { key },
+      select: { key: true, category: true, value: true, description: true },
+    });
+    const deleted = await this.configService.deleteConfig(key);
+    await this.logAdminAction(adminId, 'CONFIG_DEACTIVATED', 'SYSTEM_CONFIG', key, {
+      key,
+      category: existing?.category ?? deleted.category,
+      previousValue: existing?.value ?? deleted.value,
+      description: existing?.description ?? deleted.description ?? null,
+      isActive: false,
+    });
+    return deleted;
   }
 
   /**
@@ -2890,7 +2923,16 @@ export class AdminService {
     };
 
     // Current metrics - ALL events
-    const [totalEvents, activeEvents, allSprays, allSprays7DaysAgo, totalEvents7DaysAgo, activeEvents7DaysAgo] =
+    const [
+      totalEvents,
+      activeEvents,
+      allSprays,
+      allSprays7DaysAgo,
+      totalAttendees,
+      totalAttendees7DaysAgo,
+      totalEvents7DaysAgo,
+      activeEvents7DaysAgo,
+    ] =
       await Promise.all([
         // Total Events (current)
         this.databaseService.event.count({ where: { deletedAt: null } }),
@@ -2901,20 +2943,10 @@ export class AdminService {
             deletedAt: null,
           },
         }),
-        // All sprays (for unique sprayers and total sprayed)
+        // All sprays (for total sprayed)
         this.databaseService.spray.findMany({
           select: {
-            sprayerWalletId: true,
             totalAmount: true,
-            sprayerWallet: {
-              select: {
-                customer: {
-                  select: {
-                    userId: true,
-                  },
-                },
-              },
-            },
           },
         }),
         // All sprays created before 7 days ago
@@ -2925,16 +2957,25 @@ export class AdminService {
             },
           },
           select: {
-            sprayerWalletId: true,
             totalAmount: true,
-            sprayerWallet: {
-              select: {
-                customer: {
-                  select: {
-                    userId: true,
-                  },
-                },
-              },
+          },
+        }),
+        // Attendees for all non-deleted events
+        this.databaseService.eventParticipant.count({
+          where: {
+            event: {
+              deletedAt: null,
+            },
+          },
+        }),
+        // Attendees before 7 days ago (for growth comparison)
+        this.databaseService.eventParticipant.count({
+          where: {
+            createdAt: {
+              lt: sevenDaysAgo,
+            },
+            event: {
+              deletedAt: null,
             },
           },
         }),
@@ -2960,25 +3001,10 @@ export class AdminService {
       ]);
 
     // Calculate current metrics
-    // Unique sprayers: count distinct userIds from sprayerWallet.customer.userId
-    const uniqueSprayerIds = new Set(
-      allSprays
-        .map((spray) => spray.sprayerWallet?.customer?.userId)
-        .filter((userId) => userId !== null && userId !== undefined),
-    );
-    const totalAttendees = uniqueSprayerIds.size;
-
     // Total sprayed: sum of all spray amounts
     const totalSprayed = allSprays.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     // Calculate 7 days ago metrics
-    const uniqueSprayerIds7DaysAgo = new Set(
-      allSprays7DaysAgo
-        .map((spray) => spray.sprayerWallet?.customer?.userId)
-        .filter((userId) => userId !== null && userId !== undefined),
-    );
-    const totalAttendees7DaysAgo = uniqueSprayerIds7DaysAgo.size;
-
     const totalSprayed7DaysAgo = allSprays7DaysAgo.reduce((sum, spray) => sum.plus(spray.totalAmount), new Decimal(0));
 
     // Calculate growth percentages

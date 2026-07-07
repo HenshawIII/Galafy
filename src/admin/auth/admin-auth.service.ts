@@ -19,6 +19,7 @@ export class AdminAuthService {
   private readonly logger = new Logger(AdminAuthService.name);
   private readonly MAX_FAILED_ATTEMPTS = 5;
   private readonly LOCKOUT_DURATION_MINUTES = 30;
+  private readonly mandatory2FAKey = 'ADMIN_MANDATORY_2FA_ENABLED';
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -172,7 +173,16 @@ export class AdminAuthService {
     // Reset failed attempts on successful password verification
     await this.resetFailedAttempts(admin.id);
 
-    if (admin.twoFactorEnabled) {
+    const mandatory2FAEnabled = await this.isMandatory2FAEnabled();
+
+    if (mandatory2FAEnabled && !admin.twoFactorEnabled) {
+      return {
+        requires2FAEnrollment: true,
+        message: 'Two-factor authentication setup is required before signing in. Please contact a super admin if this persists.',
+      };
+    }
+
+    if (admin.twoFactorEnabled || mandatory2FAEnabled) {
       const tempToken = this.jwtService.sign(
         {
           sub: admin.id,
@@ -280,6 +290,11 @@ export class AdminAuthService {
       throw new BadRequestException('Two-factor authentication is not enabled');
     }
 
+    const mandatory2FAEnabled = await this.isMandatory2FAEnabled();
+    if (mandatory2FAEnabled) {
+      throw new BadRequestException('Two-factor authentication is mandatory and cannot be disabled');
+    }
+
     const secret = this.secretCrypto.decrypt(admin.twoFactorSecret);
     if (!secret || !(await this.verifyTotpCode(secret, dto.code))) {
       throw new UnauthorizedException('Invalid authentication code');
@@ -336,6 +351,20 @@ export class AdminAuthService {
   private async verifyTotpCode(secret: string, code: string): Promise<boolean> {
     const result = await verify({ secret, token: code, epochTolerance: 1 });
     return result.valid;
+  }
+
+  private async isMandatory2FAEnabled(): Promise<boolean> {
+    try {
+      const config = await this.databaseService.systemConfig.findUnique({
+        where: { key: this.mandatory2FAKey },
+        select: { value: true, isActive: true },
+      });
+      if (!config || !config.isActive) return false;
+      return config.value.trim().toLowerCase() === 'true';
+    } catch (error) {
+      this.logger.warn(`Failed reading ${this.mandatory2FAKey}: ${(error as Error).message}`);
+      return false;
+    }
   }
 
   /**
