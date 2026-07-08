@@ -28,7 +28,13 @@ import { SprayTransferLookupService } from '../common/provider-notification/spra
 import {
   buildWithdrawalPushNotification,
   resolveWithdrawalDisplayAmount,
+  type WithdrawalNotificationKind,
 } from '../common/utils/withdrawal-notification.util.js';
+import {
+  buildSprayPushNotification,
+  getSprayNotificationContext,
+  isSprayDebitTransaction,
+} from '../common/utils/spray-notification.util.js';
 import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { isHostReceiverRole } from '../common/utils/event-role.util.js';
@@ -142,7 +148,9 @@ export class ProviderTxnCallbackService {
         transactionReference: string;
         destinationAccountNumber: string | null;
         firstName?: string;
-        kind: 'WITHDRAWAL_SUCCESS' | 'WITHDRAWAL_FAILED';
+        kind: WithdrawalNotificationKind | 'SPRAY_SENT' | 'SPRAY_FAILED';
+        eventId?: string;
+        eventTitle?: string;
       } | null;
     } = { v: null };
     const adminNotifyHolder: {
@@ -317,6 +325,8 @@ export class ProviderTxnCallbackService {
             },
           });
           if (payerWallet?.customer?.userId) {
+            const isSpray = isSprayDebitTransaction(txn);
+            const sprayContext = isSpray ? getSprayNotificationContext(txn.metadata) : null;
             notifyHolder.v = {
               userId: payerWallet.customer.userId,
               email: payerWallet.customer.user?.email ?? null,
@@ -324,7 +334,9 @@ export class ProviderTxnCallbackService {
               transactionReference,
               destinationAccountNumber: txn.destinationAccountNumber,
               firstName: payerWallet.customer.user?.firstName ?? payerWallet.customer.firstName ?? undefined,
-              kind: 'WITHDRAWAL_FAILED',
+              kind: isSpray ? 'SPRAY_FAILED' : 'WITHDRAWAL_FAILED',
+              eventId: sprayContext?.eventId,
+              eventTitle: sprayContext?.eventTitle,
             };
             if (txn.type === TransactionType.PAYOUT) {
               adminNotifyHolder.v = {
@@ -631,6 +643,8 @@ export class ProviderTxnCallbackService {
         const suppressDebitSuccessNotify =
           txnMeta?.payoutAdminFeeSweep === true || txnMeta?.inflowAdminFeeSweep === true;
         if (payerWallet?.customer?.userId && !suppressDebitSuccessNotify) {
+          const isSpray = isSprayDebitTransaction(txn);
+          const sprayContext = isSpray ? getSprayNotificationContext(txn.metadata) : null;
           notifyHolder.v = {
             userId: payerWallet.customer.userId,
             email: payerWallet.customer.user?.email ?? null,
@@ -638,7 +652,9 @@ export class ProviderTxnCallbackService {
             transactionReference,
             destinationAccountNumber: txn.destinationAccountNumber,
             firstName: payerWallet.customer.user?.firstName ?? payerWallet.customer.firstName ?? undefined,
-            kind: 'WITHDRAWAL_SUCCESS',
+            kind: isSpray ? 'SPRAY_SENT' : 'WITHDRAWAL_SUCCESS',
+            eventId: sprayContext?.eventId,
+            eventTitle: sprayContext?.eventTitle,
           };
           if (txn.type === TransactionType.PAYOUT) {
             adminNotifyHolder.v = {
@@ -670,9 +686,10 @@ export class ProviderTxnCallbackService {
 
     const n = notifyHolder.v;
     if (n) {
+      const isSprayKind = n.kind === 'SPRAY_SENT' || n.kind === 'SPRAY_FAILED';
       const destDisplay = n.destinationAccountNumber || 'Recipient';
       const emailStatus = n.kind === 'WITHDRAWAL_SUCCESS' ? 'success' : 'failed';
-      if (n.email) {
+      if (!isSprayKind && n.email) {
         this.emailService
           .sendWithdrawalStatusAlert(
             n.email,
@@ -690,15 +707,23 @@ export class ProviderTxnCallbackService {
           });
       }
       try {
-        const payload = buildWithdrawalPushNotification({
-          kind: n.kind,
-          amountFormatted: n.amountFormatted,
-          transactionReference: n.transactionReference,
-          destinationAccountNumber: n.destinationAccountNumber,
-        });
+        const payload = isSprayKind
+          ? buildSprayPushNotification({
+              kind: n.kind,
+              amountFormatted: n.amountFormatted,
+              transactionReference: n.transactionReference,
+              eventId: n.eventId,
+              eventTitle: n.eventTitle,
+            })
+          : buildWithdrawalPushNotification({
+              kind: n.kind,
+              amountFormatted: n.amountFormatted,
+              transactionReference: n.transactionReference,
+              destinationAccountNumber: n.destinationAccountNumber,
+            });
         await this.notificationsService.sendNotificationIfEnabled(n.userId, payload);
       } catch (e: any) {
-        this.logger.warn(`Failed to send transfer push (${n.kind}): ${e.message}`);
+        this.logger.warn(`Failed to send debit callback push (${n.kind}): ${e.message}`);
       }
     }
 

@@ -33,6 +33,8 @@ import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { AdminNotificationService } from '../admin/admin-notification.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { RegisterDeviceDto } from '../notifications/dto/notification.dto.js';
 
 @Injectable()
 export class UsersService {
@@ -49,6 +51,7 @@ export class UsersService {
     private readonly customerKycService: CustomerKycService,
     private readonly tierLimitService: TierLimitService,
     private readonly adminNotificationService: AdminNotificationService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private async buildAccountLimitsForUser(
@@ -364,13 +367,26 @@ export class UsersService {
 
     await this.resetFailedLoginAttempts(user.id);
 
-    return this.issueLoginSession(user.id);
+    return this.issueLoginSession(user.id, loginDto.device);
+  }
+
+  private async bindLoginDevice(userId: string, device?: RegisterDeviceDto): Promise<void> {
+    if (!device?.deviceToken || !device.deviceType) {
+      return;
+    }
+
+    try {
+      await this.notificationsService.registerDevice(userId, device);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Failed to register push device during login for user ${userId}: ${message}`);
+    }
   }
 
   /**
    * Issue access/refresh tokens and return the standard login payload (email + Google login).
    */
-  async issueLoginSession(userId: string) {
+  async issueLoginSession(userId: string, device?: RegisterDeviceDto) {
     const user = await this.databaseService.user.findUnique({
       where: { id: userId },
     });
@@ -435,6 +451,8 @@ export class UsersService {
     });
     const isPinSet = !!user.payoutPin;
     const accountLimits = await this.buildAccountLimitsForUser(customerRow?.id ?? null, isPinSet);
+
+    await this.bindLoginDevice(userId, device);
 
     return {
       access_token: accessToken,

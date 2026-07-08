@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { FIREBASE_ADMIN } from './firesbase-admin.provider.js';
 import * as admin from 'firebase-admin';
@@ -6,6 +6,8 @@ import { RegisterDeviceDto, SendMessageDto, SendBulkMessageDto, UpdateDeviceDto 
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     private readonly databaseService: DatabaseService,
     @Inject(FIREBASE_ADMIN) private readonly firebaseAdmin: admin.app.App,
@@ -45,6 +47,9 @@ export class NotificationsService {
         // Device belongs to a different user - transfer ownership
         // This handles the case where a user logs out and another user logs in on the same device
         // The device is now owned by the currently logged-in user
+        this.logger.log(
+          `Transferring push device ownership from user ${existingDevice.userId} to user ${userId}`,
+        );
         return await this.databaseService.notificationDevice.update({
           where: { id: existingDevice.id },
           data: {

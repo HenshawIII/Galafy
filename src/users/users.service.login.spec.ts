@@ -10,6 +10,7 @@ import { CacheService } from '../cache/cache.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { TierLimitService } from '../common/services/tier-limit.service.js';
 import { AdminNotificationService } from '../admin/admin-notification.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 function mockFn<T extends (...args: unknown[]) => unknown>(impl?: T) {
   const fn = (...args: Parameters<T>) => {
@@ -51,6 +52,7 @@ describe('UsersService login lockout', () => {
           },
         },
         { provide: AdminNotificationService, useValue: {} },
+        { provide: NotificationsService, useValue: { registerDevice: mockFn() } },
       ],
     }).compile();
 

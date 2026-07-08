@@ -107,9 +107,20 @@ describe('AuthService google auth', () => {
       };
       usersService.issueLoginSession = mockFn(async () => session);
 
-      const result = await service.googleLogin('token');
+      const result = await service.googleLogin('token', {
+        deviceToken: 'shared-token',
+        deviceType: 'ios',
+      });
       expect(result).toEqual(session);
-      expect(usersService.issueLoginSession.calls).toEqual([['u1']]);
+      expect(usersService.issueLoginSession.calls).toEqual([
+        [
+          'u1',
+          {
+            deviceToken: 'shared-token',
+            deviceType: 'ios',
+          },
+        ],
+      ]);
     });
   });
 

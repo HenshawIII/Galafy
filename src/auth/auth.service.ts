@@ -10,6 +10,7 @@ import { EmailService } from '../users/email.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { RegisterDeviceDto } from '../notifications/dto/notification.dto.js';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { config } from 'dotenv';
@@ -230,7 +231,7 @@ export class AuthService {
    * Google Login - Authenticates an existing user
    * Throws error if user does not exist
    */
-  async googleLogin(idtoken: string) {
+  async googleLogin(idtoken: string, device?: RegisterDeviceDto) {
     const user = await this.validateGoogleToken(idtoken);
     if (!user) {
       throw new UnauthorizedException('Invalid token');
@@ -246,7 +247,7 @@ export class AuthService {
       throw new UnauthorizedException(googleLoginCredentialsConflictMessage());
     }
 
-    return this.usersService.issueLoginSession(dbUser.id);
+    return this.usersService.issueLoginSession(dbUser.id, device);
   }
 
   /**

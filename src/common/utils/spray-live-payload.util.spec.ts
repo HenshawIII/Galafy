@@ -47,12 +47,14 @@ describe('formatSprayForLive', () => {
         username: 'sprayer1',
         profilePicture: 'https://example.com/a.png',
         showOnLeaderboard: true,
+        visibleAtEvents: true,
       },
       receiver: {
         id: 'user-b',
         username: 'host1',
         profilePicture: null,
         showOnLeaderboard: false,
+        visibleAtEvents: true,
       },
     });
   });

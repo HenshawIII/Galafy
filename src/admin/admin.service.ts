@@ -11,7 +11,12 @@ import { DatabaseService } from '../database/database.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { GetConfigDto, UpdateConfigDto, CreateConfigDto } from './dto/config.dto.js';
-import { GetUsersDto, RestrictUserDto } from './dto/user-management.dto.js';
+import {
+  GetUsersDto,
+  RestrictUserDto,
+  ManualBalanceAdjustmentDto,
+  ManualBalanceAdjustmentDirection,
+} from './dto/user-management.dto.js';
 import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-management.dto.js';
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
@@ -43,7 +48,9 @@ import {
   buildCompletedKycCustomerWhere,
   buildPendingKycCustomerWhere,
   buildPendingKycUserWhere,
+  canReceiveKycReminder,
   deriveExportKycStatus,
+  getKycReminderScenario,
   isCustomerKycPending,
 } from '../common/utils/admin-kyc.util.js';
 import {
@@ -254,6 +261,64 @@ export class AdminService {
     this.logger.log(`Admin action logged: ${actionType} on ${targetType} ${targetId} by admin ${adminId}`);
   }
 
+  private async resolveReconciliationStatus(user: {
+    customer?: {
+      wallets?: Array<{
+        id: string;
+        availableBalance: Decimal;
+        ledgerBalance: Decimal;
+        virtualAccountNumber: string | null;
+      }>;
+    } | null;
+  }): Promise<'in_sync' | 'mismatch' | 'unavailable' | 'na'> {
+    const wallet = user.customer?.wallets?.find((w) => w.virtualAccountNumber) ?? user.customer?.wallets?.[0];
+    if (!wallet?.virtualAccountNumber) return 'na';
+
+    const snapshot = await this.walletReconciliationService.buildProviderBalanceSnapshot({
+      id: wallet.id,
+      availableBalance: wallet.availableBalance,
+      ledgerBalance: wallet.ledgerBalance,
+      virtualAccountNumber: wallet.virtualAccountNumber,
+    });
+
+    if (!snapshot || snapshot.inSync === null) return 'unavailable';
+    return snapshot.inSync ? 'in_sync' : 'mismatch';
+  }
+
+  private async isUserWalletOutOfSync(user: {
+    customer?: {
+      wallets?: Array<{
+        id: string;
+        availableBalance: Decimal;
+        ledgerBalance: Decimal;
+        virtualAccountNumber: string | null;
+      }>;
+    } | null;
+  }): Promise<boolean | null> {
+    const status = await this.resolveReconciliationStatus(user);
+    if (status === 'na' || status === 'unavailable') return null;
+    return status === 'mismatch';
+  }
+
+  private async filterUsersByMismatch<T extends { customer?: { wallets?: Array<{ id: string; availableBalance: Decimal; ledgerBalance: Decimal; virtualAccountNumber: string | null }> } | null }>(
+    users: T[],
+    hasMismatch: boolean,
+  ): Promise<T[]> {
+    const results = await Promise.all(
+      users.map(async (user) => ({
+        user,
+        outOfSync: await this.isUserWalletOutOfSync(user),
+      })),
+    );
+
+    return results
+      .filter(({ outOfSync }) => {
+        if (outOfSync === null) return !hasMismatch;
+        return hasMismatch ? outOfSync === true : outOfSync === false;
+      })
+      .map(({ user }) => user);
+  }
+
   /**
    * Get users with pagination and filtering
    */
@@ -318,39 +383,100 @@ export class AdminService {
       }
     }
 
-    const [users, total] = await Promise.all([
-      this.databaseService.user.findMany({
-        where,
-        skip,
-        take: limit,
+    const userInclude = {
+      customer: {
         include: {
-          customer: {
-            include: {
-              wallets: {
-                select: {
-                  id: true,
-                  availableBalance: true,
-                  ledgerBalance: true,
-                  currencyId: true,
-                },
-              },
-              withdrawalLimit: true,
+          wallets: {
+            select: {
+              id: true,
+              availableBalance: true,
+              ledgerBalance: true,
+              currencyId: true,
+              virtualAccountNumber: true,
             },
           },
+          withdrawalLimit: true,
         },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.databaseService.user.count({ where }),
-    ]);
+      },
+    } as const;
 
-    return {
-      users: users.map((user) => ({
+    let users: Array<{
+      id: string;
+      email: string;
+      username: string | null;
+      firstName: string | null;
+      lastName: string | null;
+      profilePicture: string | null;
+      createdAt: Date;
+      customer: {
+        id: string;
+        tier: KycTier;
+        isAmlRestricted: boolean;
+        amlRestrictedAt: Date | null;
+        amlRestrictionReason: string | null;
+        tier1FaceStatus: string | null;
+        tier1AccountStatus: string | null;
+        tier2UpgradeStatus: string | null;
+        tier3UpgradeStatus: string | null;
+        wallets: Array<{
+          id: string;
+          availableBalance: Decimal;
+          ledgerBalance: Decimal;
+          currencyId: string;
+          virtualAccountNumber: string | null;
+        }>;
+        withdrawalLimit: unknown;
+      } | null;
+    }> = [];
+    let total = 0;
+
+    if (filters.hasMismatch === undefined) {
+      const [pageUsers, pageTotal] = await Promise.all([
+        this.databaseService.user.findMany({
+          where,
+          skip,
+          take: limit,
+          include: userInclude,
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.databaseService.user.count({ where }),
+      ]);
+      users = pageUsers;
+      total = pageTotal;
+    } else {
+      const matched: typeof users = [];
+      const batchSize = 50;
+      const maxScan = 2000;
+      let scanSkip = 0;
+
+      while (matched.length < page * limit && scanSkip < maxScan) {
+        const batch = await this.databaseService.user.findMany({
+          where,
+          skip: scanSkip,
+          take: batchSize,
+          include: userInclude,
+          orderBy: { createdAt: 'desc' },
+        });
+        if (!batch.length) break;
+
+        const filtered = await this.filterUsersByMismatch(batch, filters.hasMismatch);
+        matched.push(...filtered);
+        scanSkip += batchSize;
+      }
+
+      total = matched.length;
+      users = matched.slice(skip, skip + limit);
+    }
+
+    const mappedUsers = await Promise.all(
+      users.map(async (user) => ({
         id: user.id,
         email: user.email,
         username: user.username,
         firstName: user.firstName,
         lastName: user.lastName,
         profilePicture: user.profilePicture,
+        reconciliationStatus: await this.resolveReconciliationStatus(user),
         customer: user.customer
           ? {
               id: user.customer.id,
@@ -368,6 +494,10 @@ export class AdminService {
           : null,
         createdAt: user.createdAt,
       })),
+    );
+
+    return {
+      users: mappedUsers,
       pagination: {
         page,
         limit,
@@ -483,7 +613,10 @@ export class AdminService {
                 include: {
                   wallets: {
                     select: {
+                      id: true,
                       availableBalance: true,
+                      ledgerBalance: true,
+                      virtualAccountNumber: true,
                     },
                   },
                 },
@@ -493,7 +626,12 @@ export class AdminService {
 
           if (users.length === 0) break;
 
-          for (const user of users) {
+          const exportUsers =
+            filters.hasMismatch === undefined
+              ? users
+              : await this.filterUsersByMismatch(users, filters.hasMismatch);
+
+          for (const user of exportUsers) {
             const kycStatus = deriveExportKycStatus(user.customer);
 
             const totalWalletBalance = user.customer?.wallets
@@ -883,6 +1021,157 @@ export class AdminService {
     };
   }
 
+  async adjustWalletInternalBalances(walletId: string, adminId: string, dto: ManualBalanceAdjustmentDto) {
+    let amount: Decimal;
+    try {
+      amount = new Decimal(dto.amount);
+    } catch {
+      throw new BadRequestException('Amount must be a valid decimal value');
+    }
+
+    if (!amount.isFinite() || amount.lte(0)) {
+      throw new BadRequestException('Amount must be greater than zero');
+    }
+
+    const normalizedAmount = new Decimal(amount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP));
+    const normalizedReference = dto.reference.trim();
+    const normalizedReason = dto.reason.trim();
+
+    if (!normalizedReference) {
+      throw new BadRequestException('Reference is required');
+    }
+    if (!normalizedReason) {
+      throw new BadRequestException('Reason is required');
+    }
+
+    const wallet = await this.databaseService.wallet.findUnique({
+      where: { id: walletId },
+      select: {
+        id: true,
+        customerId: true,
+        currencyId: true,
+        availableBalance: true,
+        ledgerBalance: true,
+        customer: { select: { userId: true } },
+      },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
+
+    try {
+      const result = await this.databaseService.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT id FROM "Wallet" WHERE id = ${walletId} FOR UPDATE
+        `;
+
+        const lockedWallet = await tx.wallet.findUnique({
+          where: { id: walletId },
+          select: {
+            id: true,
+            customerId: true,
+            currencyId: true,
+            availableBalance: true,
+            ledgerBalance: true,
+          },
+        });
+
+        if (!lockedWallet) throw new NotFoundException('Wallet not found');
+
+        const isDebit = dto.direction === ManualBalanceAdjustmentDirection.DEBIT;
+        if (isDebit && lockedWallet.availableBalance.lt(normalizedAmount)) {
+          throw new BadRequestException('Insufficient available balance for debit adjustment');
+        }
+
+        const signedDelta = isDebit ? normalizedAmount.negated() : normalizedAmount;
+        const updatedWallet = await tx.wallet.update({
+          where: { id: lockedWallet.id },
+          data: {
+            availableBalance: lockedWallet.availableBalance.plus(signedDelta),
+            ledgerBalance: lockedWallet.ledgerBalance.plus(signedDelta),
+          },
+          select: {
+            id: true,
+            availableBalance: true,
+            ledgerBalance: true,
+            currencyId: true,
+          },
+        });
+
+        const transaction = await tx.transaction.create({
+          data: {
+            walletId: lockedWallet.id,
+            type: TransactionType.ADJUSTMENT,
+            direction: isDebit ? TransactionDirection.DEBIT : TransactionDirection.CREDIT,
+            status: TransactionStatus.SUCCESS,
+            amount: normalizedAmount,
+            currencyId: lockedWallet.currencyId,
+            reference: normalizedReference,
+            narration: `Manual internal ${isDebit ? 'debit' : 'credit'} adjustment`,
+            metadata: {
+              manualInternalAdjustment: true,
+              reason: normalizedReason,
+              adminId,
+              before: {
+                availableBalance: lockedWallet.availableBalance.toString(),
+                ledgerBalance: lockedWallet.ledgerBalance.toString(),
+              },
+              after: {
+                availableBalance: updatedWallet.availableBalance.toString(),
+                ledgerBalance: updatedWallet.ledgerBalance.toString(),
+              },
+            },
+          },
+        });
+
+        return { updatedWallet, transaction, beforeWallet: lockedWallet };
+      });
+
+      await this.logAdminAction(adminId, 'WALLET_INTERNAL_BALANCE_ADJUSTED', 'WALLET', wallet.id, {
+        walletId: wallet.id,
+        customerId: wallet.customerId,
+        direction: dto.direction,
+        amount: normalizedAmount.toString(),
+        reference: normalizedReference,
+        reason: normalizedReason,
+        before: {
+          availableBalance: result.beforeWallet.availableBalance.toString(),
+          ledgerBalance: result.beforeWallet.ledgerBalance.toString(),
+        },
+        after: {
+          availableBalance: result.updatedWallet.availableBalance.toString(),
+          ledgerBalance: result.updatedWallet.ledgerBalance.toString(),
+        },
+        transactionId: result.transaction.id,
+      });
+
+      if (wallet.customer?.userId) {
+        await this.cacheService.invalidateUserCache(wallet.customer.userId);
+      }
+
+      return {
+        success: true,
+        message: 'Internal wallet balance adjusted successfully',
+        walletId: result.updatedWallet.id,
+        transactionId: result.transaction.id,
+        reference: result.transaction.reference,
+        availableBalance: result.updatedWallet.availableBalance.toString(),
+        ledgerBalance: result.updatedWallet.ledgerBalance.toString(),
+      };
+    } catch (error: unknown) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        (error as { code?: string }).code === 'P2002'
+      ) {
+        throw new ConflictException('Reference already exists. Use a unique reference.');
+      }
+      throw error;
+    }
+  }
+
   /**
    * Send KYC reminder email to user
    */
@@ -920,13 +1209,11 @@ export class AdminService {
       throw new BadRequestException('User has no customer profile; KYC reminder not applicable');
     }
 
-    if (user.customer.tier === KycTier.Tier_0) {
-      throw new BadRequestException('KYC reminder is not applicable for Tier 0 users');
+    if (!canReceiveKycReminder(user.customer)) {
+      throw new BadRequestException('KYC reminder is not applicable for users who have completed Tier 3 verification');
     }
 
-    if (!isCustomerKycPending(user.customer)) {
-      throw new BadRequestException('User has already completed KYC for their current tier');
-    }
+    const scenario = getKycReminderScenario(user.customer);
 
     const consumerBase =
       process.env.CONSUMER_APP_URL || process.env.PUBLIC_URL || process.env.FRONTEND_URL;
@@ -944,9 +1231,14 @@ export class AdminService {
         lastName: user.lastName,
         username: user.username,
         kycUrl,
+        scenario,
       });
 
-      await this.logAdminAction(adminId, 'KYC_REMINDER_SENT', 'USER', user.id, { userId: user.id, email: user.email });
+      await this.logAdminAction(adminId, 'KYC_REMINDER_SENT', 'USER', user.id, {
+        userId: user.id,
+        email: user.email,
+        scenario,
+      });
 
       return {
         success: true,
@@ -1011,16 +1303,38 @@ export class AdminService {
       throw new NotFoundException('User or customer not found');
     }
 
+    const previousRestrictionState = {
+      isAmlRestricted: user.customer.isAmlRestricted,
+      amlRestrictedAt: user.customer.amlRestrictedAt,
+      amlRestrictionReason: user.customer.amlRestrictionReason,
+      isBalanceRestricted: user.customer.isBalanceRestricted,
+      balanceRestrictedAt: user.customer.balanceRestrictedAt,
+      balanceRestrictionReason: user.customer.balanceRestrictionReason,
+      providerRestrictionStatus: user.customer.providerRestrictionStatus,
+    };
+
     const customer = await this.databaseService.customer.update({
       where: { id: user.customer.id },
       data: {
         isAmlRestricted: false,
         amlRestrictedAt: null,
         amlRestrictionReason: null,
+        isBalanceRestricted: false,
+        balanceRestrictedAt: null,
+        balanceRestrictionReason: null,
+        providerRestrictionStatus: null,
       },
     });
 
-    await this.logAdminAction(adminId, 'USER_UNRESTRICTED', 'CUSTOMER', customer.id, { userId });
+    await this.logAdminAction(adminId, 'USER_UNRESTRICTED', 'CUSTOMER', customer.id, {
+      userId,
+      previousRestrictionState,
+      cleared: {
+        isAmlRestricted: true,
+        isBalanceRestricted: true,
+        providerRestrictionStatus: true,
+      },
+    });
 
     await this.cacheService.invalidateUserCache(userId);
 
@@ -2646,6 +2960,7 @@ export class AdminService {
         { hostUser: { firstName: { contains: search, mode: 'insensitive' } } },
         { hostUser: { lastName: { contains: search, mode: 'insensitive' } } },
         { hostUser: { email: { contains: search, mode: 'insensitive' } } },
+        { hostUser: { username: { contains: search, mode: 'insensitive' } } },
       ];
     }
 
@@ -2775,6 +3090,7 @@ export class AdminService {
         { hostUser: { firstName: { contains: search, mode: 'insensitive' } } },
         { hostUser: { lastName: { contains: search, mode: 'insensitive' } } },
         { hostUser: { email: { contains: search, mode: 'insensitive' } } },
+        { hostUser: { username: { contains: search, mode: 'insensitive' } } },
       ];
     }
 
@@ -4076,11 +4392,18 @@ export class AdminService {
     if (filters.startDate || filters.endDate) {
       where.createdAt = {};
       if (filters.startDate) {
-        where.createdAt.gte = new Date(filters.startDate);
+        const startDate = filters.startDate.includes('T')
+          ? new Date(filters.startDate)
+          : new Date(`${filters.startDate}T00:00:00.000Z`);
+        where.createdAt.gte = startDate;
       }
       if (filters.endDate) {
-        const endDate = new Date(filters.endDate);
-        endDate.setHours(23, 59, 59, 999);
+        const endDate = filters.endDate.includes('T')
+          ? new Date(filters.endDate)
+          : new Date(`${filters.endDate}T23:59:59.999Z`);
+        if (!filters.endDate.includes('T')) {
+          endDate.setUTCHours(23, 59, 59, 999);
+        }
         where.createdAt.lte = endDate;
       }
     }

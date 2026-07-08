@@ -1,6 +1,12 @@
 import { IsOptional, IsString, IsDateString, IsInt, Min, IsBoolean } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  return undefined;
+}
 
 export class GetNotificationsDto {
   @ApiPropertyOptional({ example: 1, description: 'Page number', default: 1 })
@@ -19,7 +25,7 @@ export class GetNotificationsDto {
 
   @ApiPropertyOptional({ example: false, description: 'Filter by read status' })
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(({ value }) => parseOptionalBoolean(value))
   @IsBoolean()
   read?: boolean;
 

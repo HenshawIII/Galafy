@@ -1,6 +1,8 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { IsString, IsEmail, IsNotEmpty, IsEnum, IsOptional, MinLength, IsBoolean } from 'class-validator';
+import { IsString, IsEmail, IsNotEmpty, IsEnum, IsOptional, MinLength, IsBoolean, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { RegisterDeviceDto } from '../../notifications/dto/notification.dto.js';
 
 export enum KycTier {
   Tier_0 = 'Tier_0',
@@ -85,6 +87,15 @@ export class LoginDto {
   @IsString({ message: 'Password must be a string' })
   @IsNotEmpty({ message: 'Password is required' })
   password: string;
+
+  @ApiPropertyOptional({
+    description: 'Optional push device registration to bind this login session to the current device',
+    type: RegisterDeviceDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RegisterDeviceDto)
+  device?: RegisterDeviceDto;
 }
 
 export class ForgotPasswordDto {

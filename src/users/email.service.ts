@@ -954,14 +954,14 @@ If you did not expect this invitation, please ignore this email.`,
 
   async sendKycReminderEmail(
     email: string,
-    userData?: {
+    userData: {
       firstName?: string | null;
       lastName?: string | null;
       username?: string | null;
       kycUrl: string;
+      scenario: string;
     },
   ): Promise<void> {
-    // Get user's display name: prefer firstName, then username, then lastName, then default
     let userName = 'there';
     if (userData?.firstName && userData.firstName.trim()) {
       userName = userData.firstName.trim();
@@ -971,17 +971,131 @@ If you did not expect this invitation, please ignore this email.`,
       userName = userData.lastName.trim();
     }
 
-    const kycUrl = userData?.kycUrl;
+    const kycUrl = userData.kycUrl;
     if (!kycUrl) {
       throw new Error('KYC verification URL is required to send reminder email');
     }
 
+    const template = this.getKycReminderTemplate(userData.scenario);
+
     const msg = {
       to: email,
       from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
-      subject: 'Complete Your KYC Verification - Galafy',
-      text: `Hello ${userName}, We noticed you haven't completed your KYC (Know Your Customer) verification yet. Completing your KYC will unlock higher withdrawal limits and full account access. Visit ${kycUrl} to complete your verification today.`,
-      html: `
+      subject: template.subject,
+      text: `Hello ${userName}, ${template.message} Visit ${kycUrl} to continue.`,
+      html: this.buildKycReminderHtml(userName, kycUrl, template),
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`KYC reminder email (${userData.scenario}) sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending KYC reminder email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      throw new Error(`Failed to send KYC reminder email: ${error.message}`);
+    }
+  }
+
+  private getKycReminderTemplate(scenario: string): {
+    subject: string;
+    headline: string;
+    message: string;
+    benefits: string[];
+    cta: string;
+  } {
+    const templates: Record<
+      string,
+      { subject: string; headline: string; message: string; benefits: string[]; cta: string }
+    > = {
+      TIER0_START: {
+        subject: 'Start Your KYC Verification - Galafy',
+        headline: 'Ready to unlock your Galafy account?',
+        message:
+          'You have not started KYC verification yet. Complete Tier 1 verification to activate your wallet and start transacting securely.',
+        benefits: [
+          'Activate your wallet and virtual account',
+          'Start sending and receiving payments',
+          'Unlock basic withdrawal limits',
+        ],
+        cta: 'Start KYC Verification',
+      },
+      TIER1_COMPLETE: {
+        subject: 'Complete Your Tier 1 KYC - Galafy',
+        headline: 'Finish your Tier 1 verification',
+        message:
+          'Your Tier 1 KYC is incomplete. Complete your BVN and face verification to continue using your account without restrictions.',
+        benefits: [
+          'Complete identity verification',
+          'Maintain access to your wallet',
+          'Prepare for higher tier upgrades',
+        ],
+        cta: 'Complete Tier 1 KYC',
+      },
+      TIER1_UPGRADE: {
+        subject: 'Upgrade to Tier 2 - Galafy',
+        headline: 'You are ready for Tier 2',
+        message:
+          'You have completed Tier 1 verification. Upgrade to Tier 2 to enjoy higher limits and expanded account features.',
+        benefits: [
+          'Higher balance and withdrawal limits',
+          'Access to more platform features',
+          'Stronger account protection',
+        ],
+        cta: 'Upgrade to Tier 2',
+      },
+      TIER2_COMPLETE: {
+        subject: 'Complete Your Tier 2 KYC - Galafy',
+        headline: 'Finish your Tier 2 upgrade',
+        message:
+          'Your Tier 2 upgrade is incomplete. Complete NIN verification and live face verification to unlock Tier 2 benefits.',
+        benefits: [
+          'Higher transaction limits',
+          'Expanded wallet capabilities',
+          'Smoother payouts and transfers',
+        ],
+        cta: 'Complete Tier 2 KYC',
+      },
+      TIER2_UPGRADE: {
+        subject: 'Upgrade to Tier 3 - Galafy',
+        headline: 'You are ready for Tier 3',
+        message:
+          'You have completed Tier 2 verification. Upgrade to Tier 3 for unlimited balance and the highest account limits.',
+        benefits: [
+          'Unlimited account balance',
+          'Highest withdrawal limits',
+          'Full premium account access',
+        ],
+        cta: 'Upgrade to Tier 3',
+      },
+      TIER3_COMPLETE: {
+        subject: 'Complete Your Tier 3 KYC - Galafy',
+        headline: 'Finish your Tier 3 verification',
+        message:
+          'Your Tier 3 address verification is pending. Complete it to unlock unlimited balance and full premium account access.',
+        benefits: [
+          'Unlimited account balance',
+          'Highest withdrawal limits',
+          'Full access to all premium features',
+        ],
+        cta: 'Complete Tier 3 KYC',
+      },
+    };
+
+    return templates[scenario] ?? templates.TIER0_START;
+  }
+
+  private buildKycReminderHtml(
+    userName: string,
+    kycUrl: string,
+    template: { headline: string; message: string; benefits: string[]; cta: string },
+  ): string {
+    const benefitsHtml = template.benefits
+      .map((benefit) => `<li>${benefit}</li>`)
+      .join('');
+
+    return `
         <!DOCTYPE html>
         <html>
         <head>
@@ -990,71 +1104,37 @@ If you did not expect this invitation, please ignore this email.`,
         </head>
         <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
           <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-            <!-- Header with Galafy Logo -->
             <div style="background-color: #007bff; padding: 30px 20px; text-align: center;">
               <div style="color: #ffffff; font-size: 28px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px;">
                 <img src="${this.getAppIconUrl()}" alt="Galafy" style="width: 30px; height: 30px; display: inline-block; vertical-align: middle;" />
                 Galafy
               </div>
             </div>
-            
-            <!-- Main Content -->
             <div style="padding: 30px 20px;">
-              <!-- Greeting -->
               <h1 style="color: #333333; font-size: 24px; font-weight: bold; margin: 0 0 15px 0;">Hello, ${userName}! 👋</h1>
-              
-              <!-- Main Message -->
+              <h2 style="color: #333333; font-size: 18px; font-weight: bold; margin: 0 0 15px 0;">${template.headline}</h2>
               <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
-                We noticed you haven't completed your <strong>KYC (Know Your Customer) verification</strong> yet. Completing your KYC is quick and easy, and it unlocks powerful benefits for your account.
+                ${template.message}
               </p>
-              
-              <!-- Benefits Box (Light Blue) -->
               <div style="background-color: #e7f3ff; border-left: 4px solid #007bff; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <div style="display: flex; align-items: center; margin-bottom: 15px;">
                   <span style="font-size: 24px; margin-right: 10px;">✨</span>
-                  <h3 style="color: #333333; font-size: 18px; font-weight: bold; margin: 0;">Benefits of Completing KYC</h3>
+                  <h3 style="color: #333333; font-size: 18px; font-weight: bold; margin: 0;">Why complete this step?</h3>
                 </div>
                 <ul style="color: #333333; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
-                  <li>Higher withdrawal limits for your transactions</li>
-                  <li>Full access to all platform features</li>
-                  <li>Enhanced account security and protection</li>
-                  <li>Faster transaction processing</li>
+                  ${benefitsHtml}
                 </ul>
               </div>
-              
-              <!-- Call to Action -->
               <div style="text-align: center; margin: 30px 0;">
                 <a href="${kycUrl}" style="display: inline-block; background-color: #007bff; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">
-                  Complete KYC Verification
+                  ${template.cta}
                 </a>
               </div>
               <p style="color: #666666; font-size: 13px; line-height: 1.6; margin: 0 0 20px 0; text-align: center; word-break: break-all;">
                 Or copy and paste this link into your browser:<br>
                 <a href="${kycUrl}" style="color: #007bff;">${kycUrl}</a>
               </p>
-              
-              <!-- Info Box (Light Yellow) -->
-              <div style="background-color: #fff3cd; padding: 20px; margin: 20px 0; border-radius: 4px;">
-                <div style="display: flex; align-items: flex-start;">
-                  <span style="font-size: 20px; margin-right: 10px; color: #ff9800;">ℹ️</span>
-                  <p style="color: #333333; font-size: 14px; line-height: 1.6; margin: 0;">
-                    The verification process is simple and secure. You'll need to provide some basic information and documents, which typically takes just a few minutes.
-                  </p>
-                </div>
-              </div>
-              
-              <!-- Support Information -->
-              <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 4px; border-left: 4px solid #6c757d;">
-                <p style="color: #495057; font-size: 12px; margin: 0;">
-                  <strong>Need help?</strong> If you have any questions about the KYC process, our support team is here to assist you. Feel free to reach out anytime.
-                </p>
-              </div>
-              
-              <!-- Closing -->
               <p style="color: #333333; font-size: 14px; margin: 30px 0 0 0;">
-                We look forward to helping you unlock the full potential of your Galafy account!
-              </p>
-              <p style="color: #333333; font-size: 14px; margin: 20px 0 0 0;">
                 Best regards,<br>
                 The Galafy Team
               </p>
@@ -1062,19 +1142,7 @@ If you did not expect this invitation, please ignore this email.`,
           </div>
         </body>
         </html>
-      `,
-    };
-
-    try {
-      await sgMail.send(msg);
-      this.logger.log(`KYC reminder email sent to ${email}`);
-    } catch (error: any) {
-      this.logger.error(`Error sending KYC reminder email to ${email}:`, error.message);
-      if (error.response) {
-        this.logger.error('SendGrid error details:', error.response.body);
-      }
-      throw new Error(`Failed to send KYC reminder email: ${error.message}`);
-    }
+      `;
   }
 
   async sendAccountRestrictionEmail(

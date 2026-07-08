@@ -44,6 +44,39 @@ export function isCustomerKycCompleted(customer: CustomerKycFields): boolean {
   return !isCustomerKycPending(customer) && customer.tier !== KycTier.Tier_0;
 }
 
+export enum KycReminderScenario {
+  TIER0_START = 'TIER0_START',
+  TIER1_COMPLETE = 'TIER1_COMPLETE',
+  TIER1_UPGRADE = 'TIER1_UPGRADE',
+  TIER2_COMPLETE = 'TIER2_COMPLETE',
+  TIER2_UPGRADE = 'TIER2_UPGRADE',
+  TIER3_COMPLETE = 'TIER3_COMPLETE',
+}
+
+/** Block reminders only for Tier 3 users who have completed Tier 3 KYC. */
+export function canReceiveKycReminder(customer: CustomerKycFields): boolean {
+  return !(customer.tier === KycTier.Tier_3 && isTier3Complete(customer));
+}
+
+export function getKycReminderScenario(customer: CustomerKycFields): KycReminderScenario {
+  switch (customer.tier) {
+    case KycTier.Tier_0:
+      return KycReminderScenario.TIER0_START;
+    case KycTier.Tier_1:
+      return isTier1Complete(customer)
+        ? KycReminderScenario.TIER1_UPGRADE
+        : KycReminderScenario.TIER1_COMPLETE;
+    case KycTier.Tier_2:
+      return isTier2Complete(customer)
+        ? KycReminderScenario.TIER2_UPGRADE
+        : KycReminderScenario.TIER2_COMPLETE;
+    case KycTier.Tier_3:
+      return KycReminderScenario.TIER3_COMPLETE;
+    default:
+      return KycReminderScenario.TIER0_START;
+  }
+}
+
 /** CSV / display label: only Tier 1/2/3 incomplete KYC is "pending". */
 export function deriveExportKycStatus(customer: CustomerKycFields | null | undefined): string {
   if (!customer || customer.tier === KycTier.Tier_0) {

@@ -35,7 +35,12 @@ import { AdminPublic } from './auth/decorators/public.decorator.js';
 import { PERMISSIONS } from './auth/permissions.js';
 import { AdminRole } from '../../generated/prisma/enums.js';
 import { GetConfigDto, UpdateConfigDto, CreateConfigDto } from './dto/config.dto.js';
-import { GetUsersDto, RestrictUserDto, SearchUsersDto } from './dto/user-management.dto.js';
+import {
+  GetUsersDto,
+  RestrictUserDto,
+  SearchUsersDto,
+  ManualBalanceAdjustmentDto,
+} from './dto/user-management.dto.js';
 import { GetKycRequestsDto, ApproveKycDto, RejectKycDto } from './dto/kyc-management.dto.js';
 import { TransactionAnalyticsDto } from './dto/analytics.dto.js';
 import { GetAlertsDto, UpdateAlertStatusDto } from './dto/alert.dto.js';
@@ -313,6 +318,12 @@ export class AdminController {
     type: Boolean,
     description: 'Filter by AML restriction status',
   })
+  @ApiQuery({
+    name: 'hasMismatch',
+    required: false,
+    type: Boolean,
+    description: 'Filter by mismatch workflow flag (internally balance-restricted users)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Users exported successfully',
@@ -437,6 +448,28 @@ export class AdminController {
     @Body(ValidationPipe) body: ProviderTransactionHistoryQueryDto,
   ) {
     return this.adminService.getProviderWalletHistory(accountNumber, body);
+  }
+
+  @Post('wallets/:walletId/internal-adjustments')
+  @RequirePermission(PERMISSIONS.ADJUST_INTERNAL_BALANCES)
+  @ApiOperation({
+    summary: 'Adjust wallet internal balances',
+    description:
+      'Performs a manual internal CREDIT/DEBIT on a wallet for reconciliation correction. Requires reason and unique reference.',
+  })
+  @ApiParam({ name: 'walletId', description: 'Wallet ID' })
+  @ApiBody({ type: ManualBalanceAdjustmentDto })
+  @ApiResponse({ status: 200, description: 'Internal balance adjustment completed successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid amount/direction or insufficient funds for debit' })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  @ApiResponse({ status: 409, description: 'Duplicate reference supplied' })
+  async adjustWalletInternalBalances(
+    @Param('walletId') walletId: string,
+    @Body(ValidationPipe) dto: ManualBalanceAdjustmentDto,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    return this.adminService.adjustWalletInternalBalances(walletId, adminId, dto);
   }
 
   @Post('users/:userId/send-kyc-reminder')
@@ -614,8 +647,7 @@ export class AdminController {
   }
 
   @Get('customers/:customerId/partner-kyc-status')
-  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE)
-  @RequirePermission(PERMISSIONS.APPROVE_KYC)
+  @RequirePermission(PERMISSIONS.VIEW_USERS)
   @ApiOperation({ summary: 'Get partner account KYC status from ALAT account-upgrade API' })
   @ApiParam({ name: 'customerId', description: 'Customer ID' })
   @ApiResponse({ status: 200, description: 'Partner KYC status' })

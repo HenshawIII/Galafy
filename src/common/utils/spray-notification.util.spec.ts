@@ -1,31 +1,69 @@
 import {
-  buildEventSprayNarration,
-  isEventSprayNarration,
-  isInternalSprayTransferNarration,
-  parseEventIdFromSprayNarration,
+  buildSprayPushNotification,
+  getSprayNotificationContext,
+  isSprayDebitTransaction,
 } from './spray-notification.util.js';
 
 describe('spray-notification.util', () => {
-  const eventId = '42fe5e31-9623-4899-b223-17b1d9c39648';
-  const sprayNarration = `Spray in event FAM AND FRIENDS , EventId: ${eventId}`;
-  const eventIdFirstNarration = buildEventSprayNarration(eventId, 'FAM AND FRIENDS');
+  it('buildSprayPushNotification uses spray-specific types', () => {
+    const payload = buildSprayPushNotification({
+      kind: 'SPRAY_SENT',
+      amountFormatted: '1000.00',
+      transactionReference: 'SPRAY-abc',
+      eventId: 'event-1',
+      eventTitle: 'Birthday Party',
+    });
 
-  it('detects event spray narration', () => {
-    expect(isEventSprayNarration(sprayNarration)).toBe(true);
-    expect(isEventSprayNarration(eventIdFirstNarration)).toBe(true);
-    expect(isEventSprayNarration('Transfer from John')).toBe(false);
+    expect(payload.data.type).toBe('SPRAY_SENT');
+    expect(payload.data.legacyType).toBeUndefined();
+    expect(payload.data.eventId).toBe('event-1');
+    expect(payload.notification.title).toBe('Spray sent');
   });
 
-  it('parses event id from spray narration', () => {
-    expect(parseEventIdFromSprayNarration(sprayNarration)).toBe(eventId);
-    expect(parseEventIdFromSprayNarration(eventIdFirstNarration)).toBe(eventId);
-    expect(parseEventIdFromSprayNarration('Spray in event only')).toBeNull();
+  it('buildSprayPushNotification marks failed sprays distinctly', () => {
+    const payload = buildSprayPushNotification({
+      kind: 'SPRAY_FAILED',
+      amountFormatted: '500.00',
+      transactionReference: 'SPRAY-fail',
+      eventTitle: 'Live Event',
+    });
+
+    expect(payload.data.type).toBe('SPRAY_FAILED');
+    expect(payload.notification.title).toBe('Spray failed');
   });
 
-  it('treats event spray and wallet transfer as internal spray transfer', () => {
-    expect(isInternalSprayTransferNarration(sprayNarration)).toBe(true);
-    expect(isInternalSprayTransferNarration(eventIdFirstNarration)).toBe(true);
-    expect(isInternalSprayTransferNarration('Wallet transfer to 0446920038')).toBe(true);
-    expect(isInternalSprayTransferNarration('Transfer from bank')).toBe(false);
+  it('isSprayDebitTransaction detects spray metadata', () => {
+    expect(
+      isSprayDebitTransaction({
+        type: 'PAYOUT',
+        metadata: { eventSpray: true },
+      }),
+    ).toBe(true);
+    expect(
+      isSprayDebitTransaction({
+        type: 'SPRAY',
+        metadata: {},
+      }),
+    ).toBe(true);
+    expect(
+      isSprayDebitTransaction({
+        type: 'PAYOUT',
+        metadata: {},
+      }),
+    ).toBe(false);
+  });
+
+  it('getSprayNotificationContext reads sprayCompletion metadata', () => {
+    expect(
+      getSprayNotificationContext({
+        sprayCompletion: {
+          eventId: 'evt-1',
+          eventTitle: 'Wedding',
+        },
+      }),
+    ).toEqual({
+      eventId: 'evt-1',
+      eventTitle: 'Wedding',
+    });
   });
 });

@@ -2,7 +2,7 @@ import { Controller, Post, Body, Request, UseGuards, ValidationPipe } from '@nes
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service.js';
 import { Public } from './public.decorator.js';
-import { RefreshTokenDto } from './dto/refresh-token.dto.js';
+import { GoogleLoginDto } from './dto/google-login.dto.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 
 @ApiTags('auth')
@@ -82,8 +82,8 @@ export class AuthController {
       'Invalid token, no account (sign up), or email/password account exists (use credentials login)',
   })
   @ApiResponse({ status: 409, description: 'User already logged in on another device. Please log out first.' })
-  googleLogin(@Body() body: { idtoken: string }) {
-    return this.authService.googleLogin(body.idtoken);
+  googleLogin(@Body(ValidationPipe) body: GoogleLoginDto) {
+    return this.authService.googleLogin(body.idtoken, body.device);
   }
 
   @Post('refresh')
