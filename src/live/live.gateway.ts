@@ -159,6 +159,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
                           settings: {
                             select: {
                               showOnLeaderboard: true,
+                              visibleAtEvents: true,
                             },
                           },
                         },
@@ -179,6 +180,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
                           settings: {
                             select: {
                               showOnLeaderboard: true,
+                              visibleAtEvents: true,
                             },
                           },
                         },
@@ -308,7 +310,6 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       client.emit('event.joined', {
         eventId: event.id,
         eventStatus: event.status,
-        eventVisibility: event.visibility,
         participantCount: participants.length,
         sprayCount: sprays.length,
         accumulatedSprayTotal: accumulatedSprayTotal.toString(),

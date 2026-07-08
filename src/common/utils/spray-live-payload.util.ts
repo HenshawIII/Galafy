@@ -5,6 +5,7 @@ type SprayLiveUser = {
   username: string | null;
   profilePicture: string | null;
   showOnLeaderboard: boolean;
+  visibleAtEvents: boolean;
 };
 
 export type SprayLivePayload = {
@@ -31,7 +32,7 @@ type SprayLiveRow = {
         id: string;
         username: string | null;
         profilePicture: string | null;
-        settings?: { showOnLeaderboard: boolean | null } | null;
+        settings?: { showOnLeaderboard: boolean | null; visibleAtEvents: boolean | null } | null;
       } | null;
     } | null;
   } | null;
@@ -41,7 +42,7 @@ type SprayLiveRow = {
         id: string;
         username: string | null;
         profilePicture: string | null;
-        settings?: { showOnLeaderboard: boolean | null } | null;
+        settings?: { showOnLeaderboard: boolean | null; visibleAtEvents: boolean | null } | null;
       } | null;
     } | null;
   } | null;
@@ -53,7 +54,7 @@ function formatLiveUser(
         id: string;
         username: string | null;
         profilePicture: string | null;
-        settings?: { showOnLeaderboard: boolean | null } | null;
+        settings?: { showOnLeaderboard: boolean | null; visibleAtEvents: boolean | null } | null;
       }
     | null
     | undefined,
@@ -67,6 +68,7 @@ function formatLiveUser(
     username: user.username,
     profilePicture: user.profilePicture,
     showOnLeaderboard: user.settings?.showOnLeaderboard ?? true,
+    visibleAtEvents: user.settings?.visibleAtEvents ?? true,
   };
 }
 
@@ -96,6 +98,7 @@ export const SPRAY_LIVE_INCLUDE = {
               settings: {
                 select: {
                   showOnLeaderboard: true,
+                  visibleAtEvents: true,
                 },
               },
             },
@@ -116,6 +119,7 @@ export const SPRAY_LIVE_INCLUDE = {
               settings: {
                 select: {
                   showOnLeaderboard: true,
+                  visibleAtEvents: true,
                 },
               },
             },
