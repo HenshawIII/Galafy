@@ -709,14 +709,14 @@ export class ProviderTxnCallbackService {
       try {
         const payload = isSprayKind
           ? buildSprayPushNotification({
-              kind: n.kind,
+              kind: n.kind as 'SPRAY_SENT' | 'SPRAY_FAILED',
               amountFormatted: n.amountFormatted,
               transactionReference: n.transactionReference,
               eventId: n.eventId,
               eventTitle: n.eventTitle,
             })
           : buildWithdrawalPushNotification({
-              kind: n.kind,
+              kind: n.kind as WithdrawalNotificationKind,
               amountFormatted: n.amountFormatted,
               transactionReference: n.transactionReference,
               destinationAccountNumber: n.destinationAccountNumber,

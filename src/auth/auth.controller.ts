@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiUnauthor
 import { AuthService } from './auth.service.js';
 import { Public } from './public.decorator.js';
 import { GoogleLoginDto } from './dto/google-login.dto.js';
+import { RefreshTokenDto } from './dto/refresh-token.dto.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 
 @ApiTags('auth')
