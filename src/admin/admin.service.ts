@@ -4381,8 +4381,10 @@ export class AdminService {
 
     const where: any = {};
 
-    if (filters.read !== undefined) {
-      where.read = filters.read;
+    if (filters.readStatus === 'read') {
+      where.read = true;
+    } else if (filters.readStatus === 'unread') {
+      where.read = false;
     }
 
     if (filters.type) {

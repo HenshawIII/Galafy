@@ -1516,13 +1516,13 @@ export class AdminController {
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiQuery({ name: 'read', required: false, type: Boolean, description: 'Filter by read status' })
+  @ApiQuery({ name: 'readStatus', required: false, enum: ['read', 'unread'], description: 'Filter by read status' })
   @ApiQuery({ name: 'type', required: false, type: String, description: 'Filter by notification type' })
   @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Filter from date (ISO 8601)' })
   @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter to date (ISO 8601)' })
   @ApiResponse({ status: 200, description: 'Notifications retrieved successfully' })
   @ApiResponse({ status: 400, description: 'Admin does not have a linked user account' })
-  async getNotifications(@Query(ValidationPipe) filters: GetNotificationsDto, @Request() req: any) {
+  async getNotifications(@Query() filters: GetNotificationsDto, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.getAdminNotifications(adminId, filters);
   }

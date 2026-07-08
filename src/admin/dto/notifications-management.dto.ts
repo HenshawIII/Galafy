@@ -1,11 +1,10 @@
-import { IsOptional, IsString, IsDateString, IsInt, Min, IsBoolean } from 'class-validator';
-import { Transform, Type } from 'class-transformer';
+import { IsOptional, IsString, IsDateString, IsInt, Min, IsEnum } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
-function parseOptionalBoolean(value: unknown): boolean | undefined {
-  if (value === true || value === 'true') return true;
-  if (value === false || value === 'false') return false;
-  return undefined;
+export enum NotificationReadStatusFilter {
+  read = 'read',
+  unread = 'unread',
 }
 
 export class GetNotificationsDto {
@@ -23,11 +22,14 @@ export class GetNotificationsDto {
   @Min(1)
   limit?: number;
 
-  @ApiPropertyOptional({ example: false, description: 'Filter by read status' })
+  @ApiPropertyOptional({
+    enum: NotificationReadStatusFilter,
+    example: NotificationReadStatusFilter.unread,
+    description: 'Filter by read status',
+  })
   @IsOptional()
-  @Transform(({ value }) => parseOptionalBoolean(value))
-  @IsBoolean()
-  read?: boolean;
+  @IsEnum(NotificationReadStatusFilter)
+  readStatus?: NotificationReadStatusFilter;
 
   @ApiPropertyOptional({ example: 'EVENT_REMINDER', description: 'Filter by notification type' })
   @IsOptional()
