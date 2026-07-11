@@ -396,6 +396,32 @@ export class AdminController {
     return this.adminService.searchUsers(searchDto.q);
   }
 
+  @Get('users/stats')
+  @RequirePermission(PERMISSIONS.VIEW_USERS)
+  @ApiOperation({
+    summary: 'Get user management stats',
+    description:
+      'Returns aggregate counts for the Users page: total users, unverified (pending KYC), wallet-activated, and active users (refresh-token proxy for logins in the last 30 days).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User stats retrieved successfully',
+    schema: {
+      example: {
+        totalUsers: 12458,
+        totalUsersLast30Days: 182,
+        unverifiedUsers: 327,
+        unverifiedUsersLast30Days: 15,
+        walletActivated: 11204,
+        walletActivatedLast30Days: 123,
+        activeUsersLast30Days: 8976,
+      },
+    },
+  })
+  async getUserStats() {
+    return this.adminService.getUserStats();
+  }
+
   @Get('users/:userId')
   @RequirePermission(PERMISSIONS.VIEW_USERS)
   @ApiOperation({ summary: 'Get user details', description: 'Get detailed information about a specific user' })

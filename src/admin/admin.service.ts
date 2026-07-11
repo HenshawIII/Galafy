@@ -508,6 +508,73 @@ export class AdminService {
   }
 
   /**
+   * Aggregate stats for the Users Management page cards.
+   * Active users use a refresh-token proxy: tokens expire 7d after login, so
+   * refreshTokenExpiresAt >= now - 23d ≈ logged in within the last 30 days.
+   */
+  async getUserStats() {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(now.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    // refreshTokenExpiresAt = loginAt + 7d → loginAt >= now-30d ⇒ expiresAt >= now-23d
+    const activeProxyCutoff = new Date(now);
+    activeProxyCutoff.setDate(now.getDate() - 23);
+
+    const pendingKycWhere = buildPendingKycUserWhere();
+
+    const [
+      totalUsers,
+      totalUsersLast30Days,
+      unverifiedUsers,
+      unverifiedUsersLast30Days,
+      walletActivated,
+      walletActivatedLast30Days,
+      activeUsersLast30Days,
+    ] = await Promise.all([
+      this.databaseService.user.count(),
+      this.databaseService.user.count({
+        where: { createdAt: { gte: thirtyDaysAgo } },
+      }),
+      this.databaseService.user.count({ where: pendingKycWhere }),
+      this.databaseService.user.count({
+        where: {
+          ...pendingKycWhere,
+          createdAt: { gte: thirtyDaysAgo },
+        },
+      }),
+      this.databaseService.user.count({
+        where: { customer: { wallets: { some: {} } } },
+      }),
+      this.databaseService.user.count({
+        where: {
+          customer: {
+            wallets: {
+              some: { createdAt: { gte: thirtyDaysAgo } },
+            },
+          },
+        },
+      }),
+      this.databaseService.user.count({
+        where: {
+          refreshTokenExpiresAt: { gte: activeProxyCutoff },
+        },
+      }),
+    ]);
+
+    return {
+      totalUsers,
+      totalUsersLast30Days,
+      unverifiedUsers,
+      unverifiedUsersLast30Days,
+      walletActivated,
+      walletActivatedLast30Days,
+      activeUsersLast30Days,
+    };
+  }
+
+  /**
    * Export users as CSV with filters applied
    * Uses the same filter logic as getUsers() but exports all matching records
    */
