@@ -317,6 +317,11 @@ export class AuthService {
    * Logout - invalidate refresh token (requires access token)
    */
   async logout(userId: string) {
+    const user = await this.databaseService.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true },
+    });
+
     await this.databaseService.user.update({
       where: { id: userId },
       data: {
@@ -324,6 +329,10 @@ export class AuthService {
         refreshTokenExpiresAt: null,
       },
     });
+
+    this.logger.log(
+      `User sign-out: email=${user?.email ?? 'unknown'} userId=${userId} at=${new Date().toISOString()}`,
+    );
 
     await this.deactivatePushDevicesOnLogout(userId);
 
@@ -378,6 +387,10 @@ export class AuthService {
         },
       });
 
+      this.logger.log(
+        `User sign-out: email=${user.email} userId=${user.id} at=${new Date().toISOString()}`,
+      );
+
       await this.deactivatePushDevicesOnLogout(user.id);
 
       return { message: 'Logged out successfully' };
@@ -386,6 +399,10 @@ export class AuthService {
         try {
           const payload = this.jwtService.decode(refreshToken) as any;
           if (payload && payload.sub) {
+            const expiredUser = await this.databaseService.user.findUnique({
+              where: { id: payload.sub },
+              select: { id: true, email: true },
+            });
             await this.databaseService.user.update({
               where: { id: payload.sub },
               data: {
@@ -393,6 +410,9 @@ export class AuthService {
                 refreshTokenExpiresAt: null,
               },
             });
+            this.logger.log(
+              `User sign-out: email=${expiredUser?.email ?? payload.email ?? 'unknown'} userId=${payload.sub} at=${new Date().toISOString()}`,
+            );
             await this.deactivatePushDevicesOnLogout(payload.sub);
           }
         } catch (clearError) {

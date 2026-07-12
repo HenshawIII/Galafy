@@ -434,6 +434,10 @@ export class UsersService {
       data: { refreshToken, refreshTokenExpiresAt },
     });
 
+    this.logger.log(
+      `User sign-in: email=${user.email} userId=${user.id} at=${new Date().toISOString()}`,
+    );
+
     const { password, refreshToken: _, refreshTokenExpiresAt: __, ...userWithoutPassword } = user;
 
     let kycStatus: unknown = null;

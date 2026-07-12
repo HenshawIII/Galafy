@@ -1363,12 +1363,24 @@ export class AdminService {
   async unrestrictUser(userId: string, adminId: string) {
     const user = await this.databaseService.user.findUnique({
       where: { id: userId },
-      include: { customer: true },
+      include: {
+        customer: {
+          include: {
+            wallets: {
+              select: { id: true, riskStatus: true },
+            },
+          },
+        },
+      },
     });
 
     if (!user || !user.customer) {
       throw new NotFoundException('User or customer not found');
     }
+
+    const frozenWallets = (user.customer.wallets || []).filter(
+      (wallet) => wallet.riskStatus === 'SOFT_FREEZE' || wallet.riskStatus === 'HARD_FREEZE',
+    );
 
     const previousRestrictionState = {
       isAmlRestricted: user.customer.isAmlRestricted,
@@ -1378,20 +1390,30 @@ export class AdminService {
       balanceRestrictedAt: user.customer.balanceRestrictedAt,
       balanceRestrictionReason: user.customer.balanceRestrictionReason,
       providerRestrictionStatus: user.customer.providerRestrictionStatus,
+      walletRiskStatuses: (user.customer.wallets || []).map((wallet) => ({
+        walletId: wallet.id,
+        riskStatus: wallet.riskStatus,
+      })),
     };
 
-    const customer = await this.databaseService.customer.update({
-      where: { id: user.customer.id },
-      data: {
-        isAmlRestricted: false,
-        amlRestrictedAt: null,
-        amlRestrictionReason: null,
-        isBalanceRestricted: false,
-        balanceRestrictedAt: null,
-        balanceRestrictionReason: null,
-        providerRestrictionStatus: null,
-      },
-    });
+    const [customer] = await this.databaseService.$transaction([
+      this.databaseService.customer.update({
+        where: { id: user.customer.id },
+        data: {
+          isAmlRestricted: false,
+          amlRestrictedAt: null,
+          amlRestrictionReason: null,
+          isBalanceRestricted: false,
+          balanceRestrictedAt: null,
+          balanceRestrictionReason: null,
+          providerRestrictionStatus: null,
+        },
+      }),
+      this.databaseService.wallet.updateMany({
+        where: { customerId: user.customer.id },
+        data: { riskStatus: 'NORMAL' },
+      }),
+    ]);
 
     await this.logAdminAction(adminId, 'USER_UNRESTRICTED', 'CUSTOMER', customer.id, {
       userId,
@@ -1400,6 +1422,8 @@ export class AdminService {
         isAmlRestricted: true,
         isBalanceRestricted: true,
         providerRestrictionStatus: true,
+        walletFreezes: true,
+        frozenWalletIds: frozenWallets.map((wallet) => wallet.id),
       },
     });
 
