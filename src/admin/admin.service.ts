@@ -650,17 +650,15 @@ export class AdminService {
         'User ID',
         'Email',
         'Username',
-        'First Name',
-        'Last Name',
-        'Profile Picture',
         'Phone',
         'KYC Tier',
         'KYC Status',
         'AML Restricted',
         'AML Restricted At',
         'AML Restriction Reason',
-        'Total Wallets',
-        'Total Wallet Balance',
+        'Internal Wallet Balance',
+        'Provider Wallet Balance',
+        'Difference',
         'Created Date',
       ]);
 
@@ -698,37 +696,71 @@ export class AdminService {
               ? users
               : await this.filterUsersByMismatch(users, filters.hasMismatch);
 
-          for (const user of exportUsers) {
-            const kycStatus = deriveExportKycStatus(user.customer);
+          const balanceRows: Array<Array<string | number>> = [];
+          const SNAPSHOT_CONCURRENCY = 25;
 
-            const totalWalletBalance = user.customer?.wallets
-              ? user.customer.wallets.reduce((sum, wallet) => sum.plus(wallet.availableBalance), new Decimal(0))
-              : new Decimal(0);
+          for (let i = 0; i < exportUsers.length; i += SNAPSHOT_CONCURRENCY) {
+            const chunk = exportUsers.slice(i, i + SNAPSHOT_CONCURRENCY);
+            const chunkRows = await Promise.all(
+              chunk.map(async (user) => {
+                const kycStatus = deriveExportKycStatus(user.customer);
+                const wallet =
+                  user.customer?.wallets?.find((w) => w.virtualAccountNumber) ??
+                  user.customer?.wallets?.[0];
 
-            // Format dates
-            const createdDate = user.createdAt ? user.createdAt.toISOString().split('T')[0] : '';
-            const amlRestrictedAt = user.customer?.amlRestrictedAt
-              ? user.customer.amlRestrictedAt.toISOString().split('T')[0]
-              : '';
+                const internalWalletBalance = wallet
+                  ? new Decimal(wallet.availableBalance)
+                  : new Decimal(0);
 
-            rows.push([
-              user.id || '',
-              user.email || '',
-              user.username || '',
-              user.firstName || '',
-              user.lastName || '',
-              user.profilePicture || '',
-              user.phone || '',
-              user.customer?.tier || '',
-              kycStatus,
-              user.customer?.isAmlRestricted ? 'Yes' : 'No',
-              amlRestrictedAt,
-              user.customer?.amlRestrictionReason || '',
-              user.customer?.wallets?.length || 0,
-              totalWalletBalance.toString(),
-              createdDate,
-            ]);
+                let providerWalletBalance = '';
+                let difference = '0';
+
+                if (wallet?.virtualAccountNumber) {
+                  const snapshot = await this.walletReconciliationService.buildProviderBalanceSnapshot({
+                    id: wallet.id,
+                    availableBalance: wallet.availableBalance,
+                    ledgerBalance: wallet.ledgerBalance,
+                    virtualAccountNumber: wallet.virtualAccountNumber,
+                  });
+
+                  if (snapshot) {
+                    providerWalletBalance = snapshot.availableBalance ?? '';
+                    if (snapshot.inSync === true) {
+                      difference = '0';
+                    } else if (snapshot.inSync === false) {
+                      difference = snapshot.discrepancy ?? '0';
+                    } else {
+                      difference = '';
+                    }
+                  }
+                }
+
+                const createdDate = user.createdAt ? user.createdAt.toISOString().split('T')[0] : '';
+                const amlRestrictedAt = user.customer?.amlRestrictedAt
+                  ? user.customer.amlRestrictedAt.toISOString().split('T')[0]
+                  : '';
+
+                return [
+                  user.id || '',
+                  user.email || '',
+                  user.username || '',
+                  user.phone || '',
+                  user.customer?.tier || '',
+                  kycStatus,
+                  user.customer?.isAmlRestricted ? 'Yes' : 'No',
+                  amlRestrictedAt,
+                  user.customer?.amlRestrictionReason || '',
+                  internalWalletBalance.toString(),
+                  providerWalletBalance,
+                  difference,
+                  createdDate,
+                ];
+              }),
+            );
+            balanceRows.push(...chunkRows);
           }
+
+          rows.push(...balanceRows);
 
           totalProcessed += users.length;
           skip += batchSize;
