@@ -204,6 +204,16 @@ export class AdminAuthService {
     // Generate tokens
     const tokens = await this.generateTokens(admin);
 
+    await this.databaseService.adminActionLog.create({
+      data: {
+        adminId: admin.id,
+        actionType: 'ADMIN_LOGIN',
+        targetType: 'ADMIN',
+        targetId: admin.id,
+        details: { via: 'password', email: admin.email },
+      },
+    });
+
     // Remove sensitive data from response
     const { password, twoFactorSecret, ...adminWithoutPassword } = admin;
 
@@ -341,6 +351,16 @@ export class AdminAuthService {
 
     const tokens = await this.generateTokens(admin);
     const { password, twoFactorSecret, ...adminWithoutPassword } = admin;
+
+    await this.databaseService.adminActionLog.create({
+      data: {
+        adminId: admin.id,
+        actionType: 'ADMIN_LOGIN',
+        targetType: 'ADMIN',
+        targetId: admin.id,
+        details: { via: '2fa', email: admin.email },
+      },
+    });
 
     return {
       ...tokens,

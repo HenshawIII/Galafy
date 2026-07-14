@@ -336,8 +336,9 @@ export class AdminController {
       },
     },
   })
-  async exportUsersCSV(@Query(ValidationPipe) filters: GetUsersDto, @Res() res: Response) {
-    const { buffer, filename } = await this.adminService.exportUsersCSV(filters);
+  async exportUsersCSV(@Query(ValidationPipe) filters: GetUsersDto, @Res() res: Response, @Request() req: any) {
+    const adminId = req.admin?.id;
+    const { buffer, filename } = await this.adminService.exportUsersCSV(filters, adminId);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -867,8 +868,13 @@ export class AdminController {
       },
     },
   })
-  async exportEventsCSV(@Query(NormalizeArrayQueryPipe, ValidationPipe) filters: GetEventsDto, @Res() res: Response) {
-    const { buffer, filename } = await this.adminService.exportEventsCSV(filters);
+  async exportEventsCSV(
+    @Query(NormalizeArrayQueryPipe, ValidationPipe) filters: GetEventsDto,
+    @Res() res: Response,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    const { buffer, filename } = await this.adminService.exportEventsCSV(filters, adminId);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -1278,8 +1284,13 @@ export class AdminController {
     },
   })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
-  async exportActionLogsCSV(@Query(ValidationPipe) filters: GetActionLogsDto, @Res() res: Response) {
-    const { buffer, filename } = await this.adminService.exportActionLogsCSV(filters);
+  async exportActionLogsCSV(
+    @Query(ValidationPipe) filters: GetActionLogsDto,
+    @Res() res: Response,
+    @Request() req: any,
+  ) {
+    const adminId = req.admin?.id;
+    const { buffer, filename } = await this.adminService.exportActionLogsCSV(filters, adminId);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);

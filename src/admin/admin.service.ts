@@ -578,7 +578,10 @@ export class AdminService {
    * Export users as CSV with filters applied
    * Uses the same filter logic as getUsers() but exports all matching records
    */
-  async exportUsersCSV(filters: GetUsersDto): Promise<{ buffer: Buffer; filename: string }> {
+  async exportUsersCSV(
+    filters: GetUsersDto,
+    adminId?: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
     // Build where clause (same logic as getUsers)
     const where: any = {};
 
@@ -647,12 +650,13 @@ export class AdminService {
 
       // Add header row
       rows.push([
-        'User ID',
+        'Provider Customer ID',
         'Email',
         'Username',
         'Phone',
         'KYC Tier',
         'KYC Status',
+        'Provider KYC Status',
         'AML Restricted',
         'AML Restricted At',
         'AML Restriction Reason',
@@ -714,6 +718,18 @@ export class AdminService {
 
                 let providerWalletBalance = '';
                 let difference = '0';
+                let providerKycStatus = '';
+
+                if (user.customer?.id) {
+                  try {
+                    const partnerKyc = await this.customerKycService.fetchPartnerAccountKycStatus(
+                      user.customer.id,
+                    );
+                    providerKycStatus = partnerKyc?.accountStatus?.trim() || '';
+                  } catch {
+                    providerKycStatus = '';
+                  }
+                }
 
                 if (wallet?.virtualAccountNumber) {
                   const snapshot = await this.walletReconciliationService.buildProviderBalanceSnapshot({
@@ -741,12 +757,13 @@ export class AdminService {
                   : '';
 
                 return [
-                  user.id || '',
+                  user.customer?.providerCustomerId || '',
                   user.email || '',
                   user.username || '',
                   user.phone || '',
                   user.customer?.tier || '',
                   kycStatus,
+                  providerKycStatus,
                   user.customer?.isAmlRestricted ? 'Yes' : 'No',
                   amlRestrictedAt,
                   user.customer?.amlRestrictionReason || '',
@@ -773,10 +790,22 @@ export class AdminService {
         const stream = csv.write(rows, { headers: false });
 
         stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-        stream.on('end', () => {
+        stream.on('end', async () => {
           const buffer = Buffer.concat(chunks);
           const today = new Date().toISOString().split('T')[0];
           const filename = `users-export-${today}.csv`;
+          const recordCount = Math.max(0, rows.length - 1);
+          if (adminId) {
+            try {
+              await this.logAdminAction(adminId, 'ADMIN_EXPORT', 'EXPORT', 'users', {
+                filename,
+                filters,
+                recordCount,
+              });
+            } catch (logError) {
+              this.logger.warn(`Failed to log ADMIN_EXPORT for users: ${logError}`);
+            }
+          }
           resolve({ buffer, filename });
         });
         stream.on('error', (error) => {
@@ -2423,8 +2452,12 @@ export class AdminService {
 
     const where: any = {};
     if (filters.adminId) where.adminId = filters.adminId;
-    if (filters.actionType) where.actionType = filters.actionType;
-    if (filters.targetType) where.targetType = filters.targetType;
+    if (filters.actionType) {
+      where.actionType = { equals: filters.actionType, mode: 'insensitive' };
+    }
+    if (filters.targetType) {
+      where.targetType = { equals: filters.targetType, mode: 'insensitive' };
+    }
     if (filters.targetId) where.targetId = filters.targetId;
 
     if (filters.startDate || filters.endDate) {
@@ -2470,11 +2503,18 @@ export class AdminService {
   /**
    * Export admin action logs as CSV
    */
-  async exportActionLogsCSV(filters: GetActionLogsDto): Promise<{ buffer: Buffer; filename: string }> {
+  async exportActionLogsCSV(
+    filters: GetActionLogsDto,
+    adminId?: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
     const where: any = {};
     if (filters.adminId) where.adminId = filters.adminId;
-    if (filters.actionType) where.actionType = filters.actionType;
-    if (filters.targetType) where.targetType = filters.targetType;
+    if (filters.actionType) {
+      where.actionType = { equals: filters.actionType, mode: 'insensitive' };
+    }
+    if (filters.targetType) {
+      where.targetType = { equals: filters.targetType, mode: 'insensitive' };
+    }
     if (filters.targetId) where.targetId = filters.targetId;
 
     if (filters.startDate || filters.endDate) {
@@ -2567,12 +2607,24 @@ export class AdminService {
         const stream = csv.write(rows, { headers: false });
 
         stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-        stream.on('end', () => {
+        stream.on('end', async () => {
           const buffer = Buffer.concat(chunks);
           const filename =
             filters.startDate && filters.endDate
               ? `admin-action-logs-${filters.startDate.split('T')[0]}-to-${filters.endDate.split('T')[0]}.csv`
               : 'admin-action-logs-all.csv';
+          const recordCount = Math.max(0, rows.length - 1);
+          if (adminId) {
+            try {
+              await this.logAdminAction(adminId, 'ADMIN_EXPORT', 'EXPORT', 'action_logs', {
+                filename,
+                filters,
+                recordCount,
+              });
+            } catch (logError) {
+              this.logger.warn(`Failed to log ADMIN_EXPORT for action_logs: ${logError}`);
+            }
+          }
           resolve({ buffer, filename });
         });
         stream.on('error', (error) => {
@@ -2592,12 +2644,12 @@ export class AdminService {
    * Invite a new admin user
    */
   async inviteAdmin(dto: InviteAdminDto, inviterId: string) {
-    // Check if admin with this email already exists
+    // Check if an active admin with this email already exists
     const existingAdmin = await this.databaseService.admin.findUnique({
       where: { email: dto.email },
     });
 
-    if (existingAdmin) {
+    if (existingAdmin?.isActive) {
       throw new ConflictException('An admin with this email already exists');
     }
 
@@ -2621,21 +2673,34 @@ export class AdminService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
 
-    // Create invite
-    const invite = await this.databaseService.adminInvite.create({
-      data: {
-        email: dto.email,
-        token,
-        role: dto.role,
-        invitedBy: inviterId,
-        expiresAt,
-      },
-    });
+    // Reuse expired/accepted invite row for the same email (email is unique), or create new
+    const invite = existingInvite
+      ? await this.databaseService.adminInvite.update({
+          where: { id: existingInvite.id },
+          data: {
+            token,
+            role: dto.role,
+            invitedBy: inviterId,
+            expiresAt,
+            accepted: false,
+            usedAt: null,
+          },
+        })
+      : await this.databaseService.adminInvite.create({
+          data: {
+            email: dto.email,
+            token,
+            role: dto.role,
+            invitedBy: inviterId,
+            expiresAt,
+          },
+        });
 
     // Log admin action
     await this.logAdminAction(inviterId, 'ADMIN_INVITED', 'ADMIN_INVITE', invite.id, {
       email: dto.email,
       role: dto.role,
+      reactivatingInactiveAdmin: !!existingAdmin && !existingAdmin.isActive,
     });
 
     // Generate invite link
@@ -2692,27 +2757,42 @@ export class AdminService {
       throw new BadRequestException('This invite has expired');
     }
 
-    // Check if admin already exists
     const existingAdmin = await this.databaseService.admin.findUnique({
       where: { email: invite.email },
     });
 
-    if (existingAdmin) {
+    if (existingAdmin?.isActive) {
       throw new ConflictException('An admin with this email already exists');
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    // Create admin account
-    const admin = await this.databaseService.admin.create({
-      data: {
-        email: invite.email,
-        password: hashedPassword,
-        role: invite.role,
-        isActive: true,
-      },
-    });
+    // Reactivate inactive admin, or create a new admin row
+    const admin = existingAdmin
+      ? await this.databaseService.admin.update({
+          where: { id: existingAdmin.id },
+          data: {
+            password: hashedPassword,
+            role: invite.role,
+            isActive: true,
+            failedLoginAttempts: 0,
+            lockedUntil: null,
+            passwordResetToken: null,
+            passwordResetTokenExpiresAt: null,
+            twoFactorEnabled: false,
+            twoFactorSecret: null,
+            twoFactorEnabledAt: null,
+          },
+        })
+      : await this.databaseService.admin.create({
+          data: {
+            email: invite.email,
+            password: hashedPassword,
+            role: invite.role,
+            isActive: true,
+          },
+        });
 
     // Mark invite as used
     await this.databaseService.adminInvite.update({
@@ -2728,9 +2808,14 @@ export class AdminService {
       email: admin.email,
       role: admin.role,
       viaInvite: true,
+      reactivated: !!existingAdmin,
     });
 
-    this.logger.log(`Admin account created via invite: ${admin.email}`);
+    this.logger.log(
+      existingAdmin
+        ? `Admin account reactivated via invite: ${admin.email}`
+        : `Admin account created via invite: ${admin.email}`,
+    );
 
     return {
       id: admin.id,
@@ -3169,7 +3254,10 @@ export class AdminService {
    * Export events as CSV with filters applied
    * Uses the same filter logic as getEvents() but exports all matching records
    */
-  async exportEventsCSV(filters: GetEventsDto): Promise<{ buffer: Buffer; filename: string }> {
+  async exportEventsCSV(
+    filters: GetEventsDto,
+    adminId?: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
     // Build where clause (same logic as getEvents)
     const where: any = {};
 
@@ -3328,10 +3416,22 @@ export class AdminService {
         const stream = csv.write(rows, { headers: false });
 
         stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-        stream.on('end', () => {
+        stream.on('end', async () => {
           const buffer = Buffer.concat(chunks);
           const today = new Date().toISOString().split('T')[0];
           const filename = `events-export-${today}.csv`;
+          const recordCount = Math.max(0, rows.length - 1);
+          if (adminId) {
+            try {
+              await this.logAdminAction(adminId, 'ADMIN_EXPORT', 'EXPORT', 'events', {
+                filename,
+                filters,
+                recordCount,
+              });
+            } catch (logError) {
+              this.logger.warn(`Failed to log ADMIN_EXPORT for events: ${logError}`);
+            }
+          }
           resolve({ buffer, filename });
         });
         stream.on('error', (error) => {
