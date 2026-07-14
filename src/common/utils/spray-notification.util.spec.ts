@@ -1,7 +1,9 @@
 import {
   buildSprayPushNotification,
+  getSprayHistoryFields,
   getSprayNotificationContext,
   isSprayDebitTransaction,
+  parseEventTitleFromSprayNarration,
 } from './spray-notification.util.js';
 
 describe('spray-notification.util', () => {
@@ -64,6 +66,57 @@ describe('spray-notification.util', () => {
     ).toEqual({
       eventId: 'evt-1',
       eventTitle: 'Wedding',
+    });
+  });
+
+  it('parseEventTitleFromSprayNarration handles modern and legacy formats', () => {
+    expect(
+      parseEventTitleFromSprayNarration(
+        'EventId:42fe5e31-9623-4899-b223-17b1d9c39648 Spray in Birthday Bash',
+      ),
+    ).toBe('Birthday Bash');
+    expect(
+      parseEventTitleFromSprayNarration(
+        'Spray in event FAM AND FRIENDS , EventId: 42fe5e31-9623-4899-b223-17b1d9c39648',
+      ),
+    ).toBe('FAM AND FRIENDS');
+    expect(parseEventTitleFromSprayNarration('This is messg')).toBeNull();
+  });
+
+  it('getSprayHistoryFields prefers metadata and falls back to narration', () => {
+    expect(
+      getSprayHistoryFields(
+        {
+          eventSpray: true,
+          sprayCompletion: {
+            eventId: '42fe5e31-9623-4899-b223-17b1d9c39648',
+            eventTitle: 'Night Out',
+            note: 'This is messg',
+          },
+        },
+        'This is messg',
+      ),
+    ).toEqual({
+      eventId: '42fe5e31-9623-4899-b223-17b1d9c39648',
+      eventTitle: 'Night Out',
+      note: 'This is messg',
+    });
+
+    expect(
+      getSprayHistoryFields(
+        null,
+        'EventId:42fe5e31-9623-4899-b223-17b1d9c39648 Spray in Open Mic',
+      ),
+    ).toEqual({
+      eventId: '42fe5e31-9623-4899-b223-17b1d9c39648',
+      eventTitle: 'Open Mic',
+      note: null,
+    });
+
+    expect(getSprayHistoryFields(null, 'Wallet payout to 0123456789')).toEqual({
+      eventId: null,
+      eventTitle: null,
+      note: null,
     });
   });
 });

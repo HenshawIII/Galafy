@@ -113,3 +113,72 @@ export function getSprayNotificationContext(metadata: unknown): {
     eventTitle: typeof sprayCompletion?.eventTitle === 'string' ? sprayCompletion.eventTitle : 'Event',
   };
 }
+
+/** Parse event title from default spray narration formats (when no custom note was used). */
+export function parseEventTitleFromSprayNarration(narration: unknown): string | null {
+  const n = typeof narration === 'string' ? narration.trim() : '';
+  if (!n) return null;
+
+  // EventId-first: EventId:uuid Spray in TITLE
+  const modern = n.match(/^EventId[:\s]+[0-9a-f-]{36}\s+Spray in\s+(.+)$/i);
+  if (modern?.[1]?.trim()) return modern[1].trim();
+
+  // Legacy: Spray in event TITLE , EventId: uuid
+  const legacy = n.match(/Spray in event\s+(.+?)\s*,\s*EventId[:\s]+[0-9a-f-]{36}/i);
+  if (legacy?.[1]?.trim()) return legacy[1].trim();
+
+  return null;
+}
+
+/**
+ * Structured spray fields for wallet history / client display.
+ * Prefer metadata.sprayCompletion; fall back to parsing narration for older rows.
+ */
+export function getSprayHistoryFields(
+  metadata: unknown,
+  narration?: unknown,
+): {
+  eventId: string | null;
+  eventTitle: string | null;
+  note: string | null;
+} {
+  const meta =
+    typeof metadata === 'object' && metadata !== null
+      ? (metadata as Record<string, unknown>)
+      : null;
+  const sprayCompletion =
+    typeof meta?.sprayCompletion === 'object' && meta.sprayCompletion !== null
+      ? (meta.sprayCompletion as Record<string, unknown>)
+      : null;
+
+  let eventId =
+    typeof sprayCompletion?.eventId === 'string' && sprayCompletion.eventId.trim()
+      ? sprayCompletion.eventId.trim()
+      : null;
+  let eventTitle =
+    typeof sprayCompletion?.eventTitle === 'string' && sprayCompletion.eventTitle.trim()
+      ? sprayCompletion.eventTitle.trim()
+      : null;
+  let note: string | null = null;
+  if (typeof sprayCompletion?.note === 'string' && sprayCompletion.note.trim()) {
+    note = sprayCompletion.note.trim();
+  }
+
+  if (!eventId) {
+    eventId = parseEventIdFromSprayNarration(narration);
+  }
+  if (!eventTitle) {
+    eventTitle = parseEventTitleFromSprayNarration(narration);
+  }
+
+  // When a custom note is used as narration, metadata may already have it;
+  // for older rows where narration itself is the note (no EventId pattern), surface it.
+  if (!note) {
+    const n = typeof narration === 'string' ? narration.trim() : '';
+    if (n && !isEventSprayNarration(n) && (eventId || eventTitle || meta?.eventSpray === true)) {
+      note = n;
+    }
+  }
+
+  return { eventId, eventTitle, note };
+}

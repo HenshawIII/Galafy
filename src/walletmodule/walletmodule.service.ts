@@ -16,6 +16,7 @@ import {
 } from '../../generated/prisma/enums.js';
 import { normalizeToKobo, toDisplayAmount } from '../common/utils/money.util.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
+import { getSprayHistoryFields } from '../common/utils/spray-notification.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
@@ -1020,16 +1021,22 @@ export class WalletmoduleService {
     const p = page || 1;
     const pageSlice = sliceWalletHistoryPageNewestFirst(allFiltered, p, limit);
 
-    const paginatedTransactions = pageSlice.map((t) => ({
-      id: t.id,
-      reference: t.reference,
-      description: t.narration ?? '',
-      amount: toDisplayAmount(t.amount),
-      type: t.direction === TransactionDirection.CREDIT ? 'CREDIT' : 'DEBIT',
-      timestamp: t.createdAt.toISOString(),
-      status: t.status.toLowerCase(),
-      balance: balanceAfterById.get(t.id) ?? toDisplayAmount(wallet.ledgerBalance),
-    }));
+    const paginatedTransactions = pageSlice.map((t) => {
+      const sprayFields = getSprayHistoryFields(t.metadata, t.narration);
+      return {
+        id: t.id,
+        reference: t.reference,
+        description: t.narration ?? '',
+        eventTitle: sprayFields.eventTitle,
+        note: sprayFields.note,
+        eventId: sprayFields.eventId,
+        amount: toDisplayAmount(t.amount),
+        type: t.direction === TransactionDirection.CREDIT ? 'CREDIT' : 'DEBIT',
+        timestamp: t.createdAt.toISOString(),
+        status: t.status.toLowerCase(),
+        balance: balanceAfterById.get(t.id) ?? toDisplayAmount(wallet.ledgerBalance),
+      };
+    });
 
     const result = {
       transactions: paginatedTransactions,
