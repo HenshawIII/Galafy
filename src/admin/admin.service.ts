@@ -656,6 +656,7 @@ export class AdminService {
         'Phone',
         'KYC Tier',
         'KYC Status',
+        'Provider KYC Tier',
         'Provider KYC Status',
         'AML Restricted',
         'AML Restricted At',
@@ -718,6 +719,7 @@ export class AdminService {
 
                 let providerWalletBalance = '';
                 let difference = '0';
+                let providerKycTier = '';
                 let providerKycStatus = '';
 
                 if (user.customer?.id) {
@@ -725,8 +727,10 @@ export class AdminService {
                     const partnerKyc = await this.customerKycService.fetchPartnerAccountKycStatus(
                       user.customer.id,
                     );
+                    providerKycTier = partnerKyc?.accountTier?.trim() || '';
                     providerKycStatus = partnerKyc?.accountStatus?.trim() || '';
                   } catch {
+                    providerKycTier = '';
                     providerKycStatus = '';
                   }
                 }
@@ -763,6 +767,7 @@ export class AdminService {
                   user.phone || '',
                   user.customer?.tier || '',
                   kycStatus,
+                  providerKycTier,
                   providerKycStatus,
                   user.customer?.isAmlRestricted ? 'Yes' : 'No',
                   amlRestrictedAt,
