@@ -1021,8 +1021,73 @@ export class WalletmoduleService {
     const p = page || 1;
     const pageSlice = sliceWalletHistoryPageNewestFirst(allFiltered, p, limit);
 
+    const linkedDebitRefs = new Set<string>();
+    for (const t of pageSlice) {
+      const meta =
+        typeof t.metadata === 'object' && t.metadata !== null
+          ? (t.metadata as Record<string, unknown>)
+          : null;
+      const linkedRef =
+        typeof meta?.linkedSprayDebitRef === 'string' ? meta.linkedSprayDebitRef.trim() : '';
+      if (!linkedRef) continue;
+
+      const fields = getSprayHistoryFields(t.metadata, t.narration);
+      if (!fields.eventId || !fields.eventTitle || !fields.note) {
+        linkedDebitRefs.add(linkedRef);
+      }
+    }
+
+    const linkedDebitByRef = new Map<string, { metadata: unknown; narration: string | null }>();
+    if (linkedDebitRefs.size > 0) {
+      const linkedDebits = await this.databaseService.transaction.findMany({
+        where: { reference: { in: [...linkedDebitRefs] } },
+        select: { reference: true, metadata: true, narration: true },
+      });
+      for (const debit of linkedDebits) {
+        linkedDebitByRef.set(debit.reference, {
+          metadata: debit.metadata,
+          narration: debit.narration,
+        });
+      }
+    }
+
     const paginatedTransactions = pageSlice.map((t) => {
-      const sprayFields = getSprayHistoryFields(t.metadata, t.narration);
+      const meta =
+        typeof t.metadata === 'object' && t.metadata !== null
+          ? (t.metadata as Record<string, unknown>)
+          : null;
+      const linkedRef =
+        typeof meta?.linkedSprayDebitRef === 'string' ? meta.linkedSprayDebitRef.trim() : '';
+      const linkedDebit = linkedRef ? linkedDebitByRef.get(linkedRef) : undefined;
+
+      let effectiveMetadata = t.metadata;
+      let effectiveNarration = t.narration;
+      if (linkedDebit) {
+        const debitMeta =
+          typeof linkedDebit.metadata === 'object' && linkedDebit.metadata !== null
+            ? (linkedDebit.metadata as Record<string, unknown>)
+            : null;
+        const creditMeta = meta ?? {};
+        effectiveMetadata = {
+          ...creditMeta,
+          sprayCredit: true,
+          ...(debitMeta?.sprayCompletion && !creditMeta.sprayCompletion
+            ? { sprayCompletion: debitMeta.sprayCompletion }
+            : {}),
+          ...(debitMeta?.eventSpray === true && creditMeta.eventSpray !== true
+            ? { eventSpray: true }
+            : {}),
+        };
+        if (
+          (!t.narration || !String(t.narration).trim()) &&
+          linkedDebit.narration &&
+          linkedDebit.narration.trim()
+        ) {
+          effectiveNarration = linkedDebit.narration;
+        }
+      }
+
+      const sprayFields = getSprayHistoryFields(effectiveMetadata, effectiveNarration);
       return {
         id: t.id,
         reference: t.reference,
@@ -1032,6 +1097,7 @@ export class WalletmoduleService {
         eventId: sprayFields.eventId,
         amount: toDisplayAmount(t.amount),
         type: t.direction === TransactionDirection.CREDIT ? 'CREDIT' : 'DEBIT',
+        category: t.type,
         timestamp: t.createdAt.toISOString(),
         status: t.status.toLowerCase(),
         balance: balanceAfterById.get(t.id) ?? toDisplayAmount(wallet.ledgerBalance),

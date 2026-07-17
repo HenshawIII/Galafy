@@ -469,6 +469,14 @@ export class ProviderTxnCallbackService {
                       ? {
                           sprayCredit: true,
                           linkedSprayDebitRef: transactionReference,
+                          ...(txnDebitMeta?.eventSpray === true ? { eventSpray: true } : {}),
+                          ...(txnDebitMeta?.walletToWalletSpray === true
+                            ? { walletToWalletSpray: true }
+                            : {}),
+                          ...(typeof txnDebitMeta?.sprayCompletion === 'object' &&
+                          txnDebitMeta.sprayCompletion !== null
+                            ? { sprayCompletion: txnDebitMeta.sprayCompletion }
+                            : {}),
                         }
                       : {}),
                   },

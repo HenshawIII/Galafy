@@ -119,4 +119,42 @@ describe('spray-notification.util', () => {
       note: null,
     });
   });
+
+  it('getSprayHistoryFields treats sprayCredit like a spray for note fallback', () => {
+    expect(
+      getSprayHistoryFields(
+        {
+          sprayCredit: true,
+          linkedSprayDebitRef: 'SPRAY-abc',
+        },
+        'HI LOVE',
+      ),
+    ).toEqual({
+      eventId: null,
+      eventTitle: null,
+      note: 'HI LOVE',
+    });
+  });
+
+  it('getSprayHistoryFields reads sprayCompletion copied onto credit metadata', () => {
+    expect(
+      getSprayHistoryFields(
+        {
+          sprayCredit: true,
+          eventSpray: true,
+          linkedSprayDebitRef: 'SPRAY-abc',
+          sprayCompletion: {
+            eventId: '42fe5e31-9623-4899-b223-17b1d9c39648',
+            eventTitle: 'Night Out',
+            note: 'HI LOVE',
+          },
+        },
+        'HI LOVE',
+      ),
+    ).toEqual({
+      eventId: '42fe5e31-9623-4899-b223-17b1d9c39648',
+      eventTitle: 'Night Out',
+      note: 'HI LOVE',
+    });
+  });
 });

@@ -175,7 +175,13 @@ export function getSprayHistoryFields(
   // for older rows where narration itself is the note (no EventId pattern), surface it.
   if (!note) {
     const n = typeof narration === 'string' ? narration.trim() : '';
-    if (n && !isEventSprayNarration(n) && (eventId || eventTitle || meta?.eventSpray === true)) {
+    const isSprayRow =
+      eventId ||
+      eventTitle ||
+      meta?.eventSpray === true ||
+      meta?.sprayCredit === true ||
+      meta?.walletToWalletSpray === true;
+    if (n && !isEventSprayNarration(n) && isSprayRow) {
       note = n;
     }
   }
