@@ -133,7 +133,12 @@ export class GetTopSprayersDto {
   @Min(1)
   limit?: number;
 
-  @ApiPropertyOptional({ example: true, description: 'Include anonymous sprayers', default: false })
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'When true, reveal identities of sprayers with visibleAtEvents=false. When false (default), keep them ranked but mask as anonymous.',
+    default: false,
+  })
   @IsOptional()
   @Type(() => Boolean)
   @IsBoolean()

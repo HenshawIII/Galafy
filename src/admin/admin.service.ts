@@ -3910,6 +3910,7 @@ export class AdminService {
     }
 
     const limit = filters.limit || 10;
+    const revealAnonymous = filters.includeAnonymous === true;
 
     // Get all confirmed sprays for the event
     const sprays = await this.databaseService.spray.findMany({
@@ -3932,7 +3933,7 @@ export class AdminService {
                     profilePicture: true,
                     settings: {
                       select: {
-                        showOnLeaderboard: true,
+                        visibleAtEvents: true,
                       },
                     },
                   },
@@ -3944,7 +3945,7 @@ export class AdminService {
       },
     });
 
-    // Aggregate by sprayer
+    // Aggregate by sprayer (always include; anonymity only affects identity display)
     const sprayerMap = new Map<
       string,
       { user: any; totalAmount: Decimal; sprayCount: number; firstSprayAt: Date; lastSprayAt: Date }
@@ -3953,12 +3954,6 @@ export class AdminService {
     for (const spray of sprays) {
       const userId = spray.sprayerWallet.customer.userId;
       if (!userId) continue;
-
-      // Skip anonymous sprayers when not including them
-      const showOnLeaderboard = spray.sprayerWallet.customer.user?.settings?.showOnLeaderboard ?? true;
-      if (!filters.includeAnonymous && showOnLeaderboard === false) {
-        continue;
-      }
 
       if (!sprayerMap.has(userId)) {
         sprayerMap.set(userId, {
@@ -3985,25 +3980,31 @@ export class AdminService {
     const leaderboard = Array.from(sprayerMap.values())
       .sort((a, b) => b.totalAmount.comparedTo(a.totalAmount))
       .slice(0, limit)
-      .map((entry, index) => ({
-        rank: index + 1,
-        userId: entry.user?.id,
-        user: entry.user
-          ? {
-              id: entry.user.id,
-              username: entry.user.username,
-              email: entry.user.email,
-              firstName: entry.user.firstName,
-              lastName: entry.user.lastName,
-              profilePicture: entry.user.profilePicture,
-            }
-          : undefined,
-        showOnLeaderboard: entry.user?.settings?.showOnLeaderboard ?? false,
-        totalAmount: entry.totalAmount.toString(),
-        sprayCount: entry.sprayCount,
-        firstSprayAt: entry.firstSprayAt.toISOString(),
-        lastSprayAt: entry.lastSprayAt.toISOString(),
-      }));
+      .map((entry, index) => {
+        const isAnonymous = !(entry.user?.settings?.visibleAtEvents ?? true);
+        const redactIdentity = isAnonymous && !revealAnonymous;
+
+        return {
+          rank: index + 1,
+          userId: entry.user?.id,
+          user:
+            entry.user && !redactIdentity
+              ? {
+                  id: entry.user.id,
+                  username: entry.user.username,
+                  email: entry.user.email,
+                  firstName: entry.user.firstName,
+                  lastName: entry.user.lastName,
+                  profilePicture: entry.user.profilePicture,
+                }
+              : undefined,
+          isAnonymous,
+          totalAmount: entry.totalAmount.toString(),
+          sprayCount: entry.sprayCount,
+          firstSprayAt: entry.firstSprayAt.toISOString(),
+          lastSprayAt: entry.lastSprayAt.toISOString(),
+        };
+      });
 
     return {
       eventId,
