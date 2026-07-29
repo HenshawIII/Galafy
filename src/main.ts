@@ -15,9 +15,28 @@ async function bootstrap() {
   // Configure Socket.IO adapter for WebSocket support
   app.useWebSocketAdapter(new IoAdapter(app));
 
-  // Enable CORS for mobile apps (allow all origins)
+  // Browser origins: ops portal + localhost. No Origin = native mobile / non-browser clients.
+  const defaultAllowedOrigins = [
+    'https://ops.galafy.co',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+  ];
+  const extraOrigins = (process.env.ADMIN_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const allowedOrigins = new Set([...defaultAllowedOrigins, ...extraOrigins]);
+
   app.enableCors({
-    origin: true, // Allow all origins for mobile apps
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
