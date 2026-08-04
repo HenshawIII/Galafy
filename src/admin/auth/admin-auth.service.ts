@@ -476,9 +476,9 @@ export class AdminAuthService {
       },
     });
 
-    // Construct reset link
+    // Construct reset link (admin portal routes are at root: /reset-password, not /admin/reset-password)
     const baseUrl = process.env.ADMIN_PORTAL_URL || process.env.PUBLIC_URL || 'http://localhost:3000';
-    const resetLink = `${baseUrl}/admin/reset-password?token=${resetToken}`;
+    const resetLink = `${baseUrl.replace(/\/$/, '')}/reset-password?token=${resetToken}`;
 
     // Send password reset email
     try {

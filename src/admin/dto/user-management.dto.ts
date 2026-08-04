@@ -75,6 +75,24 @@ export class GetUsersDto {
   })
   @IsBoolean()
   hasMismatch?: boolean;
+
+  @ApiProperty({
+    required: false,
+    example: '2026-01-01',
+    description: 'Filter users created on or after this date (inclusive). ISO or YYYY-MM-DD.',
+  })
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiProperty({
+    required: false,
+    example: '2026-01-31',
+    description: 'Filter users created on or before this date (inclusive). ISO or YYYY-MM-DD.',
+  })
+  @IsOptional()
+  @IsString()
+  endDate?: string;
 }
 
 export class RestrictUserDto {

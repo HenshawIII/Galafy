@@ -319,14 +319,7 @@ export class AdminService {
       .map(({ user }) => user);
   }
 
-  /**
-   * Get users with pagination and filtering
-   */
-  async getUsers(filters: GetUsersDto) {
-    const page = filters.page || 1;
-    const limit = filters.limit || 20;
-    const skip = (page - 1) * limit;
-
+  private buildUsersListWhere(filters: GetUsersDto): Record<string, unknown> {
     const where: any = {};
 
     if (filters.tier === 'NoTier') {
@@ -382,6 +375,31 @@ export class AdminService {
         where.OR = searchOr;
       }
     }
+
+    if (filters.startDate || filters.endDate) {
+      where.createdAt = {};
+      if (filters.startDate) {
+        where.createdAt.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const end = new Date(filters.endDate);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+
+    return where;
+  }
+
+  /**
+   * Get users with pagination and filtering
+   */
+  async getUsers(filters: GetUsersDto) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where = this.buildUsersListWhere(filters);
 
     const userInclude = {
       customer: {
@@ -582,63 +600,7 @@ export class AdminService {
     filters: GetUsersDto,
     adminId?: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
-    // Build where clause (same logic as getUsers)
-    const where: any = {};
-
-    // Handle NoTier filter - users without customer records
-    if (filters.tier === 'NoTier') {
-      where.customer = null;
-    } else if (filters.tier) {
-      where.customer = {
-        tier: filters.tier,
-        ...(filters.isAmlRestricted !== undefined && { isAmlRestricted: filters.isAmlRestricted }),
-      };
-    } else if (filters.isAmlRestricted !== undefined) {
-      where.customer = { isAmlRestricted: filters.isAmlRestricted };
-    }
-
-    if (filters.kycStatus === 'pending') {
-      if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
-        where.customer = { id: 'impossible-no-match' };
-      } else if (where.customer && typeof where.customer === 'object') {
-        where.customer = { ...where.customer, ...buildPendingKycCustomerWhere() };
-      } else {
-        where.customer = buildPendingKycCustomerWhere();
-      }
-    } else if (filters.kycStatus === 'completed') {
-      if (filters.tier === 'NoTier' || filters.tier === 'Tier_0') {
-        where.customer = { id: 'impossible-no-match' };
-      } else if (where.customer && typeof where.customer === 'object') {
-        where.customer = { ...where.customer, ...buildCompletedKycCustomerWhere() };
-      } else {
-        where.customer = buildCompletedKycCustomerWhere();
-      }
-    }
-
-    if (filters.search) {
-      const searchOr = [
-        { email: { contains: filters.search, mode: 'insensitive' } },
-        { firstName: { contains: filters.search, mode: 'insensitive' } },
-        { lastName: { contains: filters.search, mode: 'insensitive' } },
-        { username: { contains: filters.search, mode: 'insensitive' } },
-        { phone: { contains: filters.search, mode: 'insensitive' } },
-        {
-          customer: {
-            OR: [
-              { firstName: { contains: filters.search, mode: 'insensitive' } },
-              { lastName: { contains: filters.search, mode: 'insensitive' } },
-              { emailAddress: { contains: filters.search, mode: 'insensitive' } },
-            ],
-          },
-        },
-      ];
-      if (where.OR) {
-        where.AND = [{ OR: where.OR }, { OR: searchOr }];
-        delete where.OR;
-      } else {
-        where.OR = searchOr;
-      }
-    }
+    const where = this.buildUsersListWhere(filters);
 
     // Use streaming to avoid loading all users into memory
     // Limit to 100,000 records max to prevent memory issues
