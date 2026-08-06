@@ -73,9 +73,9 @@ export class ProviderCallbackService {
       `Account creation callback received: providerCustomerId=${this.mask(providerCustomerId)} email=${this.mask(email)} phone=${this.mask(phoneNumber)} nuban=${this.mask(nuban)} nubanStatus=${rawNubanStatus ?? 'n/a'}`,
     );
 
-    if (!email || !phoneNumber || !nuban || !nubanName) {
+    if (!phoneNumber || !nuban || !nubanName) {
       // Callback payload is malformed; we still avoid throwing to provider systems if possible.
-      this.logger.warn(`Account creation callback: missing required fields (email/phone/nuban/nubanName).`);
+      this.logger.warn(`Account creation callback: missing required fields (phone/nuban/nubanName).`);
       return { received: true };
     }
 
@@ -89,18 +89,45 @@ export class ProviderCallbackService {
     }
     const now = new Date();
 
-    // Map by phone + email (not providerCustomerId) as per your docs.
-    const customer = await this.databaseService.customer.findFirst({
-      where: {
-        mobileNumber: phoneNumber,
-        emailAddress: { equals: email, mode: 'insensitive' },
-      },
-    });
-
-    if (!customer) {
-      // Don't leak whether we have the customer; provider may retry.
-      this.logger.warn(`Account creation callback: no local customer found for phone=${this.mask(phoneNumber)}, email=${this.mask(email)}`);
-      return { received: true };
+    // Prefer phone + email; if email is empty, fall back to a unique phone-only match.
+    let customer: Awaited<ReturnType<typeof this.databaseService.customer.findFirst>> = null;
+    if (email) {
+      this.logger.log(
+        `Account creation callback: matching strategy=phone+email phone=${this.mask(phoneNumber)} email=${this.mask(email)}`,
+      );
+      customer = await this.databaseService.customer.findFirst({
+        where: {
+          mobileNumber: phoneNumber,
+          emailAddress: { equals: email, mode: 'insensitive' },
+        },
+      });
+      if (!customer) {
+        this.logger.warn(
+          `Account creation callback: no local customer found for phone=${this.mask(phoneNumber)}, email=${this.mask(email)}`,
+        );
+        return { received: true };
+      }
+    } else {
+      this.logger.log(
+        `Account creation callback: matching strategy=phone-only phone=${this.mask(phoneNumber)} (email empty)`,
+      );
+      const phoneMatches = await this.databaseService.customer.findMany({
+        where: { mobileNumber: phoneNumber },
+        take: 2,
+      });
+      if (phoneMatches.length === 0) {
+        this.logger.warn(
+          `Account creation callback: no local customer found for phone=${this.mask(phoneNumber)} (phone-only)`,
+        );
+        return { received: true };
+      }
+      if (phoneMatches.length > 1) {
+        this.logger.warn(
+          `Account creation callback: ambiguous phone-only match for phone=${this.mask(phoneNumber)} (matches=${phoneMatches.length})`,
+        );
+        return { received: true };
+      }
+      customer = phoneMatches[0];
     }
 
     let shouldSetProviderCustomerId = false;

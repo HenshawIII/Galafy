@@ -313,8 +313,14 @@ export class CustomerKycService {
         ...(bvn ? { bvn } : {}),
       });
     } catch (err) {
-      await this.databaseService.customer.update({
-        where: { id: customer.id },
+      // Only clear if this request still owns the in-flight upgrade. A concurrent
+      // success may already have set Tier_2 + COMPLETED; do not wipe that.
+      await this.databaseService.customer.updateMany({
+        where: {
+          id: customer.id,
+          tier: KycTier.Tier_1,
+          tier2UpgradeStatus: Tier2UpgradeStatus.PENDING,
+        },
         data: { tier2UpgradeStatus: null },
       });
       throw err;

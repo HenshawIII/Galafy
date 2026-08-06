@@ -568,8 +568,9 @@ export class ProviderService {
         throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : response.status || HttpStatus.BAD_REQUEST);
       }
 
+      const successDetail = this.truncateForLog(JSON.stringify(data), 4000);
       this.logger.log(
-        `${logLabel}: success HTTP ${response.status} accountNumber=${maskedAcct} statusCode=${String(envelope.statusCode ?? 'n/a')}`.trim(),
+        `${logLabel}: success HTTP ${response.status} accountNumber=${maskedAcct}. Provider response: ${successDetail}`.trim(),
       );
       return data as T;
     } catch (error) {
