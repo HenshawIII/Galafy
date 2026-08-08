@@ -322,7 +322,14 @@ export class AdminController {
     name: 'hasMismatch',
     required: false,
     type: Boolean,
-    description: 'Filter by mismatch workflow flag (internally balance-restricted users)',
+    description:
+      'Legacy filter: true = mismatch, false = in_sync only. Prefer reconciliationStatus.',
+  })
+  @ApiQuery({
+    name: 'reconciliationStatus',
+    required: false,
+    enum: ['in_sync', 'mismatch', 'unavailable'],
+    description: 'Filter by exact reconciliation status (in_sync, mismatch, unavailable)',
   })
   @ApiResponse({
     status: 200,

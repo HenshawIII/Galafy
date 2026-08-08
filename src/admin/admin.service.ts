@@ -285,38 +285,39 @@ export class AdminService {
     return snapshot.inSync ? 'in_sync' : 'mismatch';
   }
 
-  private async isUserWalletOutOfSync(user: {
-    customer?: {
-      wallets?: Array<{
-        id: string;
-        availableBalance: Decimal;
-        ledgerBalance: Decimal;
-        virtualAccountNumber: string | null;
-      }>;
-    } | null;
-  }): Promise<boolean | null> {
-    const status = await this.resolveReconciliationStatus(user);
-    if (status === 'na' || status === 'unavailable') return null;
-    return status === 'mismatch';
-  }
-
-  private async filterUsersByMismatch<T extends { customer?: { wallets?: Array<{ id: string; availableBalance: Decimal; ledgerBalance: Decimal; virtualAccountNumber: string | null }> } | null }>(
-    users: T[],
-    hasMismatch: boolean,
-  ): Promise<T[]> {
+  private async filterUsersByReconciliationStatus<
+    T extends {
+      customer?: {
+        wallets?: Array<{
+          id: string;
+          availableBalance: Decimal;
+          ledgerBalance: Decimal;
+          virtualAccountNumber: string | null;
+        }>;
+      } | null;
+    },
+  >(users: T[], status: 'in_sync' | 'mismatch' | 'unavailable'): Promise<T[]> {
     const results = await Promise.all(
       users.map(async (user) => ({
         user,
-        outOfSync: await this.isUserWalletOutOfSync(user),
+        reconciliationStatus: await this.resolveReconciliationStatus(user),
       })),
     );
 
     return results
-      .filter(({ outOfSync }) => {
-        if (outOfSync === null) return !hasMismatch;
-        return hasMismatch ? outOfSync === true : outOfSync === false;
-      })
+      .filter(({ reconciliationStatus }) => reconciliationStatus === status)
       .map(({ user }) => user);
+  }
+
+  private resolveReconciliationFilter(
+    filters: GetUsersDto,
+  ): 'in_sync' | 'mismatch' | 'unavailable' | undefined {
+    if (filters.reconciliationStatus) {
+      return filters.reconciliationStatus;
+    }
+    if (filters.hasMismatch === true) return 'mismatch';
+    if (filters.hasMismatch === false) return 'in_sync';
+    return undefined;
   }
 
   private buildUsersListWhere(filters: GetUsersDto): Record<string, unknown> {
@@ -448,7 +449,7 @@ export class AdminService {
     }> = [];
     let total = 0;
 
-    if (filters.hasMismatch === undefined) {
+    if (filters.hasMismatch === undefined && filters.reconciliationStatus === undefined) {
       const [pageUsers, pageTotal] = await Promise.all([
         this.databaseService.user.findMany({
           where,
@@ -462,6 +463,7 @@ export class AdminService {
       users = pageUsers;
       total = pageTotal;
     } else {
+      const reconciliationFilter = this.resolveReconciliationFilter(filters)!;
       const matched: typeof users = [];
       const batchSize = 50;
       const maxScan = 2000;
@@ -477,7 +479,7 @@ export class AdminService {
         });
         if (!batch.length) break;
 
-        const filtered = await this.filterUsersByMismatch(batch, filters.hasMismatch);
+        const filtered = await this.filterUsersByReconciliationStatus(batch, reconciliationFilter);
         matched.push(...filtered);
         scanSkip += batchSize;
       }
@@ -658,10 +660,11 @@ export class AdminService {
 
           if (users.length === 0) break;
 
+          const reconciliationFilter = this.resolveReconciliationFilter(filters);
           const exportUsers =
-            filters.hasMismatch === undefined
+            reconciliationFilter === undefined
               ? users
-              : await this.filterUsersByMismatch(users, filters.hasMismatch);
+              : await this.filterUsersByReconciliationStatus(users, reconciliationFilter);
 
           const balanceRows: Array<Array<string | number>> = [];
           const SNAPSHOT_CONCURRENCY = 25;

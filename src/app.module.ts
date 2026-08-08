@@ -25,6 +25,7 @@ import { TierLimitModule } from './common/tier-limit/tier-limit.module.js';
 import { EmailModule } from './users/email.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { AdminNotificationModule } from './admin/admin-notification.module.js';
+import { AppVersionModule } from './app-version/app-version.module.js';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { AdminNotificationModule } from './admin/admin-notification.module.js';
     EventsModule,
     LiveModule,
     SpraysModule,
+    AppVersionModule,
   ],
   controllers: [AppController],
   providers: [

@@ -16,6 +16,12 @@ export enum KycStatusFilter {
   completed = 'completed',
 }
 
+export enum ReconciliationStatusFilter {
+  in_sync = 'in_sync',
+  mismatch = 'mismatch',
+  unavailable = 'unavailable',
+}
+
 export class GetUsersDto {
   @ApiProperty({ required: false, example: 1, description: 'Page number' })
   @IsOptional()
@@ -75,6 +81,16 @@ export class GetUsersDto {
   })
   @IsBoolean()
   hasMismatch?: boolean;
+
+  @ApiProperty({
+    required: false,
+    enum: ReconciliationStatusFilter,
+    description:
+      'Filter users by exact reconciliation status (in_sync, mismatch, unavailable). Prefer this over hasMismatch.',
+  })
+  @IsOptional()
+  @IsEnum(ReconciliationStatusFilter)
+  reconciliationStatus?: ReconciliationStatusFilter;
 
   @ApiProperty({
     required: false,
