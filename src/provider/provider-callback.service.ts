@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
 import { Tier1FaceStatus } from '../../generated/prisma/enums.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../analytics/mixpanel.events.js';
 
 const DEFAULT_CURRENCY_ID = 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9';
 
@@ -11,7 +13,10 @@ type Tier1AccountStatus = 'PENDING' | 'COMPLETED' | 'FAILED';
 export class ProviderCallbackService {
   private readonly logger = new Logger(ProviderCallbackService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly mixpanel: MixpanelService,
+  ) {}
 
   private mask(value: unknown, visibleTail = 4): string {
     const str = typeof value === 'string' ? value.trim() : value != null ? String(value).trim() : '';
@@ -152,6 +157,8 @@ export class ProviderCallbackService {
       }
     }
 
+    const previousAccountStatus = customer.tier1AccountStatus;
+
     // Update tier1 account fields idempotently.
     await this.databaseService.customer.update({
       where: { id: customer.id },
@@ -171,6 +178,13 @@ export class ProviderCallbackService {
     this.logger.log(
       `Account creation callback processed: customer=${customer.id} tier1AccountStatus=${tier1AccountStatus} nuban=${this.mask(nuban)}`,
     );
+
+    if (tier1AccountStatus === 'FAILED' && previousAccountStatus !== 'FAILED') {
+      this.mixpanel.track(customer.userId, MixpanelEvent.KycFailed, {
+        tier: 1,
+        reason: 'account_creation_failed',
+      });
+    }
 
     // Create/update wallet only when tier1 is successful.
     if (tier1AccountStatus !== 'COMPLETED') return { received: true };
@@ -231,6 +245,8 @@ export class ProviderCallbackService {
       },
     });
     this.logger.log(`Account creation callback wallet created: customer=${customer.id} nuban=${this.mask(nuban)}`);
+    this.mixpanel.track(customer.userId, MixpanelEvent.WalletCreated, { currency: 'NGN' });
+    this.mixpanel.identify(customer.userId, { has_wallet: true });
 
     return { received: true };
   }

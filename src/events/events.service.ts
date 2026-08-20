@@ -30,6 +30,8 @@ import {
 } from '../common/utils/timezone.util.js';
 import { LiveGateway } from '../live/live.gateway.js';
 import { EventLeaderboardService } from './event-leaderboard.service.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../analytics/mixpanel.events.js';
 
 @Injectable()
 export class EventsService {
@@ -45,6 +47,7 @@ export class EventsService {
     private readonly eventLeaderboardService: EventLeaderboardService,
     private readonly configService: ConfigService,
     private readonly adminNotificationService: AdminNotificationService,
+    private readonly mixpanel: MixpanelService,
   ) {}
 
   private throwIfEventDeleted<T extends { deletedAt: Date | null }>(
@@ -186,7 +189,7 @@ export class EventsService {
       const newEventType = newEventWillBeLive ? 'live' : 'scheduled';
 
       throw new BadRequestException(
-        `You already have a ${eventType} event. You can only have one live event running at a time.`,
+        `You already have a ${eventType} event. End it before starting another one.`,
       );
     }
   }
@@ -203,7 +206,7 @@ export class EventsService {
     });
 
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException("We couldn't find your account. Please log in and try again.");
     }
 
     // Check KYC tier from customer table — HOST requires Tier 3 COMPLETED
@@ -213,12 +216,12 @@ export class EventsService {
     });
 
     if (!customer) {
-      throw new NotFoundException('Customer not found for this user');
+      throw new NotFoundException("We couldn't find your account. Please log in and try again.");
     }
 
     if (!canHostEvents(customer)) {
       throw new ForbiddenException(
-        'You need approved KYC Tier 3 to host events. Complete Tier 3 verification to create an event.',
+        'Complete Tier 3 verification to create and host events on Galafy.',
       );
     }
 
@@ -238,7 +241,7 @@ export class EventsService {
     }
 
     if (!isUnique) {
-      throw new BadRequestException('Failed to generate unique event code. Please try again.');
+      throw new BadRequestException("We couldn't create your event right now. Please try again.");
     }
 
     // Determine status based on goLiveInstantly
@@ -253,7 +256,7 @@ export class EventsService {
     if (createEventDto.endAt) {
       endAt = parseWATDate(createEventDto.endAt);
       if (endAt <= startAt) {
-        throw new BadRequestException('Event end date must be after start date');
+        throw new BadRequestException('Your end date and time must be after the start date and time.');
       }
     }
 
@@ -363,7 +366,13 @@ export class EventsService {
     });
 
     // Convert dates to WAT format
-    return this.convertEventDatesToWAT(createdEventWithDetails);
+    const converted = this.convertEventDatesToWAT(createdEventWithDetails);
+    this.mixpanel.track(userId, MixpanelEvent.EventCreated, {
+      event_id: event.id,
+      go_live_instantly: Boolean(createEventDto.goLiveInstantly),
+      status,
+    });
+    return converted;
   }
 
   /**
@@ -733,7 +742,7 @@ export class EventsService {
       const currentStartAt = updateData.startsAt ? updateData.startsAt : event.startsAt;
 
       if (newEndAt && newEndAt <= currentStartAt) {
-        throw new BadRequestException('Event end date must be after start date');
+        throw new BadRequestException('Your end date and time must be after the start date and time.');
       }
 
       updateData.endsAt = newEndAt;
@@ -995,6 +1004,8 @@ export class EventsService {
     this.broadcastParticipantJoined(eventId, participant).catch((error: Error) => {
       this.logger.warn(`Failed to broadcast participant joined: ${error.message}`);
     });
+
+    this.mixpanel.track(userId, MixpanelEvent.EventJoined, { event_id: eventId, role });
 
     return participant;
   }

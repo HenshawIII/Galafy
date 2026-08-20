@@ -7,24 +7,26 @@ import {
 describe('authConflictMessage', () => {
   it('returns email credentials message by default', () => {
     expect(authConflictMessage({ field: 'email' })).toBe(
-      'An account with this email already exists. Please log in.',
+      'An account already exists with this email address. Please log in instead.',
     );
   });
 
   it('returns email Google message when method is google', () => {
     expect(authConflictMessage({ field: 'email', method: 'google' })).toBe(
-      'An account with this email already exists. Please log in using Google.',
+      'This email is already linked to a Google account. Please continue with Google.',
     );
   });
 
   it('returns phone conflict message', () => {
     expect(authConflictMessage({ field: 'phone' })).toBe(
-      'An account with this phone number already exists. Please log in.',
+      'An account already exists with this phone number. Please log in instead.',
     );
   });
 
   it('returns username conflict message', () => {
-    expect(authConflictMessage({ field: 'username' })).toContain('username');
+    expect(authConflictMessage({ field: 'username' })).toBe(
+      'That username is already taken. Try a different one.',
+    );
   });
 });
 

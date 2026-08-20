@@ -7,6 +7,7 @@ import { EmailService } from '../users/email.service.js';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
 import {
   authConflictMessage,
   googleLoginCredentialsConflictMessage,
@@ -65,6 +66,7 @@ describe('AuthService google auth', () => {
           provide: NotificationsService,
           useValue: { deactivateAllDevicesForUser: mockFn(async () => ({ deactivated: 1 })) },
         },
+        { provide: MixpanelService, useValue: { track: mockFn(), identify: mockFn(), setOnce: mockFn() } },
       ],
     }).compile();
 
@@ -152,8 +154,9 @@ describe('AuthService google auth', () => {
           { provide: CustomerKycService, useValue: {} },
           { provide: EmailService, useValue: { sendWelcomeEmail: mockFn() } },
           { provide: JwtService, useValue: { sign: mockFn() } },
-          { provide: DatabaseService, useValue: { user: { update: userUpdate } } },
+          { provide: DatabaseService, useValue: { user: { findUnique: mockFn(async () => ({ id: 'user-1', email: 'a@b.com' })), update: userUpdate } } },
           { provide: NotificationsService, useValue: notificationsService },
+          { provide: MixpanelService, useValue: { track: mockFn(), identify: mockFn(), setOnce: mockFn() } },
         ],
       }).compile();
 

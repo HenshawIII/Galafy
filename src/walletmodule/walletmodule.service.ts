@@ -45,6 +45,9 @@ import {
 } from '../common/utils/withdrawal-notification.util.js';
 import { bankAccountNameMatchesTier1 } from '../common/utils/bank-account-name-match.util.js';
 import { AdminNotificationService } from '../admin/admin-notification.service.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../analytics/mixpanel.events.js';
+import { toAmountNumber } from '../analytics/mixpanel.amount.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -68,6 +71,7 @@ export class WalletmoduleService {
     private readonly nipChargesService: NipChargesService,
     private readonly notificationsService: NotificationsService,
     private readonly adminNotificationService: AdminNotificationService,
+    private readonly mixpanel: MixpanelService,
   ) {}
 
   async getNipCharges() {
@@ -413,6 +417,11 @@ export class WalletmoduleService {
       `W2W submitted via provider: ref=${transactionReference}, from=${dto.fromWalletId}, to=${dto.toWalletId}, amount=${amount.toString()}`,
     );
 
+    this.mixpanel.track(userId, MixpanelEvent.WalletTransferSent, {
+      amount: toAmountNumber(amount),
+      currency: 'NGN',
+    });
+
     return {
       success: true,
       message: 'Transfer submitted and pending provider authorization/processing',
@@ -541,6 +550,11 @@ export class WalletmoduleService {
       destinationAccountName: destinationAccountName,
       destinationBankName,
       transactionRef: transactionReference,
+    });
+
+    this.mixpanel.track(userId, MixpanelEvent.PayoutInitiated, {
+      amount: toAmountNumber(amount),
+      currency: 'NGN',
     });
 
     return {
@@ -887,6 +901,11 @@ export class WalletmoduleService {
       destinationBankName: (payoutData.destinationBankName as string) || 'Unknown',
       transactionRef: transactionReference,
       status: TransactionStatus.PENDING,
+    });
+
+    this.mixpanel.track(userId, MixpanelEvent.PayoutCompleted, {
+      amount: toAmountNumber(amount),
+      currency: 'NGN',
     });
 
     return {

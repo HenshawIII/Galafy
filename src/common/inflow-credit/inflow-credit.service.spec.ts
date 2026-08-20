@@ -11,6 +11,7 @@ import { ProviderAccountStatusService } from '../provider-account-status/provide
 import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
 import { AdminNotificationService } from '../../admin/admin-notification.service.js';
 import { SprayTransferLookupService } from '../provider-notification/spray-transfer-lookup.service.js';
+import { MixpanelService } from '../../analytics/mixpanel.service.js';
 
 function mockFn<T extends (...args: unknown[]) => unknown>(impl?: T) {
   const fn = (...args: Parameters<T>) => {
@@ -53,6 +54,7 @@ describe('InflowCreditService', () => {
         { provide: AccountRestrictionNotifyService, useValue: {} },
         { provide: AdminNotificationService, useValue: {} },
         { provide: SprayTransferLookupService, useValue: sprayLookup },
+        { provide: MixpanelService, useValue: { track: mockFn(), identify: mockFn(), setOnce: mockFn() } },
       ],
     }).compile();
 

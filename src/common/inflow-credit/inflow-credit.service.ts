@@ -32,6 +32,9 @@ import { AdminNotificationService } from '../../admin/admin-notification.service
 import { isProviderOutboundBlocked } from '../provider-account-status/provider-account-status.util.js';
 import { isInternalSprayTransferNarration } from '../utils/spray-notification.util.js';
 import { SprayTransferLookupService } from '../provider-notification/spray-transfer-lookup.service.js';
+import { MixpanelService } from '../../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../../analytics/mixpanel.events.js';
+import { toAmountNumber } from '../../analytics/mixpanel.amount.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -73,6 +76,7 @@ export class InflowCreditService {
     private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
     private readonly adminNotificationService: AdminNotificationService,
     private readonly sprayTransferLookup: SprayTransferLookupService,
+    private readonly mixpanel: MixpanelService,
   ) {}
 
   async processBankInflow(input: BankInflowProcessInput): Promise<BankInflowProcessResult> {
@@ -477,6 +481,12 @@ export class InflowCreditService {
         amount: netAmount?.amount?.toString() ?? grossAmount.toString(),
         email: customerUser?.email,
       });
+      if (customerUser?.id) {
+        this.mixpanel.track(customerUser.id, MixpanelEvent.WalletFunded, {
+          amount: toAmountNumber(netAmount?.amount ?? grossAmount),
+          currency: 'NGN',
+        });
+      }
     }
 
     if (pendingFeeSweep && !clientResult.isDuplicate) {

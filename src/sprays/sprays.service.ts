@@ -14,6 +14,9 @@ import { buildStableProviderRef } from '../common/utils/provider-transaction-ref
 import { buildEventSprayNarration } from '../common/utils/spray-notification.util.js';
 import { TierLimitService } from '../common/services/tier-limit.service.js';
 import { ProviderAccountStatusService } from '../common/provider-account-status/provider-account-status.service.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../analytics/mixpanel.events.js';
+import { toAmountNumber } from '../analytics/mixpanel.amount.js';
 
 const DEFAULT_PROVIDER_BANK_CODE = '035';
 const DEFAULT_PROVIDER_BANK_NAME = 'WEMA BANK';
@@ -43,6 +46,7 @@ export class SpraysService {
     private readonly debitWalletMandateService: DebitWalletMandateService,
     private readonly tierLimitService: TierLimitService,
     private readonly providerAccountStatusService: ProviderAccountStatusService,
+    private readonly mixpanel: MixpanelService,
   ) {}
 
   /**
@@ -479,6 +483,13 @@ export class SpraysService {
     this.logger.log(
       `💰 SPRAY (provider): Amount=${amountKobo.toString()}, EventId=${eventId}, Ref=${transactionReference} — pending callback`,
     );
+
+    this.mixpanel.track(userId, MixpanelEvent.SpraySent, {
+      event_id: eventId,
+      amount: toAmountNumber(amountKobo),
+      currency: 'NGN',
+      provider_pending: true,
+    });
 
     return {
       spray: sprayWithWallets

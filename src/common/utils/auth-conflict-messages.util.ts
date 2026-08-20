@@ -8,18 +8,18 @@ export function authConflictMessage(options: {
   const { field, method } = options;
 
   if (field === 'phone') {
-    return 'An account with this phone number already exists. Please log in.';
+    return 'An account already exists with this phone number. Please log in instead.';
   }
 
   if (field === 'username') {
-    return 'An account with this username already exists. Please choose a different username.';
+    return 'That username is already taken. Try a different one.';
   }
 
   if (method === 'google') {
-    return 'An account with this email already exists. Please log in using Google.';
+    return 'This email is already linked to a Google account. Please continue with Google.';
   }
 
-  return 'An account with this email already exists. Please log in.';
+  return 'An account already exists with this email address. Please log in instead.';
 }
 
 export function googleLoginCredentialsConflictMessage(): string {

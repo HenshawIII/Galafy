@@ -62,7 +62,7 @@ export class SignupDto {
 
   @ApiProperty({ example: 'johndoe', description: 'Username' })
   @IsString({ message: 'Username must be a string' })
-  @IsNotEmpty({ message: 'Username is required' })
+  @IsNotEmpty({ message: 'Enter a username to continue.' })
   username: string;
 
   @ApiProperty({ example: 'SecurePassword123!', description: 'Password (minimum 6 characters)', minLength: 6 })

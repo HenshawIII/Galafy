@@ -26,11 +26,13 @@ import { EmailModule } from './users/email.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { AdminNotificationModule } from './admin/admin-notification.module.js';
 import { AppVersionModule } from './app-version/app-version.module.js';
+import { AnalyticsModule } from './analytics/analytics.module.js';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(), // Enable scheduled tasks
     CacheModule, // Redis cache module (global)
+    AnalyticsModule,
     AdminNotificationModule,
     BvnCryptoModule,
     EmailModule,

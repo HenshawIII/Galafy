@@ -35,6 +35,8 @@ import type { Prisma } from '../../generated/prisma/client.js';
 import { AdminNotificationService } from '../admin/admin-notification.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { RegisterDeviceDto } from '../notifications/dto/notification.dto.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../analytics/mixpanel.events.js';
 
 @Injectable()
 export class UsersService {
@@ -52,6 +54,7 @@ export class UsersService {
     private readonly tierLimitService: TierLimitService,
     private readonly adminNotificationService: AdminNotificationService,
     private readonly notificationsService: NotificationsService,
+    private readonly mixpanel: MixpanelService,
   ) {}
 
   private async buildAccountLimitsForUser(
@@ -105,7 +108,7 @@ export class UsersService {
   async signup(signupDto: SignupDto) {
     // Validate username is provided
     if (!signupDto.username || signupDto.username.trim() === '') {
-      throw new BadRequestException('Username is required');
+      throw new BadRequestException('Enter a username to continue.');
     }
 
     // Normalize email to lowercase for case-insensitive comparison
@@ -189,6 +192,15 @@ export class UsersService {
       console.error('Failed to send verification email (signup still succeeded):', emailError.message);
     }
 
+    this.mixpanel.setOnce(user.id, {
+      $created: user.createdAt instanceof Date ? user.createdAt.toISOString() : new Date().toISOString(),
+      $email: user.email,
+      ...(user.firstName ? { $first_name: user.firstName } : {}),
+      ...(user.lastName ? { $last_name: user.lastName } : {}),
+      auth_method: 'email',
+    });
+    this.mixpanel.track(user.id, MixpanelEvent.SignedUp, { auth_method: 'email' });
+
     // Remove sensitive data from response
     const { password, verificationCode: _, ...userWithoutPassword } = user;
     return {
@@ -247,6 +259,7 @@ export class UsersService {
 
     // Check if verification code matches
     if (user.verificationCode !== verifyAccountDto.verificationCode) {
+      this.mixpanel.track(user.id, MixpanelEvent.AccountVerificationFailed, { reason: 'invalid_code' });
       throw new UnauthorizedException('Invalid verification code');
     }
 
@@ -255,6 +268,7 @@ export class UsersService {
     const codeAge = Date.now() - user.updatedAt.getTime();
     const expirationTime = 15 * 60 * 1000; // 15 minutes in milliseconds
     if (codeAge > expirationTime) {
+      this.mixpanel.track(user.id, MixpanelEvent.AccountVerificationFailed, { reason: 'expired' });
       throw new UnauthorizedException('Verification code has expired. Please request a new one.');
     }
 
@@ -279,6 +293,9 @@ export class UsersService {
       // Log error but don't fail verification
       console.error('Failed to send welcome email (verification still succeeded):', emailError.message);
     }
+
+    this.mixpanel.identify(updatedUser.id, { is_verified: true });
+    this.mixpanel.track(updatedUser.id, MixpanelEvent.AccountVerified, { auth_method: 'email' });
 
     // Remove sensitive data from response
     const { password, verificationCode: _, ...userWithoutPassword } = updatedUser;
@@ -339,35 +356,44 @@ export class UsersService {
     const user = await this.findUserByEmailCaseInsensitive(loginDto.email);
 
     if (!user) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException('The email or password you entered is incorrect. Please try again.');
     }
 
     if (this.isAccountLocked(user)) {
       const minutesRemaining = Math.ceil((user.lockedUntil!.getTime() - Date.now()) / 60000);
-      throw new UnauthorizedException(`Account is locked. Please try again in ${minutesRemaining} minute(s).`);
+      this.mixpanel.track(user.id, MixpanelEvent.LoginFailed, { auth_method: 'email', reason: 'locked' });
+      throw new UnauthorizedException(
+        `Your account is temporarily locked. Please try again in ${minutesRemaining} minute(s).`,
+      );
     }
 
     if (!user.isVerified) {
+      this.mixpanel.track(user.id, MixpanelEvent.LoginFailed, { auth_method: 'email', reason: 'unverified' });
       throw new UnauthorizedException(
-        'Please verify your account before logging in. Check your email for verification code.',
+        'Please verify your account before logging in. Check your email for the verification code.',
       );
     }
 
     if (!user.password) {
+      this.mixpanel.track(user.id, MixpanelEvent.LoginFailed, { auth_method: 'email', reason: 'google_only' });
       throw new UnauthorizedException(
-        'This account was created with Google sign-in. Please use Google authentication to login.',
+        'This account was created with Google. Please continue with Google to sign in.',
       );
     }
 
     const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
     if (!isPasswordValid) {
       await this.handleFailedLogin(user.id);
-      throw new UnauthorizedException('Invalid email or password');
+      this.mixpanel.track(user.id, MixpanelEvent.LoginFailed, { auth_method: 'email', reason: 'invalid_password' });
+      throw new UnauthorizedException('The email or password you entered is incorrect. Please try again.');
     }
 
     await this.resetFailedLoginAttempts(user.id);
 
-    return this.issueLoginSession(user.id, loginDto.device);
+    const session = await this.issueLoginSession(user.id, loginDto.device);
+    this.mixpanel.identify(user.id, { is_verified: true, auth_method: 'email' });
+    this.mixpanel.track(user.id, MixpanelEvent.LoggedIn, { auth_method: 'email' });
+    return session;
   }
 
   private async bindLoginDevice(userId: string, device?: RegisterDeviceDto): Promise<void> {
@@ -392,7 +418,9 @@ export class UsersService {
     });
 
     if (!user) {
-      throw new UnauthorizedException('User not found');
+      throw new UnauthorizedException(
+        "We couldn't find an account with those details. Please check and try again.",
+      );
     }
 
     const updatedUser = await this.databaseService.user.update({

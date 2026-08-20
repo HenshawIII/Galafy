@@ -44,6 +44,11 @@ export class ProviderService {
   static readonly CLIENT_PARTNER_UNAVAILABLE_MESSAGE =
     'Our partner service is temporarily unavailable. Please try again in a few minutes.';
 
+  static readonly CLIENT_KYC_UNAVAILABLE_MESSAGE =
+    "We couldn't complete your verification right now. Please try again shortly.";
+
+  private static readonly KYC_FETCH_TIMEOUT_MS = 25_000;
+
   private truncateForLog(value: string, max = 500): string {
     if (!value) return '';
     return value.length > max ? `${value.substring(0, max)}...` : value;
@@ -442,6 +447,7 @@ export class ProviderService {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(ProviderService.KYC_FETCH_TIMEOUT_MS),
       });
 
       const responseText = await response.text();
@@ -451,7 +457,7 @@ export class ProviderService {
         );
         if (response.status >= 500) {
           this.logUpstream5xx('KYC API', response, responseText);
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+          throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException('KYC API returned empty response', response.status || HttpStatus.BAD_REQUEST);
       }
@@ -465,7 +471,7 @@ export class ProviderService {
         );
         if (response.status >= 500) {
           this.logUpstream5xx('KYC API', response, responseText);
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+          throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException('Invalid JSON response from KYC API', HttpStatus.BAD_REQUEST);
       }
@@ -484,7 +490,7 @@ export class ProviderService {
           this.logger.error(
             `KYC API HTTP ${response.status} ${response.statusText || ''}. Provider error: ${this.truncateForLog(JSON.stringify(data))}`.trim(),
           );
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+          throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException(msg, isDuplicate ? HttpStatus.CONFLICT : response.status || HttpStatus.BAD_REQUEST);
       }
@@ -493,7 +499,7 @@ export class ProviderService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
       this.logger.error(`KYC API request failed: ${(error as Error).message}`);
-      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+      throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 
@@ -521,6 +527,7 @@ export class ProviderService {
         method,
         headers,
         body: method === 'POST' && options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+        signal: AbortSignal.timeout(ProviderService.KYC_FETCH_TIMEOUT_MS),
       });
 
       const responseText = await response.text();
@@ -530,7 +537,7 @@ export class ProviderService {
         );
         if (response.status >= 500) {
           this.logUpstream5xx(logLabel, response, responseText);
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+          throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException(`${logLabel} returned an empty response`, response.status || HttpStatus.BAD_REQUEST);
       }
@@ -544,7 +551,7 @@ export class ProviderService {
         );
         if (response.status >= 500) {
           this.logUpstream5xx(logLabel, response, responseText);
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+          throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         throw new HttpException('Invalid response from account-upgrade partner', HttpStatus.BAD_REQUEST);
       }
@@ -559,7 +566,7 @@ export class ProviderService {
           `${logLabel}: failed HTTP ${response.status} accountNumber=${maskedAcct}. Provider response: ${detail}`.trim(),
         );
         if (response.status >= 500) {
-          throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+          throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
         }
         const msg = this.accountUpgradeErrorMessage(data);
         const isDuplicate =
@@ -576,7 +583,7 @@ export class ProviderService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
       this.logger.error(`${logLabel}: request failed accountNumber=${maskedAcct}: ${(error as Error)?.message}`);
-      throw new HttpException(ProviderService.CLIENT_PARTNER_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
+      throw new HttpException(ProviderService.CLIENT_KYC_UNAVAILABLE_MESSAGE, HttpStatus.SERVICE_UNAVAILABLE);
     }
   }
 

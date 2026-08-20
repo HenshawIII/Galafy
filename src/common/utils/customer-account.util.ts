@@ -21,7 +21,5 @@ export function resolvePartnershipAccountNumber(customer: CustomerWithAccountSou
   const accountNumber = (defaultWallet ?? anyWallet)?.virtualAccountNumber?.trim();
   if (accountNumber) return accountNumber;
 
-  throw new BadRequestException(
-    'Wallet account not found. Complete Tier 1 account setup before upgrading.',
-  );
+  throw new BadRequestException("Your wallet isn't active yet. Complete Tier 1 verification to continue.");
 }

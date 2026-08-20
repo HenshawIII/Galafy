@@ -11,6 +11,9 @@ import { resolvePartnershipAccountNumber } from '../common/utils/customer-accoun
 import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
 import type { AlatPartnerAccountKycStatusData } from '../provider/dto/provider-account-upgrade.dto.js';
 import { AdminNotificationService } from '../admin/admin-notification.service.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../analytics/mixpanel.events.js';
+import { kycTierNumber } from '../analytics/mixpanel.kyc.js';
 
 @Injectable()
 export class CustomerKycService {
@@ -21,6 +24,7 @@ export class CustomerKycService {
     private readonly providerService: ProviderService,
     private readonly bvnCrypto: BvnCryptoService,
     private readonly adminNotificationService: AdminNotificationService,
+    private readonly mixpanel: MixpanelService,
   ) {}
 
   /**
@@ -90,6 +94,7 @@ export class CustomerKycService {
         },
       });
       this.logger.log(`Face callback: face failed for customer ${customer.id}`);
+      this.mixpanel.track(customer.userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'face_failed' });
       return { received: true };
     }
 
@@ -121,7 +126,7 @@ export class CustomerKycService {
     providerTierCode?: number;
   }> {
     const user = await this.databaseService.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('User not found');
+    if (!user) throw new NotFoundException("We couldn't find your account. Please create an account to proceed.");
 
     let customer = await this.databaseService.customer.findUnique({ where: { userId } });
     const phone = dto.phoneNumber?.trim() ?? '';
@@ -136,13 +141,19 @@ export class CustomerKycService {
       where: { mobileNumber: phone, ...excludeCurrent },
     });
     if (existingByPhone) {
-      throw new ConflictException('Phone number is already registered with another account');
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'duplicate_identity' });
+      throw new ConflictException(
+        'This phone number is already linked to another account. Please use a different number or log in to the existing account.',
+      );
     }
     const existingByEmail = await this.databaseService.customer.findFirst({
       where: { emailAddress: { equals: email, mode: 'insensitive' }, ...excludeCurrent },
     });
     if (existingByEmail) {
-      throw new ConflictException('Email address is already registered with another account');
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'duplicate_identity' });
+      throw new ConflictException(
+        'This email address is already linked to another account. Please use a different email or log in to the existing account.',
+      );
     }
     const existingByBvn = await this.databaseService.customer.findFirst({
       where: {
@@ -151,7 +162,10 @@ export class CustomerKycService {
       },
     });
     if (existingByBvn) {
-      throw new ConflictException('BVN is already being used by another account');
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'duplicate_identity' });
+      throw new ConflictException(
+        'This BVN is already linked to another Galafy account. Please check your details or contact support if you believe this is a mistake.',
+      );
     }
 
     if (!customer) {
@@ -163,7 +177,7 @@ export class CustomerKycService {
         mobileNumber: phone,
       });
       customer = await this.databaseService.customer.findUnique({ where: { userId } });
-      if (!customer) throw new BadRequestException('Failed to create customer');
+      if (!customer) throw new BadRequestException("We couldn't complete your account verification right now. Please try again.");
     }
 
     await this.databaseService.customer.update({
@@ -216,6 +230,13 @@ export class CustomerKycService {
         `Tier 1 started via startTier1 for customer ${customer.id}, correlationId=${correlationId}, trackingId=${trackingId}`,
       );
 
+      const fromTier = kycTierNumber(customer.tier);
+      this.mixpanel.track(userId, MixpanelEvent.KycStarted, { tier: 1 });
+      if (fromTier !== 1) {
+        this.mixpanel.track(userId, MixpanelEvent.KycTierUpgraded, { from_tier: fromTier, to_tier: 1 });
+      }
+      this.mixpanel.identify(userId, { kyc_tier: 1 });
+
       return {
         success: true,
         correlationId,
@@ -240,6 +261,7 @@ export class CustomerKycService {
           tier1NubanName: null,
         },
       });
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'provider_error' });
       throw err;
     }
   }
@@ -261,14 +283,16 @@ export class CustomerKycService {
         wallets: { select: { virtualAccountNumber: true, isDefault: true } },
       },
     });
-    if (!customer) throw new NotFoundException('Customer not found');
+    if (!customer) throw new NotFoundException("We couldn't find your account. Please complete Tier 1 first.");
     if (customer.tier !== KycTier.Tier_1) {
-      throw new BadRequestException('Customer must complete Tier 1 before Tier 2');
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 2, reason: 'not_eligible' });
+      throw new BadRequestException('Complete Tier 1 verification before upgrading to Tier 2.');
     }
 
     if (customer.tier1AccountStatus !== 'COMPLETED') {
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 2, reason: 'not_eligible' });
       throw new BadRequestException(
-        'Complete Tier 1 account setup before upgrading to Tier 2. Wait for your wallet account to be confirmed.',
+        'Your Tier 1 verification is still being completed. Please wait until your wallet is activated before upgrading to Tier 2.',
       );
     }
 
@@ -282,7 +306,7 @@ export class CustomerKycService {
       hasBvn = await this.databaseService.bvnVerification.findUnique({ where: { customerId: customer.id } });
     }
     if (!hasBvn) {
-      throw new BadRequestException('BVN verification required before Tier 2');
+      throw new BadRequestException('Complete your BVN verification before upgrading to Tier 2.');
     }
 
     const accountNumber = resolvePartnershipAccountNumber(customer);
@@ -323,6 +347,7 @@ export class CustomerKycService {
         },
         data: { tier2UpgradeStatus: null },
       });
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 2, reason: 'provider_error' });
       throw err;
     }
 
@@ -371,6 +396,10 @@ export class CustomerKycService {
 
     this.logger.log(`Tier 2 upgrade authorized customerId=${customer.id} accountNumber=${maskedAcct}`);
 
+    this.mixpanel.track(userId, MixpanelEvent.KycStarted, { tier: 2 });
+    this.mixpanel.track(userId, MixpanelEvent.KycTierUpgraded, { from_tier: 1, to_tier: 2 });
+    this.mixpanel.identify(userId, { kyc_tier: 2 });
+
     return {
       tier: KycTier.Tier_2,
       tier2UpgradeStatus: Tier2UpgradeStatus.COMPLETED,
@@ -390,29 +419,38 @@ export class CustomerKycService {
       where: { userId },
       include: { wallets: { select: { virtualAccountNumber: true, isDefault: true } } },
     });
-    if (!customer) throw new NotFoundException('Customer not found');
+    if (!customer) throw new NotFoundException("We couldn't find your account. Please try again.");
 
     if (customer.tier !== KycTier.Tier_2) {
-      throw new BadRequestException('Customer must be Tier 2 before applying for Tier 3');
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 3, reason: 'not_eligible' });
+      throw new BadRequestException('Complete Tier 2 verification before applying for Tier 3.');
     }
     if (customer.tier3UpgradeStatus === Tier3UpgradeStatus.PENDING) {
-      throw new ConflictException('Tier 3 upgrade is already pending address verification.');
+      throw new ConflictException(
+        "Your Tier 3 verification is already in progress. We'll notify you once your address verification is complete.",
+      );
     }
     if (customer.tier3UpgradeStatus === Tier3UpgradeStatus.COMPLETED) {
-      throw new ConflictException('Tier 3 upgrade is already completed.');
+      throw new ConflictException('Your account is already verified for Tier 3.');
     }
     if (customer.tier1AccountStatus !== 'COMPLETED') {
-      throw new BadRequestException('Complete Tier 1 account setup before upgrading to Tier 3.');
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 3, reason: 'not_eligible' });
+      throw new BadRequestException('Complete Tier 1 verification before upgrading to Tier 3.');
     }
 
     const accountNumber = resolvePartnershipAccountNumber(customer);
     const maskedAcct = this.maskAccountNumber(accountNumber);
     const residentialAddress = { ...dto.residentialAddress };
 
-    await this.providerService.partnerAccountUpgradeTier3({
-      accountNumber,
-      residentialAddress,
-    });
+    try {
+      await this.providerService.partnerAccountUpgradeTier3({
+        accountNumber,
+        residentialAddress,
+      });
+    } catch (err) {
+      this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 3, reason: 'provider_error' });
+      throw err;
+    }
 
     let providerAddressStatus: string | undefined;
     try {
@@ -452,6 +490,10 @@ export class CustomerKycService {
     this.logger.log(
       `Tier 3 upgrade submitted userId=${userId} accountNumber=${maskedAcct} tier3UpgradeStatus=PENDING`,
     );
+
+    this.mixpanel.track(userId, MixpanelEvent.KycStarted, { tier: 3 });
+    this.mixpanel.track(userId, MixpanelEvent.KycTierUpgraded, { from_tier: 2, to_tier: 3 });
+    this.mixpanel.identify(userId, { kyc_tier: 3 });
 
     const user = await this.databaseService.user.findUnique({
       where: { id: userId },

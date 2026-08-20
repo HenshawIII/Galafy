@@ -11,6 +11,8 @@ import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { RegisterDeviceDto } from '../notifications/dto/notification.dto.js';
+import { MixpanelService } from '../analytics/mixpanel.service.js';
+import { MixpanelEvent } from '../analytics/mixpanel.events.js';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { config } from 'dotenv';
@@ -28,6 +30,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly databaseService: DatabaseService,
     private readonly notificationsService: NotificationsService,
+    private readonly mixpanel: MixpanelService,
   ) {
     // Validate Google OAuth configuration
     const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -214,10 +217,20 @@ export class AuthService {
         lastName: dbUser.lastName,
         username: dbUser.username,
       });
-    } catch (emailError) {
+    } catch (emailError: unknown) {
       // Log error but don't fail signup - email sending is non-critical
-      console.error('Failed to send welcome email (Google signup still succeeded):', emailError.message);
+      const message = emailError instanceof Error ? emailError.message : String(emailError);
+      console.error('Failed to send welcome email (Google signup still succeeded):', message);
     }
+
+    this.mixpanel.setOnce(dbUser.id, {
+      $created: dbUser.createdAt instanceof Date ? dbUser.createdAt.toISOString() : new Date().toISOString(),
+      $email: dbUser.email,
+      ...(dbUser.firstName ? { $first_name: dbUser.firstName } : {}),
+      ...(dbUser.lastName ? { $last_name: dbUser.lastName } : {}),
+      auth_method: 'google',
+    });
+    this.mixpanel.track(dbUser.id, MixpanelEvent.SignedUp, { auth_method: 'google' });
 
     // Return user data without tokens - user must login to get tokens
     // This matches the behavior of normal signup and prevents blocking future logins
@@ -244,10 +257,17 @@ export class AuthService {
     }
 
     if (dbUser.password) {
+      this.mixpanel.track(dbUser.id, MixpanelEvent.LoginFailed, {
+        auth_method: 'google',
+        reason: 'credentials_conflict',
+      });
       throw new UnauthorizedException(googleLoginCredentialsConflictMessage());
     }
 
-    return this.usersService.issueLoginSession(dbUser.id, device);
+    const session = await this.usersService.issueLoginSession(dbUser.id, device);
+    this.mixpanel.identify(dbUser.id, { is_verified: true, auth_method: 'google' });
+    this.mixpanel.track(dbUser.id, MixpanelEvent.LoggedIn, { auth_method: 'google' });
+    return session;
   }
 
   /**

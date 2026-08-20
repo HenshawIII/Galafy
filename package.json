@@ -62,6 +62,7 @@
     "fast-csv": "^5.0.5",
     "firebase-admin": "^13.6.0",
     "googleapis": "^166.0.0",
+    "mixpanel": "^0.23.0",
     "nodemailer": "^7.0.10",
     "otplib": "^13.4.1",
     "passport": "^0.7.0",
