@@ -1643,7 +1643,7 @@ export class AdminService {
   }
 
   /**
-   * Reverse Tier 3 approval — downgrade customer to Tier 2 (DB-only).
+   * Reverse Tier 3 approval — return customer to Tier 3 PENDING (DB-only) so admin can re-approve.
    */
   async reverseCustomerTier3(customerId: string, adminId: string, dto?: ApproveKycDto) {
     const customer = await this.databaseService.customer.findUnique({
@@ -1662,9 +1662,17 @@ export class AdminService {
     const updated = await this.databaseService.customer.update({
       where: { id: customerId },
       data: {
-        tier: KycTier.Tier_2,
-        tier3UpgradeStatus: null,
-        providerTierCode: 2,
+        tier: KycTier.Tier_3,
+        tier3UpgradeStatus: Tier3UpgradeStatus.PENDING,
+        providerTierCode: 3,
+      },
+    });
+
+    await this.databaseService.addressVerification.updateMany({
+      where: { customerId },
+      data: {
+        verified: false,
+        providerStatus: 'PENDING',
       },
     });
 
@@ -1687,7 +1695,7 @@ export class AdminService {
     );
 
     this.logger.log(
-      `CUSTOMER_TIER3_REVERSED adminId=${adminId} customerId=${customerId} tier=${updated.tier}`,
+      `CUSTOMER_TIER3_REVERSED adminId=${adminId} customerId=${customerId} tier=${updated.tier} tier3=${updated.tier3UpgradeStatus}`,
     );
 
     return {

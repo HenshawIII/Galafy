@@ -643,7 +643,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Reverse Tier 3 approval',
     description:
-      'Downgrades customer to Tier 2 and clears tier3UpgradeStatus. Does not change address verification or balance restrictions.',
+      'Returns customer to Tier 3 with tier3UpgradeStatus PENDING so admin can re-approve. Resets addressVerification.verified to false; keeps the address row and residential address. Does not change balance restrictions.',
   })
   @ApiParam({ name: 'customerId', description: 'Customer ID' })
   @ApiBody({ type: ApproveKycDto, required: false })
