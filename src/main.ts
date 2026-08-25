@@ -2,15 +2,22 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
 import { createOpenApiDocument } from './swagger/openapi-document.js';
 import { config } from 'dotenv';
 config();
 
+/** 5MB partner face-image cap as base64 is ~6.7MB; 10MB covers JSON wrapping. */
+const JSON_BODY_LIMIT = '10mb';
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true, // Enable raw body for webhook signature verification
+    bodyParser: false, // Re-register below so JSON limit is not stuck at Nest's 100kb default
   });
+  app.useBodyParser('json', { limit: JSON_BODY_LIMIT });
+  app.useBodyParser('urlencoded', { limit: JSON_BODY_LIMIT, extended: true });
 
   // Configure Socket.IO adapter for WebSocket support
   app.useWebSocketAdapter(new IoAdapter(app));
