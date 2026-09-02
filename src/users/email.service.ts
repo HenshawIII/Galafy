@@ -8,6 +8,7 @@ import {
 import {
   buildBrandedEmailHtml,
   EMAIL_BRAND_COLOR,
+  formatEmailSupportFooterText,
 } from '../common/utils/email-branding.util.js';
 config();
 
@@ -838,7 +839,7 @@ If you did not expect this invitation, please ignore this email.`,
       to: email,
       from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
       subject: template.subject,
-      text: `Hello ${userName}, ${template.message} Visit ${kycUrl} to continue.`,
+      text: `Hello ${userName}, ${template.message} Visit ${kycUrl} to continue.\n\n${formatEmailSupportFooterText()}`,
       html: this.buildKycReminderHtml(userName, kycUrl, template),
     };
 

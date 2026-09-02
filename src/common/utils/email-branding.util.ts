@@ -4,6 +4,15 @@ import { fileURLToPath } from 'url';
 
 export const EMAIL_BRAND_COLOR = '#0C1A66';
 export const EMAIL_BRAND_NAME = 'Galafy';
+export const DEFAULT_EMAIL_SUPPORT_PHONE = '09111000110';
+
+export function getEmailSupportPhone(): string {
+  return process.env.SUPPORT_PHONE?.trim() || DEFAULT_EMAIL_SUPPORT_PHONE;
+}
+
+export function formatEmailSupportFooterText(): string {
+  return `Contact support: ${getEmailSupportPhone()}`;
+}
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
@@ -62,6 +71,8 @@ export function buildBrandedEmailHtml(
   bodyHtml: string,
   options?: { headerTitle?: string },
 ): string {
+  const supportPhone = getEmailSupportPhone();
+
   return `
     <!DOCTYPE html>
     <html>
@@ -74,6 +85,12 @@ export function buildBrandedEmailHtml(
         ${buildEmailHeader(options?.headerTitle ? { title: options.headerTitle } : undefined)}
         <div style="padding: 30px 20px;">
           ${bodyHtml}
+        </div>
+        <div style="padding: 0 20px 28px 20px; text-align: center; border-top: 1px solid #eeeeee;">
+          <p style="color: #666666; font-size: 13px; line-height: 1.6; margin: 16px 0 0 0;">
+            Contact support:
+            <a href="tel:${supportPhone}" style="color: ${EMAIL_BRAND_COLOR}; text-decoration: none; font-weight: 600;">${supportPhone}</a>
+          </p>
         </div>
       </div>
     </body>

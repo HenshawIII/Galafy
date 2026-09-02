@@ -1315,7 +1315,7 @@ export class AdminService {
 
     const consumerBase =
       process.env.CONSUMER_APP_URL || process.env.PUBLIC_URL || process.env.FRONTEND_URL;
-    const kycUrl = consumerBase ? `${consumerBase.replace(/\/$/, '')}/kyc` : null;
+    const kycUrl = consumerBase ? consumerBase.replace(/\/$/, '') : null;
 
     if (!kycUrl) {
       throw new BadRequestException(
