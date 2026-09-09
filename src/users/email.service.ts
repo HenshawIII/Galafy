@@ -9,6 +9,7 @@ import {
   buildBrandedEmailHtml,
   EMAIL_BRAND_COLOR,
   formatEmailSupportFooterText,
+  getEmailFrom,
 } from '../common/utils/email-branding.util.js';
 config();
 
@@ -53,7 +54,7 @@ export class EmailService {
 
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Welcome to Galafy! 🎉',
       text: `Hello ${userName}, Welcome to Galafy! We're thrilled to have you join our community. Get started by exploring events, connecting with performers, and much more. If you have any questions, feel free to reach out to our support team.`,
       html: buildBrandedEmailHtml(`
@@ -124,7 +125,7 @@ export class EmailService {
   async sendVerificationCode(email: string, code: string): Promise<void> {
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Verify Your Account',
       text: `Your verification code is: ${code}. This code will expire in 15 minutes.`,
       html: buildBrandedEmailHtml(`
@@ -153,7 +154,7 @@ export class EmailService {
   async sendPasswordResetLink(email: string, resetLink: string): Promise<void> {
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Password Reset Request',
       text: `You have requested to reset your password. Click the link below or copy and paste it into your browser: ${resetLink}. This link will expire in 1 hour.`,
       html: buildBrandedEmailHtml(`
@@ -184,7 +185,7 @@ export class EmailService {
   async sendPasswordResetOtp(email: string, otp: string): Promise<void> {
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Password Reset OTP',
       text: `Your password reset OTP is: ${otp}. This code will expire in 15 minutes.`,
       html: buildBrandedEmailHtml(`
@@ -213,7 +214,7 @@ export class EmailService {
   async sendPinResetOtp(email: string, otp: string): Promise<void> {
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Payout PIN Reset OTP',
       text: `Your payout PIN reset OTP is: ${otp}. This code will expire in 15 minutes.`,
       html: buildBrandedEmailHtml(`
@@ -243,7 +244,7 @@ export class EmailService {
   async sendPayoutOtp(email: string, otp: string): Promise<void> {
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Payout Confirmation OTP',
       text: `Your payout confirmation OTP is: ${otp}. This code will expire in 10 minutes.`,
       html: buildBrandedEmailHtml(`
@@ -273,7 +274,7 @@ export class EmailService {
   async sendAdminPasswordResetLink(email: string, resetLink: string, token: string): Promise<void> {
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Galafy Admin - Password Reset Request',
       text: `You have requested to reset your admin password. Click the link below or copy and paste it into your browser: ${resetLink}. This link will expire in 15 minutes.`,
       html: buildBrandedEmailHtml(
@@ -360,7 +361,7 @@ export class EmailService {
 
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Wallet Funding Successful - Galafy',
       text: `Hello ${userName}, Your Galafy wallet has been successfully funded. Amount: ${formattedAmount}, Date: ${formattedDate}, Payment method: ${paymentMethodText}. If you notice anything unusual, please reach out to us.`,
       html: buildBrandedEmailHtml(`
@@ -481,7 +482,7 @@ export class EmailService {
 
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: isPending
         ? 'Withdrawal Request Received - Galafy'
         : `Withdrawal ${status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()} - Galafy`,
@@ -632,7 +633,7 @@ export class EmailService {
 
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: 'Bank Account Update Request - Galafy',
       text: `Hello ${userName}, We received a request to update the bank account linked to your Galafy profile. Date: ${formattedDate}, Status: ${statusText}. If you did not initiate this request, please contact our Support team immediately.`,
       html: buildBrandedEmailHtml(`
@@ -725,7 +726,7 @@ export class EmailService {
 
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: `Admin Portal Invitation - ${roleDisplayName} Role`,
       text: `You have been invited to join the Galafy Admin Portal as a ${roleDisplayName}.
 
@@ -837,7 +838,7 @@ If you did not expect this invitation, please ignore this email.`,
 
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: template.subject,
       text: `Hello ${userName}, ${template.message} Visit ${kycUrl} to continue.\n\n${formatEmailSupportFooterText()}`,
       html: this.buildKycReminderHtml(userName, kycUrl, template),
@@ -852,6 +853,110 @@ If you did not expect this invitation, please ignore this email.`,
         this.logger.error('SendGrid error details:', error.response.body);
       }
       throw new Error(`Failed to send KYC reminder email: ${error.message}`);
+    }
+  }
+
+  async sendTier3ApprovedEmail(
+    email: string,
+    userData: {
+      firstName?: string | null;
+      lastName?: string | null;
+      username?: string | null;
+      appUrl?: string | null;
+    },
+  ): Promise<void> {
+    let userName = 'there';
+    if (userData?.firstName && userData.firstName.trim()) {
+      userName = userData.firstName.trim();
+    } else if (userData?.username && userData.username.trim()) {
+      userName = userData.username.trim();
+    } else if (userData?.lastName && userData.lastName.trim()) {
+      userName = userData.lastName.trim();
+    }
+
+    const appUrl = userData.appUrl?.trim() || null;
+    const ctaHtml = appUrl
+      ? `<p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                To start making the most out of your events and bid goodbye to shrinking gifts,
+                <a href="${appUrl}" style="color: ${EMAIL_BRAND_COLOR}; font-weight: bold; text-decoration: none;">click here</a>.
+              </p>`
+      : `<p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                To start making the most out of your events and bid goodbye to shrinking gifts, open the Galafy app.
+              </p>`;
+    const ctaText = appUrl
+      ? `To start making the most out of your events and bid goodbye to shrinking gifts, visit ${appUrl}`
+      : 'To start making the most out of your events and bid goodbye to shrinking gifts, open the Galafy app.';
+
+    const msg = {
+      to: email,
+      from: getEmailFrom(),
+      subject: "You're good to go!",
+      text: [
+        `Hi, ${userName},`,
+        '',
+        'Your address and full identity has been verified on the Galafy app!',
+        '',
+        'You now have access to top-tier benefits i.e. a host profile where you can:',
+        '- Create and share events',
+        '- Set a minimum amount to be sprayed',
+        '- Monitor how much is coming in (nothing misses your eyes)',
+        '- Earn and profit from your livestreams and physical events',
+        '- Withdraw at anytime and anywhere',
+        '',
+        'You also get to enjoy the highest level of security as this protects you from impersonators and thieves.',
+        '',
+        ctaText,
+        '',
+        'If you have any questions, please reach out to our support team on +234 911 100 0110. We look forward to seeing you celebrate better!',
+        '',
+        'Financially yours,',
+        'The Galafy Team',
+        '',
+        formatEmailSupportFooterText(),
+      ].join('\n'),
+      html: buildBrandedEmailHtml(
+        `
+              <h1 style="color: #333333; font-size: 24px; font-weight: bold; margin: 0 0 15px 0;">Hi, ${userName},</h1>
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                Your address and full identity has been verified on the Galafy app! 🎉
+              </p>
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 15px 0;">
+                You now have access to top-tier benefits i.e. a host profile where you can:
+              </p>
+              <ul style="color: #333333; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0; padding-left: 22px;">
+                <li>Create and share events</li>
+                <li>Set a minimum amount to be sprayed</li>
+                <li>Monitor how much is coming in (nothing misses your eyes)</li>
+                <li>Earn and profit from your livestreams and physical events</li>
+                <li>Withdraw at anytime and anywhere</li>
+              </ul>
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                You also get to enjoy the highest level of security as this protects you from impersonators and thieves.
+              </p>
+              ${ctaHtml}
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                If you have any questions, please reach out to our support team on
+                <a href="tel:+2349111000110" style="color: ${EMAIL_BRAND_COLOR}; text-decoration: none; font-weight: 600;">+234 911 100 0110</a>.
+                We look forward to seeing you celebrate better!
+              </p>
+              <p style="color: #333333; font-size: 16px; line-height: 1.6; margin: 30px 0 0 0;">
+                Financially yours,<br>
+                The Galafy Team 💙
+              </p>
+        `,
+        { headerTitle: 'On your Galafy account' },
+      ),
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`Tier 3 approved email sent to ${email}`);
+    } catch (error: any) {
+      this.logger.error(`Error sending Tier 3 approved email to ${email}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+      throw new Error(`Failed to send Tier 3 approved email: ${error.message}`);
     }
   }
 
@@ -1014,7 +1119,7 @@ If you did not expect this invitation, please ignore this email.`,
 
     const msg = {
       to: email,
-      from: process.env.SMTP_USER || process.env.SENDGRID_FROM || 'noreply@example.com',
+      from: getEmailFrom(),
       subject: copy.subject,
       text: `Hello ${userName}, ${copy.textIntro}${reasonSuffix} Please contact our support team at ${supportEmail} for more information and assistance.`,
       html: buildBrandedEmailHtml(`

@@ -1759,7 +1759,18 @@ export class AdminService {
   ) {
     const existing = await this.databaseService.customer.findUnique({
       where: { id: customerId },
-      select: { userId: true },
+      select: {
+        userId: true,
+        tier3UpgradeStatus: true,
+        user: {
+          select: {
+            email: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+          },
+        },
+      },
     });
 
     const now = new Date();
@@ -1825,6 +1836,35 @@ export class AdminService {
     this.logger.log(
       `${options.action} adminId=${adminId} customerId=${customerId} tier=${updated.tier} tier3=${updated.tier3UpgradeStatus}`,
     );
+
+    const shouldSendTier3Email =
+      !options.idempotent &&
+      existing?.tier3UpgradeStatus !== Tier3UpgradeStatus.COMPLETED &&
+      Boolean(existing?.user?.email);
+
+    if (shouldSendTier3Email && existing?.user) {
+      const consumerBase =
+        process.env.CONSUMER_APP_URL || process.env.PUBLIC_URL || process.env.FRONTEND_URL;
+      const appUrl = consumerBase ? consumerBase.replace(/\/$/, '') : null;
+      if (!appUrl) {
+        this.logger.warn(
+          'CONSUMER_APP_URL is not configured; sending Tier 3 approved email without a CTA link',
+        );
+      }
+
+      try {
+        await this.emailService.sendTier3ApprovedEmail(existing.user.email, {
+          firstName: existing.user.firstName,
+          lastName: existing.user.lastName,
+          username: existing.user.username,
+          appUrl,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Tier 3 approved email failed for customerId=${customerId}: ${(err as Error).message}`,
+        );
+      }
+    }
 
     return {
       ...updated,

@@ -5,6 +5,15 @@ import { fileURLToPath } from 'url';
 export const EMAIL_BRAND_COLOR = '#0C1A66';
 export const EMAIL_BRAND_NAME = 'Galafy';
 export const DEFAULT_EMAIL_SUPPORT_PHONE = '09111000110';
+export const DEFAULT_EMAIL_FROM_NAME = 'The Galafy Team';
+export const DEFAULT_EMAIL_FROM_ADDRESS = 'noreply@example.com';
+
+export function getEmailFrom(): { email: string; name: string } {
+  return {
+    email: process.env.SMTP_USER || process.env.SENDGRID_FROM || DEFAULT_EMAIL_FROM_ADDRESS,
+    name: process.env.SENDGRID_FROM_NAME?.trim() || DEFAULT_EMAIL_FROM_NAME,
+  };
+}
 
 export function getEmailSupportPhone(): string {
   return process.env.SUPPORT_PHONE?.trim() || DEFAULT_EMAIL_SUPPORT_PHONE;
