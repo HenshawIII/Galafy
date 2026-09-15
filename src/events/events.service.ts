@@ -1265,7 +1265,7 @@ export class EventsService {
   }
 
   /**
-   * Search events by title with filters
+   * Search events by title or event code with filters
    * Uses indexed queries for performance
    */
   async searchEvents(searchDto: SearchEventDto) {
@@ -1275,12 +1275,13 @@ export class EventsService {
 
     const where: Prisma.EventWhereInput = {};
 
-    // Search by title (case-insensitive partial match)
+    // Search by title or event code (case-insensitive partial match)
     if (searchDto.query && searchDto.query.trim()) {
-      where.title = {
-        contains: searchDto.query.trim(),
-        mode: 'insensitive', // Case-insensitive search
-      };
+      const search = searchDto.query.trim();
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { code: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     // Filter by location (case-insensitive partial match)

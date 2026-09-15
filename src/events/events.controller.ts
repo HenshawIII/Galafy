@@ -84,8 +84,8 @@ export class EventsController {
   }
 
   @Get('search')
-  @ApiOperation({ summary: 'Search events by title with filters' })
-  @ApiQuery({ name: 'query', required: false, description: 'Search query for event title (case-insensitive)' })
+  @ApiOperation({ summary: 'Search events by title or event code with filters' })
+  @ApiQuery({ name: 'query', required: false, description: 'Search query for event title or event code (case-insensitive)' })
   @ApiQuery({ name: 'location', required: false, description: 'Filter by location (case-insensitive)' })
   @ApiQuery({ name: 'status', enum: EventStatus, required: false, description: 'Filter by event status' })
   @ApiQuery({ name: 'visibility', enum: EventVisibility, required: false, description: 'Filter by visibility' })

@@ -6,7 +6,7 @@ import { EventStatus, EventVisibility } from '../../../generated/prisma/enums.js
 export class SearchEventDto {
   @ApiProperty({
     example: 'concert',
-    description: 'Search query for event title (case-insensitive partial match)',
+    description: 'Search query for event title or event code (case-insensitive partial match)',
     required: false,
   })
   @IsOptional()
