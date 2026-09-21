@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiUnauthor
 import { AuthService } from './auth.service.js';
 import { Public } from './public.decorator.js';
 import { GoogleLoginDto } from './dto/google-login.dto.js';
+import { AppleLoginDto, AppleSignUpDto } from './dto/apple-login.dto.js';
 import { RefreshTokenDto } from './dto/refresh-token.dto.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 
@@ -85,6 +86,53 @@ export class AuthController {
   @ApiResponse({ status: 409, description: 'User already logged in on another device. Please log out first.' })
   googleLogin(@Body(ValidationPipe) body: GoogleLoginDto) {
     return this.authService.googleLogin(body.idtoken, body.device);
+  }
+
+  @Post('apple/signup')
+  @Public()
+  @ApiOperation({ summary: 'Apple Sign In sign up - Create a new user account' })
+  @ApiBody({ type: AppleSignUpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Sign up successful, returns user details. User must login to get access and refresh tokens.',
+    schema: {
+      example: {
+        id: 'uuid',
+        email: 'user@example.com',
+        firstName: 'John',
+        lastName: 'Doe',
+        username: 'johndoe',
+        isVerified: true,
+        message: 'Account created successfully. Please login to continue.',
+      },
+    },
+  })
+  @ApiResponse({ status: 409, description: 'An account with this email already exists' })
+  @ApiResponse({ status: 401, description: 'Invalid Apple token' })
+  appleSignUp(@Body(ValidationPipe) body: AppleSignUpDto) {
+    return this.authService.appleSignUp(body.identityToken, {
+      firstName: body.firstName,
+      lastName: body.lastName,
+    });
+  }
+
+  @Post('apple/login')
+  @Public()
+  @ApiOperation({ summary: 'Apple Sign In login - Authenticate an existing user' })
+  @ApiBody({ type: AppleLoginDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Login successful, returns access token, refresh token, user details, KYC status, isPinSet, accountLimits, and verification status',
+  })
+  @ApiResponse({
+    status: 401,
+    description:
+      'Invalid token, no account (sign up), email/password account, or Google-only account',
+  })
+  @ApiResponse({ status: 409, description: 'User already logged in on another device. Please log out first.' })
+  appleLogin(@Body(ValidationPipe) body: AppleLoginDto) {
+    return this.authService.appleLogin(body.identityToken, body.device);
   }
 
   @Post('refresh')

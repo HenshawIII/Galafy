@@ -40,6 +40,10 @@ export class CreateUserDto {
   @IsOptional()
   @IsBoolean()
   isVerified?: boolean;
+
+  @IsOptional()
+  @IsString({ message: 'Apple subject must be a string' })
+  appleSub?: string;
 }
 
 export class UpdateUserDto extends PartialType(CreateUserDto) {}

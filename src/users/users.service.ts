@@ -27,7 +27,11 @@ import { CacheService } from '../cache/cache.service.js';
 import { TierLimitService } from '../common/services/tier-limit.service.js';
 import type { AccountLimitsSnapshot } from '../common/services/tier-limit.service.js';
 import { pickPrimaryWallet, resolveInternalWalletStatus } from '../common/utils/wallet-status.util.js';
-import { authConflictMessage } from '../common/utils/auth-conflict-messages.util.js';
+import {
+  authConflictMessage,
+  oauthConflictMethod,
+  oauthOnlyLoginMessage,
+} from '../common/utils/auth-conflict-messages.util.js';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EmailService } from './email.service.js';
@@ -129,7 +133,7 @@ export class UsersService {
       throw new ConflictException(
         authConflictMessage({
           field: 'email',
-          method: existingUser.password ? 'credentials' : 'google',
+          method: oauthConflictMethod(existingUser),
         }),
       );
     }
@@ -375,10 +379,13 @@ export class UsersService {
     }
 
     if (!user.password) {
-      this.mixpanel.track(user.id, MixpanelEvent.LoginFailed, { auth_method: 'email', reason: 'google_only' });
-      throw new UnauthorizedException(
-        'This account was created with Google. Please continue with Google to sign in.',
-      );
+      const method = oauthConflictMethod(user);
+      const provider = method === 'apple' ? 'apple' : 'google';
+      this.mixpanel.track(user.id, MixpanelEvent.LoginFailed, {
+        auth_method: 'email',
+        reason: `${provider}_only`,
+      });
+      throw new UnauthorizedException(oauthOnlyLoginMessage(provider));
     }
 
     const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
@@ -582,7 +589,7 @@ export class UsersService {
         throw new ConflictException(
           authConflictMessage({
             field: 'email',
-            method: existingUser.password ? 'credentials' : 'google',
+            method: oauthConflictMethod(existingUser),
           }),
         );
       }
@@ -598,12 +605,13 @@ export class UsersService {
       username: createUserDto.username,
       phone: createUserDto.phone,
       isVerified: createUserDto.isVerified ?? false,
+      ...(createUserDto.appleSub ? { appleSub: createUserDto.appleSub } : {}),
     };
 
     if (createUserDto.password) {
       data.password = await bcrypt.hash(createUserDto.password, 10);
     } else {
-      data.password = null; // For Google OAuth users
+      data.password = null; // For Google / Apple OAuth users
     }
 
     const user = await this.databaseService.user.create({

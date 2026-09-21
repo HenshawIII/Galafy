@@ -1,8 +1,13 @@
 import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import {
   authConflictMessage,
+  appleLoginCredentialsConflictMessage,
+  appleLoginGoogleConflictMessage,
+  appleLoginSignUpPromptMessage,
+  googleLoginAppleConflictMessage,
   googleLoginCredentialsConflictMessage,
   googleLoginSignUpPromptMessage,
+  oauthConflictMethod,
 } from '../common/utils/auth-conflict-messages.util.js';
 import { UsersService } from '../users/users.service.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
@@ -13,6 +18,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { RegisterDeviceDto } from '../notifications/dto/notification.dto.js';
 import { MixpanelService } from '../analytics/mixpanel.service.js';
 import { MixpanelEvent } from '../analytics/mixpanel.events.js';
+import { validateAppleIdentityToken } from './apple-token.util.js';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { config } from 'dotenv';
@@ -149,7 +155,7 @@ export class AuthService {
       throw new ConflictException(
         authConflictMessage({
           field: 'email',
-          method: existingUser.password ? 'credentials' : 'google',
+          method: oauthConflictMethod(existingUser),
         }),
       );
     }
@@ -264,10 +270,172 @@ export class AuthService {
       throw new UnauthorizedException(googleLoginCredentialsConflictMessage());
     }
 
+    if (dbUser.appleSub) {
+      this.mixpanel.track(dbUser.id, MixpanelEvent.LoginFailed, {
+        auth_method: 'google',
+        reason: 'apple_conflict',
+      });
+      throw new UnauthorizedException(googleLoginAppleConflictMessage());
+    }
+
     const session = await this.usersService.issueLoginSession(dbUser.id, device);
     this.mixpanel.identify(dbUser.id, { is_verified: true, auth_method: 'google' });
     this.mixpanel.track(dbUser.id, MixpanelEvent.LoggedIn, { auth_method: 'google' });
     return session;
+  }
+
+  async validateAppleToken(identityToken: string) {
+    return validateAppleIdentityToken(identityToken);
+  }
+
+  /**
+   * Apple Sign Up - Creates a new user account
+   * Throws error if user already exists
+   */
+  async appleSignUp(
+    identityToken: string,
+    names?: { firstName?: string | null; lastName?: string | null },
+  ) {
+    const appleUser = await this.validateAppleToken(identityToken);
+    if (!appleUser.email) {
+      throw new UnauthorizedException('Invalid Apple token: Email is required to create an account');
+    }
+
+    const existingBySub = await this.databaseService.user.findUnique({
+      where: { appleSub: appleUser.sub },
+    });
+    if (existingBySub) {
+      throw new ConflictException(
+        authConflictMessage({
+          field: 'email',
+          method: 'apple',
+        }),
+      );
+    }
+
+    const existingUser = await this.usersService.findByEmail(appleUser.email);
+    if (existingUser) {
+      throw new ConflictException(
+        authConflictMessage({
+          field: 'email',
+          method: oauthConflictMethod(existingUser),
+        }),
+      );
+    }
+
+    const username = await this.generateOauthUsername(appleUser.email);
+    const firstName = names?.firstName?.trim() || undefined;
+    const lastName = names?.lastName?.trim() || undefined;
+
+    const dbUser = (await this.usersService.create({
+      username,
+      email: appleUser.email,
+      firstName,
+      lastName,
+      appleSub: appleUser.sub,
+      isVerified: true,
+    })) as any;
+
+    if (!dbUser) {
+      throw new UnauthorizedException('Failed to create user');
+    }
+
+    const { password, ...userWithoutPassword } = dbUser as any;
+
+    try {
+      await this.emailService.sendWelcomeEmail(dbUser.email, {
+        firstName: dbUser.firstName || firstName,
+        lastName: dbUser.lastName,
+        username: dbUser.username,
+      });
+    } catch (emailError: unknown) {
+      const message = emailError instanceof Error ? emailError.message : String(emailError);
+      this.logger.error(`Failed to send welcome email (Apple signup still succeeded): ${message}`);
+    }
+
+    this.mixpanel.setOnce(dbUser.id, {
+      $created: dbUser.createdAt instanceof Date ? dbUser.createdAt.toISOString() : new Date().toISOString(),
+      $email: dbUser.email,
+      ...(dbUser.firstName ? { $first_name: dbUser.firstName } : {}),
+      ...(dbUser.lastName ? { $last_name: dbUser.lastName } : {}),
+      auth_method: 'apple',
+    });
+    this.mixpanel.track(dbUser.id, MixpanelEvent.SignedUp, { auth_method: 'apple' });
+
+    return {
+      ...userWithoutPassword,
+      message: 'Account created successfully. Please login to continue.',
+    };
+  }
+
+  /**
+   * Apple Login - Authenticates an existing user
+   * Throws error if user does not exist
+   */
+  async appleLogin(identityToken: string, device?: RegisterDeviceDto) {
+    const appleUser = await this.validateAppleToken(identityToken);
+
+    let dbUser = await this.databaseService.user.findUnique({
+      where: { appleSub: appleUser.sub },
+    });
+
+    if (!dbUser && appleUser.email) {
+      dbUser = await this.usersService.findByEmail(appleUser.email);
+    }
+
+    if (!dbUser) {
+      throw new UnauthorizedException(appleLoginSignUpPromptMessage());
+    }
+
+    if (dbUser.password) {
+      this.mixpanel.track(dbUser.id, MixpanelEvent.LoginFailed, {
+        auth_method: 'apple',
+        reason: 'credentials_conflict',
+      });
+      throw new UnauthorizedException(appleLoginCredentialsConflictMessage());
+    }
+
+    if (!dbUser.appleSub) {
+      this.mixpanel.track(dbUser.id, MixpanelEvent.LoginFailed, {
+        auth_method: 'apple',
+        reason: 'google_conflict',
+      });
+      throw new UnauthorizedException(appleLoginGoogleConflictMessage());
+    }
+
+    const session = await this.usersService.issueLoginSession(dbUser.id, device);
+    this.mixpanel.identify(dbUser.id, { is_verified: true, auth_method: 'apple' });
+    this.mixpanel.track(dbUser.id, MixpanelEvent.LoggedIn, { auth_method: 'apple' });
+    return session;
+  }
+
+  private async generateOauthUsername(email: string): Promise<string> {
+    const emailPrefix = email
+      .split('@')[0]
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .substring(0, 20);
+    const baseUsername = emailPrefix || 'user';
+
+    let username = baseUsername;
+    let usernameTaken = await this.databaseService.user.findUnique({
+      where: { username },
+    });
+
+    if (usernameTaken) {
+      const randomSuffix = Math.floor(Math.random() * 10000)
+        .toString()
+        .padStart(4, '0');
+      username = `${baseUsername}${randomSuffix}`;
+      usernameTaken = await this.databaseService.user.findUnique({
+        where: { username },
+      });
+      if (usernameTaken) {
+        username = `${baseUsername}${Date.now().toString().slice(-6)}`;
+      }
+    }
+
+    return username;
   }
 
   /**
