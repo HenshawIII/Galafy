@@ -4,6 +4,7 @@ import { DatabaseModule } from '../database/database.module.js';
 import { CacheModule } from '../cache/cache.module.js';
 import { LiveGateway } from './live.gateway.js';
 import { EventSprayLiveBroadcastService } from './event-spray-live-broadcast.service.js';
+import { LIVE_GATEWAY } from './live.constants.js';
 import { EventsModule } from '../events/events.module.js';
 
 @Module({
@@ -15,8 +16,12 @@ import { EventsModule } from '../events/events.module.js';
     }),
     forwardRef(() => EventsModule),
   ],
-  providers: [LiveGateway, EventSprayLiveBroadcastService],
-  exports: [LiveGateway, EventSprayLiveBroadcastService],
+  providers: [
+    LiveGateway,
+    EventSprayLiveBroadcastService,
+    { provide: LIVE_GATEWAY, useExisting: LiveGateway },
+  ],
+  exports: [LiveGateway, EventSprayLiveBroadcastService, LIVE_GATEWAY],
 })
 export class LiveModule {
   private readonly logger = new Logger(LiveModule.name);

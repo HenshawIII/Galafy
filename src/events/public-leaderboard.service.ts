@@ -4,13 +4,12 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  forwardRef,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { EventLeaderboardService } from './event-leaderboard.service.js';
-import { LiveGateway } from '../live/live.gateway.js';
+import { LIVE_GATEWAY } from '../live/live.constants.js';
 import { SprayStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { UpdatePublicLeaderboardDto } from './dto/public-leaderboard.dto.js';
@@ -127,8 +126,11 @@ export class PublicLeaderboardService {
     private readonly databaseService: DatabaseService,
     private readonly eventLeaderboardService: EventLeaderboardService,
     private readonly cacheService: CacheService,
-    @Inject(forwardRef(() => LiveGateway))
-    private readonly liveGateway: LiveGateway,
+    @Inject(LIVE_GATEWAY)
+    private readonly liveGateway: {
+      revokePublicLeaderboardViewers(eventId: string): Promise<void>;
+      emitPublicLeaderboardUpdate(eventId: string, snapshot: unknown): void;
+    },
   ) {}
 
   private getShareBaseUrl(): string {
