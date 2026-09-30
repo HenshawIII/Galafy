@@ -4,6 +4,7 @@ import {
   getSprayNotificationContext,
   isSprayDebitTransaction,
   parseEventTitleFromSprayNarration,
+  shouldSkipCustomerTxnEmail,
 } from './spray-notification.util.js';
 
 describe('spray-notification.util', () => {
@@ -53,6 +54,37 @@ describe('spray-notification.util', () => {
         metadata: {},
       }),
     ).toBe(false);
+  });
+
+  it('shouldSkipCustomerTxnEmail blocks sprays and allows real withdrawals/inflows', () => {
+    expect(shouldSkipCustomerTxnEmail({ notificationKind: 'SPRAY_SENT' })).toBe(true);
+    expect(shouldSkipCustomerTxnEmail({ notificationKind: 'SPRAY_FAILED' })).toBe(true);
+    expect(shouldSkipCustomerTxnEmail({ type: 'SPRAY' })).toBe(true);
+    expect(
+      shouldSkipCustomerTxnEmail({
+        type: 'PAYOUT',
+        metadata: { walletToWalletSpray: true },
+      }),
+    ).toBe(true);
+    expect(
+      shouldSkipCustomerTxnEmail({
+        narration: 'EventId:42fe5e31-9623-4899-b223-17b1d9c39648 Spray in Birthday',
+      }),
+    ).toBe(true);
+    expect(
+      shouldSkipCustomerTxnEmail({
+        narration: 'Wallet transfer to abc-wallet-id',
+      }),
+    ).toBe(true);
+    expect(shouldSkipCustomerTxnEmail({ notificationKind: 'WITHDRAWAL_SUCCESS' })).toBe(false);
+    expect(
+      shouldSkipCustomerTxnEmail({
+        type: 'PAYOUT',
+        metadata: {},
+        narration: 'Bank withdrawal',
+      }),
+    ).toBe(false);
+    expect(shouldSkipCustomerTxnEmail({ narration: 'NIP credit from GTBank' })).toBe(false);
   });
 
   it('getSprayNotificationContext reads sprayCompletion metadata', () => {

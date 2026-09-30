@@ -34,6 +34,7 @@ import {
   buildSprayPushNotification,
   getSprayNotificationContext,
   isSprayDebitTransaction,
+  shouldSkipCustomerTxnEmail,
 } from '../common/utils/spray-notification.util.js';
 import { EmailService } from '../users/email.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -697,7 +698,11 @@ export class ProviderTxnCallbackService {
       const isSprayKind = n.kind === 'SPRAY_SENT' || n.kind === 'SPRAY_FAILED';
       const destDisplay = n.destinationAccountNumber || 'Recipient';
       const emailStatus = n.kind === 'WITHDRAWAL_SUCCESS' ? 'success' : 'failed';
-      if (!isSprayKind && n.email) {
+      const skipEmail = shouldSkipCustomerTxnEmail({
+        notificationKind: n.kind,
+        narration: data?.narration,
+      });
+      if (!skipEmail && n.email) {
         this.emailService
           .sendWithdrawalStatusAlert(
             n.email,
@@ -1070,19 +1075,21 @@ export class ProviderTxnCallbackService {
           const paymentMethod = fundingTransaction?.channel || 'BANK_TRANSFER';
           const fundingDate = fundingTransaction?.createdAt || new Date();
 
-          this.emailService
-            .sendWalletFundingAlert(
-              walletWithUser.customer.user.email,
-              amountFormatted,
-              walletWithUser.virtualAccountNumber,
-              providerReference,
-              firstName,
-              paymentMethod,
-              fundingDate,
-            )
-            .catch((error) => {
-              this.logger.error(`Failed to send wallet funding email: ${error.message}`);
-            });
+          if (!shouldSkipCustomerTxnEmail({ narration })) {
+            this.emailService
+              .sendWalletFundingAlert(
+                walletWithUser.customer.user.email,
+                amountFormatted,
+                walletWithUser.virtualAccountNumber,
+                providerReference,
+                firstName,
+                paymentMethod,
+                fundingDate,
+              )
+              .catch((error) => {
+                this.logger.error(`Failed to send wallet funding email: ${error.message}`);
+              });
+          }
 
           const walletOwnerUserId = walletWithUser.customer.userId;
           if (walletOwnerUserId) {

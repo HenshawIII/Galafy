@@ -1,7 +1,9 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventsService } from './events.service.js';
 import { EventLeaderboardService } from './event-leaderboard.service.js';
+import { PublicLeaderboardService } from './public-leaderboard.service.js';
 import { EventsController } from './events.controller.js';
+import { PublicLeaderboardController } from './public-leaderboard.controller.js';
 import { DatabaseModule } from '../database/database.module.js';
 import { EventStatusTask } from './tasks/event-status.task.js';
 import { CacheModule } from '../cache/cache.module.js';
@@ -19,8 +21,8 @@ import { LiveModule } from '../live/live.module.js';
     ConfigModule,
     AdminNotificationModule,
   ],
-  controllers: [EventsController],
-  providers: [EventsService, EventLeaderboardService, EventStatusTask],
-  exports: [EventsService, EventLeaderboardService],
+  controllers: [EventsController, PublicLeaderboardController],
+  providers: [EventsService, EventLeaderboardService, PublicLeaderboardService, EventStatusTask],
+  exports: [EventsService, EventLeaderboardService, PublicLeaderboardService],
 })
 export class EventsModule {}

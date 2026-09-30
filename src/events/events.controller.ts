@@ -24,8 +24,14 @@ import {
   ApiExcludeEndpoint,
 } from '@nestjs/swagger';
 import { EventsService } from './events.service.js';
+import { PublicLeaderboardService } from './public-leaderboard.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
-import { CreateEventDto, UpdateEventDto, JoinEventDto } from './dto/index.js';
+import {
+  CreateEventDto,
+  UpdateEventDto,
+  JoinEventDto,
+  UpdatePublicLeaderboardDto,
+} from './dto/index.js';
 import { SearchEventDto } from './dto/search-event.dto.js';
 import { EventStatus, EventVisibility, EventRole } from '../../generated/prisma/enums.js';
 
@@ -35,7 +41,10 @@ import { EventStatus, EventVisibility, EventRole } from '../../generated/prisma/
 @ApiBearerAuth('bearer')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid or expired token. Please log in again.' })
 export class EventsController {
-  constructor(private readonly eventsService: EventsService) {}
+  constructor(
+    private readonly eventsService: EventsService,
+    private readonly publicLeaderboardService: PublicLeaderboardService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -280,6 +289,46 @@ export class EventsController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.eventsService.leaveEvent(id, userId);
+  }
+
+  @Get(':id/public-leaderboard')
+  @ApiOperation({
+    summary: 'Get public leaderboard share settings (host only)',
+    description: 'Returns enable flag, showAmounts, token, and shareUrl for the event host.',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({ status: 200, description: 'Public leaderboard settings' })
+  @ApiResponse({ status: 403, description: 'Only the event host can manage the public leaderboard' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async getPublicLeaderboard(@Request() req: any, @Param('id') id: string) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.publicLeaderboardService.getHostPublicLeaderboard(id, userId);
+  }
+
+  @Put(':id/public-leaderboard')
+  @ApiOperation({
+    summary: 'Enable or update public leaderboard sharing (host only)',
+    description:
+      'Generates a share token on first enable. Mobile can return shareUrl to the host. showAmounts=false hides spray amounts for public viewers.',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiBody({ type: UpdatePublicLeaderboardDto })
+  @ApiResponse({ status: 200, description: 'Public leaderboard settings updated' })
+  @ApiResponse({ status: 403, description: 'Only the event host can manage the public leaderboard' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async updatePublicLeaderboard(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body(ValidationPipe) dto: UpdatePublicLeaderboardDto,
+  ) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.publicLeaderboardService.updateHostPublicLeaderboard(id, userId, dto);
   }
 
   @Get(':id/leaderboard')

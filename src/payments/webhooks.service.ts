@@ -25,6 +25,7 @@ import {
   buildWithdrawalPushNotification,
   resolveWithdrawalDisplayAmount,
 } from '../common/utils/withdrawal-notification.util.js';
+import { shouldSkipCustomerTxnEmail } from '../common/utils/spray-notification.util.js';
 config();
 
 @Injectable()
@@ -124,20 +125,23 @@ export class WebhooksService {
         const firstName = walletWithUser.customer.user.firstName || walletWithUser.customer.firstName || undefined;
         const paymentMethod = fundingTransaction?.channel || 'BANK_TRANSFER';
         const fundingDate = fundingTransaction?.createdAt || new Date();
+        const narration = data.description || 'Inflow payment';
 
-        this.emailService
-          .sendWalletFundingAlert(
-            walletWithUser.customer.user.email,
-            amountFormatted,
-            walletWithUser.virtualAccountNumber,
-            data.reference,
-            firstName,
-            paymentMethod,
-            fundingDate,
-          )
-          .catch((error) => {
-            this.logger.error(`Failed to send wallet funding email: ${error.message}`);
-          });
+        if (!shouldSkipCustomerTxnEmail({ narration })) {
+          this.emailService
+            .sendWalletFundingAlert(
+              walletWithUser.customer.user.email,
+              amountFormatted,
+              walletWithUser.virtualAccountNumber,
+              data.reference,
+              firstName,
+              paymentMethod,
+              fundingDate,
+            )
+            .catch((error) => {
+              this.logger.error(`Failed to send wallet funding email: ${error.message}`);
+            });
+        }
 
         // Send push notification for inflow received
         const walletOwnerUserId = walletWithUser.customer.userId;
@@ -489,6 +493,7 @@ export class WebhooksService {
           select: {
             amount: true,
             metadata: true,
+            type: true,
           },
         },
       },
@@ -515,7 +520,13 @@ export class WebhooksService {
             ? ('WITHDRAWAL_FAILED' as const)
             : null;
 
-      if (payoutWithUser.wallet.customer.user.email) {
+      if (
+        payoutWithUser.wallet.customer.user.email &&
+        !shouldSkipCustomerTxnEmail({
+          type: payoutWithUser.transaction?.type,
+          metadata: payoutWithUser.transaction?.metadata,
+        })
+      ) {
         this.emailService
           .sendWithdrawalStatusAlert(
             payoutWithUser.wallet.customer.user.email,

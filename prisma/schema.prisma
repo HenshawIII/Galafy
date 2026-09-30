@@ -529,6 +529,11 @@ model Event {
   anonSprayersAllowed Boolean  @default(true)
   taggedPerformer     String?
 
+  // Public shareable leaderboard (web viewers, no account)
+  publicLeaderboardEnabled     Boolean @default(false)
+  publicLeaderboardToken       String? @unique
+  publicLeaderboardShowAmounts Boolean @default(true)
+
   // Scheduling
   hostUserId String
   hostUser   User   @relation("UserHostedEvents", fields: [hostUserId], references: [id])

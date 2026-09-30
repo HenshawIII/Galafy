@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { LiveGateway } from './live.gateway.js';
 import { EventLeaderboardService } from '../events/event-leaderboard.service.js';
+import { PublicLeaderboardService } from '../events/public-leaderboard.service.js';
 import { SprayStatus } from '../../generated/prisma/enums.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import {
@@ -31,6 +32,8 @@ export class EventSprayLiveBroadcastService {
     private readonly cacheService: CacheService,
     private readonly liveGateway: LiveGateway,
     private readonly eventLeaderboardService: EventLeaderboardService,
+    @Inject(forwardRef(() => PublicLeaderboardService))
+    private readonly publicLeaderboardService: PublicLeaderboardService,
   ) {}
 
   async broadcastSprayCreated(eventId: string, sprayId: string, pending: boolean): Promise<void> {
@@ -40,6 +43,7 @@ export class EventSprayLiveBroadcastService {
     }
 
     this.liveGateway.emitSprayCreated(eventId, built.payload);
+    await this.emitPublicSprayIfEnabled(eventId, built.payload);
   }
 
   async broadcastSprayConfirmed(eventId: string, sprayId: string): Promise<void> {
@@ -52,13 +56,73 @@ export class EventSprayLiveBroadcastService {
 
     this.liveGateway.emitSprayCreated(eventId, built.payload);
     this.emitConfirmedBalanceUpdates(built.spray, built.payload);
+    await this.emitPublicSprayIfEnabled(eventId, built.payload);
 
     try {
       const leaderboard = await this.eventLeaderboardService.getEventLeaderboard(eventId);
       this.liveGateway.emitLeaderboardUpdate(eventId, leaderboard);
+      await this.emitPublicLeaderboardIfEnabled(eventId);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Failed to broadcast leaderboard update for event ${eventId}: ${message}`);
+    }
+  }
+
+  private async emitPublicSprayIfEnabled(
+    eventId: string,
+    payload: EventSprayCreatedPayload,
+  ): Promise<void> {
+    try {
+      const share = await this.publicLeaderboardService.getEventPublicShareSettings(eventId);
+      if (!share?.enabled) return;
+
+      const leaderboardRaw = (await this.eventLeaderboardService.getEventLeaderboard(
+        eventId,
+      )) as { totalParticipants?: number };
+      const giversCount = leaderboardRaw.totalParticipants ?? 0;
+
+      const sanitized = this.publicLeaderboardService.sanitizeSprayCreatedForPublic(
+        {
+          eventId: payload.eventId,
+          spray: {
+            id: payload.spray.id,
+            totalAmount: payload.spray.totalAmount,
+            createdAt: payload.spray.createdAt,
+            sprayer: payload.spray.sprayer
+              ? { username: payload.spray.sprayer.username }
+              : undefined,
+          },
+          eventTotals: payload.eventTotals,
+          pending: payload.pending,
+        },
+        share.showAmounts,
+      );
+      sanitized.stats.giversCount = giversCount;
+      this.liveGateway.emitPublicSprayCreated(eventId, sanitized);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Failed to broadcast public spray for event ${eventId}: ${message}`);
+    }
+  }
+
+  private async emitPublicLeaderboardIfEnabled(eventId: string): Promise<void> {
+    try {
+      const share = await this.publicLeaderboardService.getEventPublicShareSettings(eventId);
+      if (!share?.enabled) return;
+
+      const event = await this.databaseService.event.findFirst({
+        where: { id: eventId, publicLeaderboardEnabled: true, deletedAt: null },
+        select: { publicLeaderboardToken: true },
+      });
+      if (!event?.publicLeaderboardToken) return;
+
+      const snapshot = await this.publicLeaderboardService.getSnapshotByToken(
+        event.publicLeaderboardToken,
+      );
+      this.liveGateway.emitPublicLeaderboardUpdate(eventId, snapshot);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Failed to broadcast public leaderboard for event ${eventId}: ${message}`);
     }
   }
 

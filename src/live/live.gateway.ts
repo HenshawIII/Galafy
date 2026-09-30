@@ -9,10 +9,11 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { Inject, Logger, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service.js';
 import { EventLeaderboardService } from '../events/event-leaderboard.service.js';
+import { PublicLeaderboardService } from '../events/public-leaderboard.service.js';
 import { formatSprayForLive } from '../common/utils/spray-live-payload.util.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import { config } from 'dotenv';
@@ -22,6 +23,11 @@ interface AuthenticatedSocket extends Socket {
   user?: {
     id: string;
     email: string;
+  };
+  publicViewer?: {
+    eventId: string;
+    showAmounts: boolean;
+    shareToken: string;
   };
 }
 
@@ -45,9 +51,14 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     private readonly jwtService: JwtService,
     private readonly databaseService: DatabaseService,
     private readonly eventLeaderboardService: EventLeaderboardService,
+    @Inject(forwardRef(() => PublicLeaderboardService))
+    private readonly publicLeaderboardService: PublicLeaderboardService,
   ) {
-    // Log when gateway class is instantiated
     this.logger.log('LiveGateway class instantiated');
+  }
+
+  publicEventRoom(eventId: string): string {
+    return `public-event:${eventId}`;
   }
 
   afterInit(server: Server) {
@@ -58,7 +69,49 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
   async handleConnection(client: AuthenticatedSocket) {
     try {
-      // Extract token from auth object or handshake query
+      const shareTokenRaw =
+        client.handshake.auth?.shareToken || client.handshake.query?.shareToken;
+      const shareToken = typeof shareTokenRaw === 'string' ? shareTokenRaw : null;
+
+      if (shareToken) {
+        const event = await this.databaseService.event.findFirst({
+          where: {
+            publicLeaderboardToken: shareToken,
+            publicLeaderboardEnabled: true,
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            publicLeaderboardShowAmounts: true,
+          },
+        });
+
+        if (!event) {
+          this.logger.warn(`Connection rejected: Invalid public share token for socket ${client.id}`);
+          client.disconnect();
+          return;
+        }
+
+        client.publicViewer = {
+          eventId: event.id,
+          showAmounts: event.publicLeaderboardShowAmounts,
+          shareToken,
+        };
+        await client.join(this.publicEventRoom(event.id));
+
+        try {
+          const snapshot = await this.publicLeaderboardService.getSnapshotByToken(shareToken);
+          client.emit('public.leaderboard.joined', snapshot);
+        } catch (snapshotError: any) {
+          this.logger.warn(
+            `Failed to emit public leaderboard snapshot for ${event.id}: ${snapshotError.message}`,
+          );
+        }
+
+        this.logger.log(`Public viewer connected to event ${event.id} via socket ${client.id}`);
+        return;
+      }
+
       const token = client.handshake.auth?.token || client.handshake.query?.token;
 
       if (!token || typeof token !== 'string') {
@@ -67,19 +120,16 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         return;
       }
 
-      // Verify JWT token
       const payload = await this.jwtService.verifyAsync(token, {
         secret: process.env.JWT_SECRET || 'your-secret-key',
       });
 
-      // Ensure this is an access token
       if (payload.type && payload.type !== 'access') {
         this.logger.warn(`Connection rejected: Invalid token type for socket ${client.id}`);
         client.disconnect();
         return;
       }
 
-      // Get user from database
       const user = await this.databaseService.user.findUnique({
         where: { id: payload.sub },
         select: { id: true, email: true },
@@ -91,13 +141,11 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         return;
       }
 
-      // Attach user to socket
       client.user = {
         id: user.id,
         email: user.email,
       };
 
-      // Join user's private room
       await client.join(`user:${user.id}`);
 
       this.logger.log(`User ${user.id} connected via socket ${client.id}`);
@@ -469,6 +517,22 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   emitSprayCreated(eventId: string, payload: any) {
     this.server.to(`event:${eventId}`).emit('spray.created', payload);
     this.logger.log(`Emitted spray.created to event:${eventId}`);
+  }
+
+  /**
+   * Emit sanitized spray activity to public leaderboard viewers.
+   */
+  emitPublicSprayCreated(eventId: string, payload: any) {
+    this.server.to(this.publicEventRoom(eventId)).emit('public.spray.created', payload);
+    this.logger.log(`Emitted public.spray.created to ${this.publicEventRoom(eventId)}`);
+  }
+
+  /**
+   * Emit sanitized leaderboard snapshot to public viewers.
+   */
+  emitPublicLeaderboardUpdate(eventId: string, payload: any) {
+    this.server.to(this.publicEventRoom(eventId)).emit('public.leaderboard.updated', payload);
+    this.logger.log(`Emitted public.leaderboard.updated to ${this.publicEventRoom(eventId)}`);
   }
 
   /**

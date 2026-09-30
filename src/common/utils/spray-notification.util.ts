@@ -95,6 +95,44 @@ export function isSprayDebitTransaction(txn: {
   return meta?.eventSpray === true || meta?.walletToWalletSpray === true;
 }
 
+/**
+ * True when a customer money email must not be sent (spray / W2W spray / spray narration).
+ * Inflows and real bank withdrawals should return false.
+ */
+export function shouldSkipCustomerTxnEmail(input: {
+  type?: string | null;
+  metadata?: unknown;
+  narration?: unknown;
+  notificationKind?: string | null;
+}): boolean {
+  if (
+    input.notificationKind === 'SPRAY_SENT' ||
+    input.notificationKind === 'SPRAY_FAILED' ||
+    input.notificationKind === 'SPRAY_RECEIVED'
+  ) {
+    return true;
+  }
+  if (input.type === 'SPRAY') {
+    return true;
+  }
+  const meta =
+    typeof input.metadata === 'object' && input.metadata !== null
+      ? (input.metadata as Record<string, unknown>)
+      : null;
+  if (
+    meta?.eventSpray === true ||
+    meta?.walletToWalletSpray === true ||
+    meta?.sprayCredit === true ||
+    meta?.eventSprayCredit === true
+  ) {
+    return true;
+  }
+  if (isInternalSprayTransferNarration(input.narration)) {
+    return true;
+  }
+  return false;
+}
+
 export function getSprayNotificationContext(metadata: unknown): {
   eventId: string;
   eventTitle: string;

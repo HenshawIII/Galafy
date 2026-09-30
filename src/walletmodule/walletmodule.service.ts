@@ -16,7 +16,10 @@ import {
 } from '../../generated/prisma/enums.js';
 import { normalizeToKobo, toDisplayAmount } from '../common/utils/money.util.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
-import { getSprayHistoryFields } from '../common/utils/spray-notification.util.js';
+import {
+  getSprayHistoryFields,
+  shouldSkipCustomerTxnEmail,
+} from '../common/utils/spray-notification.util.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 import { WalletRiskService } from '../common/services/wallet-risk.service.js';
 import { AmlLoggingService } from '../common/services/aml-logging.service.js';
@@ -1285,7 +1288,12 @@ export class WalletmoduleService {
           ? 'success'
           : 'failed';
 
-    if (email) {
+    if (
+      email &&
+      !shouldSkipCustomerTxnEmail({
+        notificationKind: input.kind,
+      })
+    ) {
       this.emailService
         .sendWithdrawalStatusAlert(
           email,
