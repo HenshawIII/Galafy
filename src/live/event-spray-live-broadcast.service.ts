@@ -76,10 +76,20 @@ export class EventSprayLiveBroadcastService {
       const share = await this.publicLeaderboardService.getEventPublicShareSettings(eventId);
       if (!share?.enabled) return;
 
-      const leaderboardRaw = (await this.eventLeaderboardService.getEventLeaderboard(
-        eventId,
-      )) as { totalParticipants?: number };
-      const giversCount = leaderboardRaw.totalParticipants ?? 0;
+      // Prefer privacy-filtered giver count from a fresh public snapshot when participant count is visible.
+      let giversCount: number | null = null;
+      if (share.privacy.showParticipantCount) {
+        const event = await this.databaseService.event.findFirst({
+          where: { id: eventId, publicLeaderboardEnabled: true, deletedAt: null },
+          select: { publicLeaderboardToken: true },
+        });
+        if (event?.publicLeaderboardToken) {
+          const snapshot = await this.publicLeaderboardService.getSnapshotByToken(
+            event.publicLeaderboardToken,
+          );
+          giversCount = snapshot.stats.giversCount;
+        }
+      }
 
       const sanitized = this.publicLeaderboardService.sanitizeSprayCreatedForPublic(
         {
@@ -89,15 +99,19 @@ export class EventSprayLiveBroadcastService {
             totalAmount: payload.spray.totalAmount,
             createdAt: payload.spray.createdAt,
             sprayer: payload.spray.sprayer
-              ? { username: payload.spray.sprayer.username }
+              ? {
+                  username: payload.spray.sprayer.username,
+                  visibleAtEvents: payload.spray.sprayer.visibleAtEvents,
+                  showOnLeaderboard: payload.spray.sprayer.showOnLeaderboard,
+                }
               : undefined,
           },
           eventTotals: payload.eventTotals,
           pending: payload.pending,
         },
-        share.showAmounts,
+        share.privacy,
+        giversCount,
       );
-      sanitized.stats.giversCount = giversCount;
       this.liveGateway.emitPublicSprayCreated(eventId, sanitized);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

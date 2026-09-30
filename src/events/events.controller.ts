@@ -310,9 +310,9 @@ export class EventsController {
 
   @Put(':id/public-leaderboard')
   @ApiOperation({
-    summary: 'Enable or update public leaderboard sharing (host only)',
+    summary: 'Enable, update privacy, or revoke public leaderboard sharing (host only)',
     description:
-      'Generates a share token on first enable. Mobile can return shareUrl to the host. showAmounts=false hides spray amounts for public viewers.',
+      'Generates a high-entropy share token on enable. Disabling (enabled=false) revokes access and clears the token. Privacy toggles (showNames, showAmounts, showTotalAmount, showParticipantCount, allowAnonymous, topN) are enforced server-side on all public REST/socket payloads. Pass regenerate=true to rotate the token. Always use the latest shareUrl from the response.',
   })
   @ApiParam({ name: 'id', description: 'Event ID' })
   @ApiBody({ type: UpdatePublicLeaderboardDto })
@@ -329,6 +329,25 @@ export class EventsController {
       throw new Error('User ID is required. Please ensure you are authenticated.');
     }
     return this.publicLeaderboardService.updateHostPublicLeaderboard(id, userId, dto);
+  }
+
+  @Post(':id/public-leaderboard/regenerate')
+  @ApiOperation({
+    summary: 'Regenerate public leaderboard share token (host only)',
+    description:
+      'Invalidates the previous share URL immediately and returns a new token/shareUrl. Sharing must already be enabled.',
+  })
+  @ApiParam({ name: 'id', description: 'Event ID' })
+  @ApiResponse({ status: 200, description: 'New share token issued' })
+  @ApiResponse({ status: 400, description: 'Public leaderboard is not enabled' })
+  @ApiResponse({ status: 403, description: 'Only the event host can manage the public leaderboard' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async regeneratePublicLeaderboard(@Request() req: any, @Param('id') id: string) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID is required. Please ensure you are authenticated.');
+    }
+    return this.publicLeaderboardService.regenerateHostPublicLeaderboard(id, userId);
   }
 
   @Get(':id/leaderboard')

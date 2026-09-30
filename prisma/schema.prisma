@@ -530,9 +530,14 @@ model Event {
   taggedPerformer     String?
 
   // Public shareable leaderboard (web viewers, no account)
-  publicLeaderboardEnabled     Boolean @default(false)
-  publicLeaderboardToken       String? @unique
-  publicLeaderboardShowAmounts Boolean @default(true)
+  publicLeaderboardEnabled               Boolean @default(false)
+  publicLeaderboardToken                 String? @unique
+  publicLeaderboardShowAmounts           Boolean @default(true)
+  publicLeaderboardShowNames             Boolean @default(true)
+  publicLeaderboardShowTotalAmount       Boolean @default(true)
+  publicLeaderboardShowParticipantCount  Boolean @default(true)
+  publicLeaderboardAllowAnonymous        Boolean @default(true)
+  publicLeaderboardTopN                  Int?
 
   // Scheduling
   hostUserId String

@@ -536,6 +536,30 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   /**
+   * Kick public viewers after revoke/regenerate so old share sessions stop immediately.
+   */
+  async revokePublicLeaderboardViewers(eventId: string): Promise<void> {
+    const room = this.publicEventRoom(eventId);
+    this.server.to(room).emit('public.leaderboard.revoked', {
+      eventId,
+      message: 'This leaderboard link is no longer available.',
+    });
+
+    try {
+      const sockets = await this.server.in(room).fetchSockets();
+      await Promise.all(
+        sockets.map(async (socket) => {
+          await socket.leave(room);
+          socket.disconnect(true);
+        }),
+      );
+      this.logger.log(`Revoked ${sockets.length} public leaderboard viewer(s) for ${room}`);
+    } catch (error: any) {
+      this.logger.warn(`Failed to disconnect public viewers for ${room}: ${error.message}`);
+    }
+  }
+
+  /**
    * Emit reaction to event room
    * Broadcasts reactions to all subscribers in the event
    */
