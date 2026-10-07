@@ -5,10 +5,26 @@ import { NotificationsService } from '../notifications.service.js';
 import { EventStatus } from '../../../generated/prisma/enums.js';
 import { getWATISOString } from '../../common/utils/timezone.util.js';
 
+const WINDOW_MS = 30 * 1000; // ±30s match window for minute cron
+const MINUTE_MS = 60 * 1000;
+
+type ReminderEvent = {
+  id: string;
+  title: string;
+  startsAt: Date;
+  endsAt: Date | null;
+  code: string;
+};
+
 /**
- * Scheduled task to send event reminder notifications
- * - 10 minutes before event starts
- * - At event start time
+ * Scheduled task for event status updates and reminder pushes.
+ *
+ * Ongoing-event pushes are capped at three points:
+ * - Event start
+ * - Mid-point of event duration
+ * - 15 minutes before event end
+ *
+ * Pre-start: optional 10-minute reminder (before the event is ongoing).
  */
 @Injectable()
 export class EventRemindersTask {
@@ -26,25 +42,19 @@ export class EventRemindersTask {
   async send10MinuteReminders(): Promise<void> {
     this.logger.debug('Checking for events starting in 10 minutes...');
 
-    // Use actual UTC time for comparison since database stores UTC timestamps
     const now = new Date();
-    const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000);
+    const tenMinutesFromNow = new Date(now.getTime() + 10 * MINUTE_MS);
 
     try {
-      // Find events starting in approximately 10 minutes (within 1 minute window)
-      // Exclude events that have ended (endsAt is in the past)
       const events = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           deletedAt: null,
           startsAt: {
-            gte: new Date(tenMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before
-            lte: new Date(tenMinutesFromNow.getTime() + 30 * 1000), // 30 seconds after
+            gte: new Date(tenMinutesFromNow.getTime() - WINDOW_MS),
+            lte: new Date(tenMinutesFromNow.getTime() + WINDOW_MS),
           },
-          OR: [
-            { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet (UTC comparison)
-          ],
+          OR: [{ endsAt: null }, { endsAt: { gt: now } }],
         },
         select: {
           id: true,
@@ -62,31 +72,11 @@ export class EventRemindersTask {
       this.logger.log(`Found ${events.length} event(s) starting in 10 minutes`);
 
       for (const event of events) {
-        // Get all participants
-        const participants = await this.databaseService.eventParticipant.findMany({
-          where: { eventId: event.id },
-          select: { userId: true },
+        await this.notifyParticipants(event, {
+          title: 'Event Starting Soon!',
+          body: `${event.title} starts in 10 minutes`,
+          type: 'EVENT_REMINDER_10MIN',
         });
-
-        for (const participant of participants) {
-          await this.notificationsService.sendNotificationIfEnabled(
-            participant.userId,
-            {
-              notification: {
-                title: 'Event Starting Soon!',
-                body: `${event.title} starts in 10 minutes`,
-              },
-              data: {
-                type: 'EVENT_REMINDER_10MIN',
-                eventId: event.id,
-                eventCode: event.code,
-                eventTitle: event.title,
-                startsAt: getWATISOString(event.startsAt),
-              },
-            },
-            true, // Check event reminders preference
-          );
-        }
       }
 
       this.logger.log(`Sent 10-minute reminders for ${events.length} event(s)`);
@@ -102,24 +92,18 @@ export class EventRemindersTask {
   async sendStartNotifications(): Promise<void> {
     this.logger.debug('Checking for events starting now...');
 
-    // Use actual UTC time for comparison since database stores UTC timestamps
     const now = new Date();
 
     try {
-      // Find events that just started (within 1 minute window)
-      // Exclude events that have ended (endsAt is in the past)
       const events = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           deletedAt: null,
           startsAt: {
-            gte: new Date(now.getTime() - 30 * 1000), // 30 seconds before now (UTC)
-            lte: new Date(now.getTime() + 30 * 1000), // 30 seconds after now (UTC)
+            gte: new Date(now.getTime() - WINDOW_MS),
+            lte: new Date(now.getTime() + WINDOW_MS),
           },
-          OR: [
-            { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet (UTC comparison)
-          ],
+          OR: [{ endsAt: null }, { endsAt: { gt: now } }],
         },
         select: {
           id: true,
@@ -137,7 +121,6 @@ export class EventRemindersTask {
       this.logger.log(`Found ${events.length} event(s) starting now`);
 
       for (const event of events) {
-        // Update event status to LIVE
         await this.databaseService.event.update({
           where: { id: event.id },
           data: { status: EventStatus.LIVE },
@@ -145,36 +128,148 @@ export class EventRemindersTask {
 
         this.logger.log(`Updated event ${event.code} status to LIVE`);
 
-        // Get all participants
-        const participants = await this.databaseService.eventParticipant.findMany({
-          where: { eventId: event.id },
-          select: { userId: true },
+        await this.notifyParticipants(event, {
+          title: 'Event Started!',
+          body: `${event.title} is now live`,
+          type: 'EVENT_STARTED',
         });
-
-        for (const participant of participants) {
-          await this.notificationsService.sendNotificationIfEnabled(
-            participant.userId,
-            {
-              notification: {
-                title: 'Event Started!',
-                body: `${event.title} is now live`,
-              },
-              data: {
-                type: 'EVENT_STARTED',
-                eventId: event.id,
-                eventCode: event.code,
-                eventTitle: event.title,
-                startsAt: getWATISOString(event.startsAt),
-              },
-            },
-            true, // Check event reminders preference
-          );
-        }
       }
 
       this.logger.log(`Updated ${events.length} event(s) to LIVE and sent start notifications`);
     } catch (error: any) {
       this.logger.error(`Error sending start notifications: ${error.message}`, error.stack);
+    }
+  }
+
+  /**
+   * Mid-point of LIVE event duration (requires endsAt).
+   * Skipped when midpoint is too close to start or to the 15-minutes-to-end mark.
+   */
+  @Cron('* * * * *') // Every minute
+  async sendMidpointReminders(): Promise<void> {
+    this.logger.debug('Checking for events at mid-point...');
+
+    const now = new Date();
+
+    try {
+      const events = await this.databaseService.event.findMany({
+        where: {
+          status: EventStatus.LIVE,
+          deletedAt: null,
+          endsAt: { not: null, gt: now },
+          startsAt: { lt: now },
+        },
+        select: {
+          id: true,
+          title: true,
+          startsAt: true,
+          endsAt: true,
+          code: true,
+        },
+      });
+
+      const due = events.filter((event) => {
+        if (!event.endsAt) return false;
+        const durationMs = event.endsAt.getTime() - event.startsAt.getTime();
+        if (durationMs < 20 * MINUTE_MS) return false; // too short for a distinct midpoint
+
+        const midpoint = new Date(event.startsAt.getTime() + durationMs / 2);
+        const fifteenBeforeEnd = new Date(event.endsAt.getTime() - 15 * MINUTE_MS);
+
+        // Avoid stacking with start or end-soon reminders
+        if (Math.abs(midpoint.getTime() - event.startsAt.getTime()) < 2 * MINUTE_MS) {
+          return false;
+        }
+        if (Math.abs(midpoint.getTime() - fifteenBeforeEnd.getTime()) < 2 * MINUTE_MS) {
+          return false;
+        }
+
+        return (
+          midpoint.getTime() >= now.getTime() - WINDOW_MS &&
+          midpoint.getTime() <= now.getTime() + WINDOW_MS
+        );
+      });
+
+      if (due.length === 0) {
+        return;
+      }
+
+      this.logger.log(`Found ${due.length} event(s) at mid-point`);
+
+      for (const event of due) {
+        await this.notifyParticipants(event, {
+          title: 'Event Halfway There!',
+          body: `${event.title} is halfway through — don't miss the action`,
+          type: 'EVENT_REMINDER_MIDPOINT',
+        });
+      }
+
+      this.logger.log(`Sent mid-point reminders for ${due.length} event(s)`);
+    } catch (error: any) {
+      this.logger.error(`Error sending mid-point reminders: ${error.message}`, error.stack);
+    }
+  }
+
+  /**
+   * 15 minutes before LIVE event end (requires endsAt after start + 15m).
+   */
+  @Cron('* * * * *') // Every minute
+  async sendFifteenMinuteBeforeEndReminders(): Promise<void> {
+    this.logger.debug('Checking for events ending in 15 minutes...');
+
+    const now = new Date();
+    const fifteenMinutesFromNow = new Date(now.getTime() + 15 * MINUTE_MS);
+
+    try {
+      const events = await this.databaseService.event.findMany({
+        where: {
+          status: EventStatus.LIVE,
+          deletedAt: null,
+          endsAt: {
+            gte: new Date(fifteenMinutesFromNow.getTime() - WINDOW_MS),
+            lte: new Date(fifteenMinutesFromNow.getTime() + WINDOW_MS),
+          },
+          startsAt: {
+            // Target must be after the event has started
+            lt: fifteenMinutesFromNow,
+          },
+        },
+        select: {
+          id: true,
+          title: true,
+          startsAt: true,
+          endsAt: true,
+          code: true,
+        },
+      });
+
+      // Drop events shorter than ~15 minutes (T-15 would be at/before start)
+      const due = events.filter((event) => {
+        if (!event.endsAt) return false;
+        const target = event.endsAt.getTime() - 15 * MINUTE_MS;
+        return target > event.startsAt.getTime() + MINUTE_MS;
+      });
+
+      if (due.length === 0) {
+        return;
+      }
+
+      this.logger.log(`Found ${due.length} event(s) ending in 15 minutes`);
+
+      for (const event of due) {
+        await this.notifyParticipants(event, {
+          title: 'Event Ending Soon!',
+          body: `${event.title} ends in 15 minutes`,
+          type: 'EVENT_REMINDER_15MIN_END',
+        });
+      }
+
+      this.logger.log(`Sent 15-minute-before-end reminders for ${due.length} event(s)`);
+    } catch (error: any) {
+      this.logger.error(
+        `Error sending 15-minute-before-end reminders: ${error.message}`,
+        error.stack,
+      );
     }
   }
 
@@ -185,29 +280,21 @@ export class EventRemindersTask {
   async updateScheduledToLiveStatus(): Promise<void> {
     this.logger.debug('Checking for events that should be LIVE...');
 
-    // Use actual UTC time for comparison since database stores UTC timestamps
     const now = new Date();
 
-    // Log for debugging timezone issues
     this.logger.debug(
       `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
-      // Find events with SCHEDULED status that should be LIVE (startsAt is in the past)
-      // Exclude events that have ended (endsAt is in the past)
-      // Database stores UTC timestamps, so we compare with actual UTC time
       const eventsToLive = await this.databaseService.event.findMany({
         where: {
           status: EventStatus.SCHEDULED,
           deletedAt: null,
           startsAt: {
-            lte: now, // startsAt (UTC) is in the past
+            lte: now,
           },
-          OR: [
-            { endsAt: null }, // Events without an end date
-            { endsAt: { gt: now } }, // Events that haven't ended yet (UTC comparison)
-          ],
+          OR: [{ endsAt: null }, { endsAt: { gt: now } }],
         },
         select: {
           id: true,
@@ -223,7 +310,6 @@ export class EventRemindersTask {
 
       this.logger.log(`Found ${eventsToLive.length} event(s) that should be LIVE`);
 
-      // Update all events to LIVE status
       const updatePromises = eventsToLive.map((event) =>
         this.databaseService.event.update({
           where: { id: event.id },
@@ -248,17 +334,13 @@ export class EventRemindersTask {
   async updateEndedEventsStatus(): Promise<void> {
     this.logger.debug('Checking for events that have ended...');
 
-    // Use actual UTC time for comparison since database stores UTC timestamps
     const now = new Date();
 
-    // Log for debugging timezone issues
     this.logger.debug(
       `Time check - WAT: ${getWATISOString(now)}, UTC ISO: ${now.toISOString()}, UTC Timestamp: ${now.getTime()}`,
     );
 
     try {
-      // Find events that have ended (endsAt is in the past) but are still LIVE or SCHEDULED
-      // Database stores UTC timestamps, so we compare with actual UTC time
       const endedEvents = await this.databaseService.event.findMany({
         where: {
           status: {
@@ -267,7 +349,7 @@ export class EventRemindersTask {
           deletedAt: null,
           endsAt: {
             not: null,
-            lte: now, // endsAt (UTC) is in the past
+            lte: now,
           },
         },
         select: {
@@ -284,7 +366,6 @@ export class EventRemindersTask {
 
       this.logger.log(`Found ${endedEvents.length} event(s) that have ended`);
 
-      // Update all ended events to ENDED status
       const updatePromises = endedEvents.map((event) =>
         this.databaseService.event.update({
           where: { id: event.id },
@@ -299,6 +380,37 @@ export class EventRemindersTask {
       );
     } catch (error: any) {
       this.logger.error(`Error updating ended events status: ${error.message}`, error.stack);
+    }
+  }
+
+  private async notifyParticipants(
+    event: ReminderEvent,
+    payload: { title: string; body: string; type: string },
+  ): Promise<void> {
+    const participants = await this.databaseService.eventParticipant.findMany({
+      where: { eventId: event.id },
+      select: { userId: true },
+    });
+
+    for (const participant of participants) {
+      await this.notificationsService.sendNotificationIfEnabled(
+        participant.userId,
+        {
+          notification: {
+            title: payload.title,
+            body: payload.body,
+          },
+          data: {
+            type: payload.type,
+            eventId: event.id,
+            eventCode: event.code,
+            eventTitle: event.title,
+            startsAt: getWATISOString(event.startsAt),
+            ...(event.endsAt ? { endsAt: getWATISOString(event.endsAt) } : {}),
+          },
+        },
+        true, // Check event reminders preference
+      );
     }
   }
 }

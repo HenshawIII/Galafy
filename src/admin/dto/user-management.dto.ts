@@ -44,6 +44,15 @@ export class GetUsersDto {
 
   @ApiProperty({
     required: false,
+    example: '0123456789',
+    description: 'Filter by wallet virtual account number (NUBAN). Exact match after trim.',
+  })
+  @IsOptional()
+  @IsString()
+  accountNumber?: string;
+
+  @ApiProperty({
+    required: false,
     enum: UserTierFilter,
     description: 'Filter by KYC tier. Use "NoTier" to filter users without customer records (no KYC).',
   })

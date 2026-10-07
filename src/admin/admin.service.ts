@@ -377,6 +377,25 @@ export class AdminService {
       }
     }
 
+    const accountNumber = filters.accountNumber?.trim();
+    if (accountNumber) {
+      const walletFilter = {
+        wallets: {
+          some: {
+            virtualAccountNumber: accountNumber,
+          },
+        },
+      };
+      if (where.customer === null) {
+        // NoTier + account number cannot match
+        where.customer = { id: 'impossible-no-match' };
+      } else if (where.customer && typeof where.customer === 'object') {
+        where.customer = { ...where.customer, ...walletFilter };
+      } else {
+        where.customer = walletFilter;
+      }
+    }
+
     if (filters.startDate || filters.endDate) {
       where.createdAt = {};
       if (filters.startDate) {
@@ -601,8 +620,10 @@ export class AdminService {
   async exportUsersCSV(
     filters: GetUsersDto,
     adminId?: string,
+    adminRole?: AdminRole,
   ): Promise<{ buffer: Buffer; filename: string }> {
     const where = this.buildUsersListWhere(filters);
+    const includeNubanName = adminRole === AdminRole.SUPER_ADMIN;
 
     // Use streaming to avoid loading all users into memory
     // Limit to 100,000 records max to prevent memory issues
@@ -629,6 +650,7 @@ export class AdminService {
         'Provider Wallet Balance',
         'Difference',
         'Created Date',
+        ...(includeNubanName ? ['Nuban Name'] : []),
       ]);
 
       try {
@@ -741,6 +763,7 @@ export class AdminService {
                   providerWalletBalance,
                   difference,
                   createdDate,
+                  ...(includeNubanName ? [user.customer?.tier1NubanName || ''] : []),
                 ];
               }),
             );

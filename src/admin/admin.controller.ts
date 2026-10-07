@@ -345,7 +345,8 @@ export class AdminController {
   })
   async exportUsersCSV(@Query(ValidationPipe) filters: GetUsersDto, @Res() res: Response, @Request() req: any) {
     const adminId = req.admin?.id;
-    const { buffer, filename } = await this.adminService.exportUsersCSV(filters, adminId);
+    const adminRole = req.admin?.role;
+    const { buffer, filename } = await this.adminService.exportUsersCSV(filters, adminId, adminRole);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
