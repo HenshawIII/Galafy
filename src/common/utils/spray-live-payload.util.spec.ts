@@ -17,6 +17,8 @@ describe('formatSprayForLive', () => {
         customer: {
           user: {
             id: 'user-a',
+            firstName: 'Ada',
+            lastName: 'Lovelace',
             username: 'sprayer1',
             profilePicture: 'https://example.com/a.png',
             settings: { showOnLeaderboard: true },
@@ -27,6 +29,8 @@ describe('formatSprayForLive', () => {
         customer: {
           user: {
             id: 'user-b',
+            firstName: 'Host',
+            lastName: 'User',
             username: 'host1',
             profilePicture: null,
             settings: { showOnLeaderboard: false },
@@ -44,6 +48,8 @@ describe('formatSprayForLive', () => {
       updatedAt: updatedAt.toISOString(),
       sprayer: {
         id: 'user-a',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
         username: 'sprayer1',
         profilePicture: 'https://example.com/a.png',
         showOnLeaderboard: true,
@@ -51,6 +57,8 @@ describe('formatSprayForLive', () => {
       },
       receiver: {
         id: 'user-b',
+        firstName: 'Host',
+        lastName: 'User',
         username: 'host1',
         profilePicture: null,
         showOnLeaderboard: false,

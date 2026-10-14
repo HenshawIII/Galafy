@@ -2,6 +2,8 @@ import { Decimal } from '@prisma/client/runtime/library';
 
 type SprayLiveUser = {
   id: string;
+  firstName: string | null;
+  lastName: string | null;
   username: string | null;
   profilePicture: string | null;
   showOnLeaderboard: boolean;
@@ -30,6 +32,8 @@ type SprayLiveRow = {
     customer?: {
       user?: {
         id: string;
+        firstName?: string | null;
+        lastName?: string | null;
         username: string | null;
         profilePicture: string | null;
         settings?: { showOnLeaderboard: boolean | null; visibleAtEvents: boolean | null } | null;
@@ -40,6 +44,8 @@ type SprayLiveRow = {
     customer?: {
       user?: {
         id: string;
+        firstName?: string | null;
+        lastName?: string | null;
         username: string | null;
         profilePicture: string | null;
         settings?: { showOnLeaderboard: boolean | null; visibleAtEvents: boolean | null } | null;
@@ -52,6 +58,8 @@ function formatLiveUser(
   user:
     | {
         id: string;
+        firstName?: string | null;
+        lastName?: string | null;
         username: string | null;
         profilePicture: string | null;
         settings?: { showOnLeaderboard: boolean | null; visibleAtEvents: boolean | null } | null;
@@ -65,6 +73,8 @@ function formatLiveUser(
 
   return {
     id: user.id,
+    firstName: user.firstName ?? null,
+    lastName: user.lastName ?? null,
     username: user.username,
     profilePicture: user.profilePicture,
     showOnLeaderboard: user.settings?.showOnLeaderboard ?? true,
@@ -85,23 +95,27 @@ export function formatSprayForLive(spray: SprayLiveRow): SprayLivePayload {
   };
 }
 
+const LIVE_USER_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  username: true,
+  profilePicture: true,
+  settings: {
+    select: {
+      showOnLeaderboard: true,
+      visibleAtEvents: true,
+    },
+  },
+} as const;
+
 export const SPRAY_LIVE_INCLUDE = {
   sprayerWallet: {
     include: {
       customer: {
         include: {
           user: {
-            select: {
-              id: true,
-              username: true,
-              profilePicture: true,
-              settings: {
-                select: {
-                  showOnLeaderboard: true,
-                  visibleAtEvents: true,
-                },
-              },
-            },
+            select: LIVE_USER_SELECT,
           },
         },
       },
@@ -112,17 +126,7 @@ export const SPRAY_LIVE_INCLUDE = {
       customer: {
         include: {
           user: {
-            select: {
-              id: true,
-              username: true,
-              profilePicture: true,
-              settings: {
-                select: {
-                  showOnLeaderboard: true,
-                  visibleAtEvents: true,
-                },
-              },
-            },
+            select: LIVE_USER_SELECT,
           },
         },
       },

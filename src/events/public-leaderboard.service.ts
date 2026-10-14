@@ -359,16 +359,15 @@ export class PublicLeaderboardService {
         showOnLeaderboard: entry.showOnLeaderboard ?? true,
       };
 
-      if (!visibility.showOnLeaderboard) {
+      // showOnLeaderboard:false is treated like visibility opt-out on the public share:
+      // Anonymous when allowAnonymous, otherwise omit.
+      const privacyHidden =
+        visibility.showOnLeaderboard === false || visibility.visibleAtEvents === false;
+      if (privacyHidden && !privacy.allowAnonymous) {
         continue;
       }
 
-      const optedOut = visibility.visibleAtEvents === false;
-      if (optedOut && !privacy.allowAnonymous) {
-        continue;
-      }
-
-      const isAnonymous = !privacy.showNames || optedOut;
+      const isAnonymous = !privacy.showNames || privacyHidden;
       const mapped: PublicLeaderboardEntry = {
         rank: 0,
         displayName: isAnonymous
@@ -414,10 +413,10 @@ export class PublicLeaderboardService {
     giversCount?: number | null,
   ) {
     const sprayer = payload.spray.sprayer || {};
-    const optedOut = sprayer.visibleAtEvents === false;
-    const hiddenFromBoard = sprayer.showOnLeaderboard === false;
+    const privacyHidden =
+      sprayer.visibleAtEvents === false || sprayer.showOnLeaderboard === false;
 
-    if (hiddenFromBoard || (optedOut && !privacy.allowAnonymous)) {
+    if (privacyHidden && !privacy.allowAnonymous) {
       return {
         eventId: payload.eventId,
         pending: payload.pending,
@@ -431,7 +430,7 @@ export class PublicLeaderboardService {
       };
     }
 
-    const isAnonymous = !privacy.showNames || optedOut;
+    const isAnonymous = !privacy.showNames || privacyHidden;
     return {
       eventId: payload.eventId,
       pending: payload.pending,
@@ -538,10 +537,10 @@ export class PublicLeaderboardService {
       if (!user) continue;
       const showOnLeaderboard = user.settings?.showOnLeaderboard ?? true;
       const visibleAtEvents = user.settings?.visibleAtEvents ?? true;
-      if (!showOnLeaderboard) continue;
-      if (!visibleAtEvents && !privacy.allowAnonymous) continue;
+      const privacyHidden = !showOnLeaderboard || !visibleAtEvents;
+      if (privacyHidden && !privacy.allowAnonymous) continue;
 
-      const isAnonymous = !privacy.showNames || !visibleAtEvents;
+      const isAnonymous = !privacy.showNames || privacyHidden;
       recentActivity.push({
         type: 'spray',
         displayName: isAnonymous ? 'Anonymous' : this.formatDisplayName(user),
@@ -551,6 +550,8 @@ export class PublicLeaderboardService {
       });
       if (recentActivity.length >= 20) break;
     }
+
+    const uniqueGiversCount = (leaderboardData.leaderboard || []).length;
 
     return {
       event: {
@@ -564,7 +565,8 @@ export class PublicLeaderboardService {
       showAmounts: privacy.showAmounts,
       stats: {
         totalSprayed: privacy.showTotalAmount ? totalSprayed.toString() : null,
-        giversCount: privacy.showParticipantCount ? leaderboard.length : null,
+        // Match total sprayed: unique confirmed sprayers before privacy / topN.
+        giversCount: privacy.showParticipantCount ? uniqueGiversCount : null,
       },
       leaderboard,
       recentActivity,
