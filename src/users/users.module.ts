@@ -8,6 +8,7 @@ import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 import { JwtModule } from '@nestjs/jwt';
 import { CacheModule } from '../cache/cache.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { ReferralsModule } from '../referrals/referrals.module.js';
 import { config } from 'dotenv';
 config();
 
@@ -19,6 +20,7 @@ config();
     CustomerKycModule,
     CacheModule,
     NotificationsModule,
+    ReferralsModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '7d' }, // 7 days - suitable for mobile apps

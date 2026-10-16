@@ -103,7 +103,6 @@ export class EventSprayLiveBroadcastService {
                   firstName: payload.spray.sprayer.firstName,
                   lastName: payload.spray.sprayer.lastName,
                   username: payload.spray.sprayer.username,
-                  visibleAtEvents: payload.spray.sprayer.visibleAtEvents,
                   showOnLeaderboard: payload.spray.sprayer.showOnLeaderboard,
                 }
               : undefined,

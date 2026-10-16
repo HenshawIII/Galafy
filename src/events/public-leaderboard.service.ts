@@ -348,26 +348,18 @@ export class PublicLeaderboardService {
     fullLeaderboard: FullLeaderboardResult,
     privacy: PublicPrivacySettings,
     profileByUserId: Map<string, string | null>,
-    visibilityByUserId: Map<string, { visibleAtEvents: boolean; showOnLeaderboard: boolean }>,
+    showOnLeaderboardByUserId: Map<string, boolean>,
   ): PublicLeaderboardEntry[] {
     const rows = Array.isArray(fullLeaderboard?.leaderboard) ? fullLeaderboard.leaderboard : [];
 
     const filtered: PublicLeaderboardEntry[] = [];
     for (const entry of rows) {
-      const visibility = visibilityByUserId.get(entry.userId) ?? {
-        visibleAtEvents: true,
-        showOnLeaderboard: entry.showOnLeaderboard ?? true,
-      };
+      const showOnLeaderboard =
+        showOnLeaderboardByUserId.get(entry.userId) ?? entry.showOnLeaderboard ?? true;
 
-      // showOnLeaderboard:false is treated like visibility opt-out on the public share:
-      // Anonymous when allowAnonymous, otherwise omit.
-      const privacyHidden =
-        visibility.showOnLeaderboard === false || visibility.visibleAtEvents === false;
-      if (privacyHidden && !privacy.allowAnonymous) {
-        continue;
-      }
-
-      const isAnonymous = !privacy.showNames || privacyHidden;
+      // Public share uses showOnLeaderboard only (ignores visibleAtEvents).
+      // Opted-out users stay on the board as Anonymous — never skipped.
+      const isAnonymous = !privacy.showNames || showOnLeaderboard === false;
       const mapped: PublicLeaderboardEntry = {
         rank: 0,
         displayName: isAnonymous
@@ -402,7 +394,6 @@ export class PublicLeaderboardService {
           firstName?: string | null;
           lastName?: string | null;
           username?: string | null;
-          visibleAtEvents?: boolean | null;
           showOnLeaderboard?: boolean | null;
         } | null;
       };
@@ -413,24 +404,8 @@ export class PublicLeaderboardService {
     giversCount?: number | null,
   ) {
     const sprayer = payload.spray.sprayer || {};
-    const privacyHidden =
-      sprayer.visibleAtEvents === false || sprayer.showOnLeaderboard === false;
-
-    if (privacyHidden && !privacy.allowAnonymous) {
-      return {
-        eventId: payload.eventId,
-        pending: payload.pending,
-        privacy,
-        showAmounts: privacy.showAmounts,
-        stats: {
-          totalSprayed: privacy.showTotalAmount ? payload.eventTotals.totalAmount : null,
-          giversCount: privacy.showParticipantCount ? giversCount ?? null : null,
-        },
-        activity: null as PublicActivityItem | null,
-      };
-    }
-
-    const isAnonymous = !privacy.showNames || privacyHidden;
+    // Public share: showOnLeaderboard false → Anonymous (never omit from activity).
+    const isAnonymous = !privacy.showNames || sprayer.showOnLeaderboard === false;
     return {
       eventId: payload.eventId,
       pending: payload.pending,
@@ -476,7 +451,6 @@ export class PublicLeaderboardService {
                       username: true,
                       settings: {
                         select: {
-                          visibleAtEvents: true,
                           showOnLeaderboard: true,
                         },
                       },
@@ -500,7 +474,6 @@ export class PublicLeaderboardService {
             profilePicture: true,
             settings: {
               select: {
-                visibleAtEvents: true,
                 showOnLeaderboard: true,
               },
             },
@@ -509,21 +482,15 @@ export class PublicLeaderboardService {
       : [];
 
     const profileByUserId = new Map(profileRows.map((u) => [u.id, u.profilePicture]));
-    const visibilityByUserId = new Map(
-      profileRows.map((u) => [
-        u.id,
-        {
-          visibleAtEvents: u.settings?.visibleAtEvents ?? true,
-          showOnLeaderboard: u.settings?.showOnLeaderboard ?? true,
-        },
-      ]),
+    const showOnLeaderboardByUserId = new Map(
+      profileRows.map((u) => [u.id, u.settings?.showOnLeaderboard ?? true]),
     );
 
     const leaderboard = this.applyPrivacyToLeaderboard(
       leaderboardData,
       privacy,
       profileByUserId,
-      visibilityByUserId,
+      showOnLeaderboardByUserId,
     );
 
     const totalSprayed = (leaderboardData.leaderboard || []).reduce(
@@ -536,11 +503,7 @@ export class PublicLeaderboardService {
       const user = spray.sprayerWallet.customer.user;
       if (!user) continue;
       const showOnLeaderboard = user.settings?.showOnLeaderboard ?? true;
-      const visibleAtEvents = user.settings?.visibleAtEvents ?? true;
-      const privacyHidden = !showOnLeaderboard || !visibleAtEvents;
-      if (privacyHidden && !privacy.allowAnonymous) continue;
-
-      const isAnonymous = !privacy.showNames || privacyHidden;
+      const isAnonymous = !privacy.showNames || !showOnLeaderboard;
       recentActivity.push({
         type: 'spray',
         displayName: isAnonymous ? 'Anonymous' : this.formatDisplayName(user),

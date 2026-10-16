@@ -59,11 +59,18 @@ export class UsersController {
         username: { type: 'string' },
         password: { type: 'string' },
         phone: { type: 'string' },
+        referralCode: {
+          type: 'string',
+          description: 'Optional 8-character referral code (invalid codes reject signup)',
+        },
       },
     },
   })
   @ApiResponse({ status: 201, description: 'User created successfully' })
-  @ApiResponse({ status: 400, description: 'User already exists or validation failed' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed, or invalid referral code',
+  })
   signup(@Body(ValidationPipe) signupDto: SignupDto) {
     return this.usersService.signup(signupDto);
   }

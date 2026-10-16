@@ -1,7 +1,7 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { IsString, IsEmail, IsNotEmpty, IsEnum, IsOptional, MinLength, IsBoolean, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { RegisterDeviceDto } from '../../notifications/dto/notification.dto.js';
 
 export enum KycTier {
@@ -79,6 +79,17 @@ export class SignupDto {
   @IsOptional()
   @IsString({ message: 'Phone must be a string' })
   phone?: string;
+
+  @ApiPropertyOptional({
+    example: 'A1B2C3D4',
+    description: 'Optional 8-character referral code. Invalid codes reject the entire signup.',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim() !== '' ? value.trim().toUpperCase() : undefined,
+  )
+  @IsString({ message: 'Referral code must be a string' })
+  referralCode?: string;
 }
 
 export class LoginDto {

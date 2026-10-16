@@ -41,6 +41,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { RegisterDeviceDto } from '../notifications/dto/notification.dto.js';
 import { MixpanelService } from '../analytics/mixpanel.service.js';
 import { MixpanelEvent } from '../analytics/mixpanel.events.js';
+import { ReferralsService } from '../referrals/referrals.service.js';
 
 @Injectable()
 export class UsersService {
@@ -59,6 +60,7 @@ export class UsersService {
     private readonly adminNotificationService: AdminNotificationService,
     private readonly notificationsService: NotificationsService,
     private readonly mixpanel: MixpanelService,
+    private readonly referralsService: ReferralsService,
   ) {}
 
   private async buildAccountLimitsForUser(
@@ -153,6 +155,12 @@ export class UsersService {
       throw new ConflictException(authConflictMessage({ field: 'username' }));
     }
 
+    // Validate optional referral before creating the user (invalid → no account)
+    const referralCodeInput = signupDto.referralCode?.trim();
+    if (referralCodeInput) {
+      await this.referralsService.assertValidReferralCode(referralCodeInput);
+    }
+
     // Create user with unverified status (store email in lowercase)
     const user = await this.databaseService.user.create({
       data: {
@@ -178,7 +186,7 @@ export class UsersService {
     await this.databaseService.userSettings.create({
       data: {
         userId: user.id,
-        showOnLeaderboard: false,
+        showOnLeaderboard: true,
         allowMentionsOrTags: true,
         showOnlineStatus: false,
         pushNotifications: true,
@@ -187,6 +195,11 @@ export class UsersService {
         newFollowerAlerts: false,
       },
     });
+
+    await this.referralsService.ensureUserReferralCode(user.id);
+    if (referralCodeInput) {
+      await this.referralsService.attributeReferral(user.id, referralCodeInput);
+    }
 
     // Send verification code via email (don't fail signup if email fails)
     try {
@@ -622,7 +635,7 @@ export class UsersService {
     await this.databaseService.userSettings.create({
       data: {
         userId: user.id,
-        showOnLeaderboard: false,
+        showOnLeaderboard: true,
         allowMentionsOrTags: true,
         showOnlineStatus: false,
         pushNotifications: true,
@@ -631,6 +644,8 @@ export class UsersService {
         newFollowerAlerts: false,
       },
     });
+
+    await this.referralsService.ensureUserReferralCode(user.id);
 
     // Remove password from response
     const { password, ...userWithoutPassword } = user;
@@ -881,7 +896,7 @@ export class UsersService {
       const defaultSettings = await this.databaseService.userSettings.create({
         data: {
           userId: user.id,
-          showOnLeaderboard: false,
+          showOnLeaderboard: true,
           allowMentionsOrTags: true,
           showOnlineStatus: false,
           visibleAtEvents: true,
@@ -1016,7 +1031,7 @@ export class UsersService {
         data: {
           userId,
           // Default values are set in the schema, but we can be explicit here
-          showOnLeaderboard: false,
+          showOnLeaderboard: true,
           allowMentionsOrTags: true,
           showOnlineStatus: false,
           visibleAtEvents: true,
@@ -1063,7 +1078,7 @@ export class UsersService {
       settings = await this.databaseService.userSettings.create({
         data: {
           userId,
-          showOnLeaderboard: updateDto.showOnLeaderboard ?? false,
+          showOnLeaderboard: updateDto.showOnLeaderboard ?? true,
           allowMentionsOrTags: updateDto.allowMentionsOrTags ?? true,
           showOnlineStatus: updateDto.showOnlineStatus ?? false,
           visibleAtEvents: updateDto.visibleAtEvents ?? true,

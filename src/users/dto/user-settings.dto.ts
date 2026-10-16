@@ -3,9 +3,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UserSettingsDto {
   @ApiProperty({
-    example: false,
+    example: true,
     description: 'When enabled, others can see your spray activity on the leaderboard',
-    default: false,
+    default: true,
   })
   @IsBoolean({ message: 'showOnLeaderboard must be a boolean' })
   showOnLeaderboard: boolean;
@@ -69,7 +69,7 @@ export class UserSettingsDto {
 
 export class UpdateUserSettingsDto {
   @ApiPropertyOptional({
-    example: false,
+    example: true,
     description: 'When enabled, others can see your spray activity on the leaderboard',
   })
   @IsOptional()

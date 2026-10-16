@@ -27,6 +27,7 @@ import { ConfigModule } from './config/config.module.js';
 import { AdminNotificationModule } from './admin/admin-notification.module.js';
 import { AppVersionModule } from './app-version/app-version.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
+import { ReferralsModule } from './referrals/referrals.module.js';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { AnalyticsModule } from './analytics/analytics.module.js';
     EmailModule,
     TierLimitModule,
     ConfigModule,
+    ReferralsModule,
     UsersModule,
     DatabaseModule,
     ThrottlerModule.forRootAsync({

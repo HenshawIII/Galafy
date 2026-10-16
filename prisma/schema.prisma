@@ -188,6 +188,9 @@ model User {
   pinResetOtpExpiresAt DateTime? // PIN reset OTP expiration time
   pendingPayoutData     Json?     // Temporary storage for pending payout details
 
+  // Unique 8-char alphanumeric referral code (lazy for legacy users)
+  referralCode String? @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -201,7 +204,23 @@ model User {
   // Events this user hosts
   hostedEvents      Event[]            @relation("UserHostedEvents")
 
+  referralsGiven    Referral[] @relation("ReferralsGiven")
+  referralReceived  Referral?  @relation("ReferralReceived")
+
   @@index([username]) // Index for username search
+}
+
+model Referral {
+  id             String   @id @default(uuid())
+  referrerId     String
+  referredUserId String   @unique
+  codeUsed       String
+  createdAt      DateTime @default(now())
+
+  referrer     User @relation("ReferralsGiven", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUser User @relation("ReferralReceived", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId])
 }
 
 model UserSettings {
@@ -211,7 +230,7 @@ model UserSettings {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Privacy Settings
-  showOnLeaderboard   Boolean @default(false)
+  showOnLeaderboard   Boolean @default(true)
   allowMentionsOrTags Boolean @default(true)
   showOnlineStatus    Boolean @default(false)
   visibleAtEvents     Boolean @default(true)
