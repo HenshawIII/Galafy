@@ -386,7 +386,8 @@ export class CustomerKycService {
       }
     }
 
-    const fromError = params.error != null ? describeCaughtProviderError(params.error) : {};
+    const fromError: { httpStatus?: number; message?: string } =
+      params.error != null ? describeCaughtProviderError(params.error) : {};
 
     await this.emailService.sendKycFailureComplianceEmail({
       tier: params.tier,
