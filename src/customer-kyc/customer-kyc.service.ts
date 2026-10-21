@@ -14,6 +14,11 @@ import { AdminNotificationService } from '../admin/admin-notification.service.js
 import { MixpanelService } from '../analytics/mixpanel.service.js';
 import { MixpanelEvent } from '../analytics/mixpanel.events.js';
 import { kycTierNumber } from '../analytics/mixpanel.kyc.js';
+import { EmailService } from '../users/email.service.js';
+import {
+  describeCaughtProviderError,
+  type KycFailureReason,
+} from '../common/utils/kyc-failure-compliance-email.util.js';
 
 @Injectable()
 export class CustomerKycService {
@@ -25,6 +30,7 @@ export class CustomerKycService {
     private readonly bvnCrypto: BvnCryptoService,
     private readonly adminNotificationService: AdminNotificationService,
     private readonly mixpanel: MixpanelService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -95,6 +101,16 @@ export class CustomerKycService {
       });
       this.logger.log(`Face callback: face failed for customer ${customer.id}`);
       this.mixpanel.track(customer.userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'face_failed' });
+      this.notifyComplianceOfKycFailure({
+        userId: customer.userId,
+        customerId: customer.id,
+        currentTier: customer.tier,
+        maskedNuban: customer.tier1Nuban ? this.maskAccountNumber(customer.tier1Nuban) : null,
+        tier: 1,
+        reason: 'face_failed',
+        correlationId: customer.tier1CorrelationId,
+        trackingId: customer.tier1TrackingId,
+      });
       return { received: true };
     }
 
@@ -142,6 +158,15 @@ export class CustomerKycService {
     });
     if (existingByPhone) {
       this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'duplicate_identity' });
+      this.notifyComplianceOfKycFailure({
+        userId,
+        customerId: customer?.id,
+        currentTier: customer?.tier,
+        tier: 1,
+        reason: 'duplicate_identity',
+        correlationId,
+        extra: { duplicateOn: 'phone' },
+      });
       throw new ConflictException(
         'This phone number is already linked to another account. Please use a different number or log in to the existing account.',
       );
@@ -151,6 +176,15 @@ export class CustomerKycService {
     });
     if (existingByEmail) {
       this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'duplicate_identity' });
+      this.notifyComplianceOfKycFailure({
+        userId,
+        customerId: customer?.id,
+        currentTier: customer?.tier,
+        tier: 1,
+        reason: 'duplicate_identity',
+        correlationId,
+        extra: { duplicateOn: 'email' },
+      });
       throw new ConflictException(
         'This email address is already linked to another account. Please use a different email or log in to the existing account.',
       );
@@ -163,6 +197,15 @@ export class CustomerKycService {
     });
     if (existingByBvn) {
       this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'duplicate_identity' });
+      this.notifyComplianceOfKycFailure({
+        userId,
+        customerId: customer?.id,
+        currentTier: customer?.tier,
+        tier: 1,
+        reason: 'duplicate_identity',
+        correlationId,
+        extra: { duplicateOn: 'bvn' },
+      });
       throw new ConflictException(
         'This BVN is already linked to another Galafy account. Please check your details or contact support if you believe this is a mistake.',
       );
@@ -262,6 +305,15 @@ export class CustomerKycService {
         },
       });
       this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 1, reason: 'provider_error' });
+      this.notifyComplianceOfKycFailure({
+        userId,
+        customerId: customer.id,
+        currentTier: KycTier.Tier_0,
+        tier: 1,
+        reason: 'provider_error',
+        error: err,
+        correlationId,
+      });
       throw err;
     }
   }
@@ -270,6 +322,93 @@ export class CustomerKycService {
     const s = accountNumber.trim();
     if (s.length <= 4) return '****';
     return `${'*'.repeat(Math.max(0, s.length - 4))}${s.slice(-4)}`;
+  }
+
+  private notifyComplianceOfKycFailure(params: {
+    userId: string;
+    customerId?: string | null;
+    currentTier?: string | number | null;
+    maskedNuban?: string | null;
+    tier: 1 | 2 | 3;
+    reason: KycFailureReason | string;
+    error?: unknown;
+    correlationId?: string | null;
+    trackingId?: string | null;
+    addressFields?: Record<string, string | undefined> | null;
+    extra?: Record<string, string | number | boolean | null | undefined>;
+  }): void {
+    void this.sendKycFailureComplianceEmailSafe(params).catch((err) => {
+      this.logger.warn(
+        `KYC compliance email failed (user=${params.userId} reason=${params.reason}): ${(err as Error)?.message ?? err}`,
+      );
+    });
+  }
+
+  private async sendKycFailureComplianceEmailSafe(params: {
+    userId: string;
+    customerId?: string | null;
+    currentTier?: string | number | null;
+    maskedNuban?: string | null;
+    tier: 1 | 2 | 3;
+    reason: KycFailureReason | string;
+    error?: unknown;
+    correlationId?: string | null;
+    trackingId?: string | null;
+    addressFields?: Record<string, string | undefined> | null;
+    extra?: Record<string, string | number | boolean | null | undefined>;
+  }): Promise<void> {
+    const user = await this.databaseService.user.findUnique({ where: { id: params.userId } });
+    let customerId = params.customerId ?? null;
+    let currentTier = params.currentTier ?? null;
+    let maskedNuban = params.maskedNuban ?? null;
+    let correlationId = params.correlationId ?? null;
+    let trackingId = params.trackingId ?? null;
+
+    if (!customerId || currentTier == null || !maskedNuban || (params.tier === 1 && (!correlationId || !trackingId))) {
+      const customer = await this.databaseService.customer.findFirst({
+        where: customerId ? { id: customerId } : { userId: params.userId },
+        include: { wallets: { select: { virtualAccountNumber: true, isDefault: true } } },
+      });
+      if (customer) {
+        customerId = customer.id;
+        currentTier = currentTier ?? customer.tier;
+        correlationId = correlationId ?? customer.tier1CorrelationId;
+        trackingId = trackingId ?? customer.tier1TrackingId;
+        if (!maskedNuban) {
+          try {
+            maskedNuban = this.maskAccountNumber(resolvePartnershipAccountNumber(customer));
+          } catch {
+            if (customer.tier1Nuban) {
+              maskedNuban = this.maskAccountNumber(customer.tier1Nuban);
+            }
+          }
+        }
+      }
+    }
+
+    const fromError = params.error != null ? describeCaughtProviderError(params.error) : {};
+
+    await this.emailService.sendKycFailureComplianceEmail({
+      tier: params.tier,
+      reason: params.reason,
+      user: {
+        id: params.userId,
+        email: user?.email,
+        username: user?.username,
+        firstName: user?.firstName,
+        lastName: user?.lastName,
+        phone: user?.phone,
+      },
+      customerId,
+      currentTier,
+      maskedNuban,
+      httpStatus: fromError.httpStatus,
+      providerMessage: fromError.message,
+      correlationId,
+      trackingId,
+      addressFields: params.addressFields,
+      extra: params.extra,
+    });
   }
 
   /**
@@ -348,6 +487,15 @@ export class CustomerKycService {
         data: { tier2UpgradeStatus: null },
       });
       this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 2, reason: 'provider_error' });
+      this.notifyComplianceOfKycFailure({
+        userId,
+        customerId: customer.id,
+        currentTier: customer.tier,
+        maskedNuban: maskedAcct,
+        tier: 2,
+        reason: 'provider_error',
+        error: err,
+      });
       throw err;
     }
 
@@ -449,6 +597,16 @@ export class CustomerKycService {
       });
     } catch (err) {
       this.mixpanel.track(userId, MixpanelEvent.KycFailed, { tier: 3, reason: 'provider_error' });
+      this.notifyComplianceOfKycFailure({
+        userId,
+        customerId: customer.id,
+        currentTier: customer.tier,
+        maskedNuban: maskedAcct,
+        tier: 3,
+        reason: 'provider_error',
+        error: err,
+        addressFields: residentialAddress,
+      });
       throw err;
     }
 

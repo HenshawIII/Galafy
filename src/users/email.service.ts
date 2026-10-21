@@ -11,6 +11,11 @@ import {
   formatEmailSupportFooterText,
   getEmailFrom,
 } from '../common/utils/email-branding.util.js';
+import {
+  buildKycFailureComplianceEmailHtml,
+  getComplianceEmailTo,
+  type KycFailureCompliancePayload,
+} from '../common/utils/kyc-failure-compliance-email.util.js';
 config();
 
 export type { AccountRestrictionKind };
@@ -1214,6 +1219,27 @@ If you did not expect this invitation, please ignore this email.`,
       }
       // Don't throw - email failure shouldn't break the restriction operation, but log it
       this.logger.warn(`Failed to send restriction email to ${email}, but restriction was applied`);
+    }
+  }
+
+  async sendKycFailureComplianceEmail(payload: KycFailureCompliancePayload): Promise<void> {
+    const to = getComplianceEmailTo();
+    const userLabel = payload.user.email?.trim() || payload.user.id;
+    const msg = {
+      to,
+      from: getEmailFrom(),
+      subject: `[KYC] Tier ${payload.tier} failed — ${userLabel} — ${payload.reason}`,
+      html: buildKycFailureComplianceEmailHtml(payload),
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(`KYC failure compliance email sent to ${to} (user=${payload.user.id} reason=${payload.reason})`);
+    } catch (error: any) {
+      this.logger.error(`Error sending KYC failure compliance email to ${to}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
     }
   }
 }

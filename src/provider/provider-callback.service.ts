@@ -4,6 +4,7 @@ import { KycTier } from '../users/dto/create-user-dto.js';
 import { Tier1FaceStatus } from '../../generated/prisma/enums.js';
 import { MixpanelService } from '../analytics/mixpanel.service.js';
 import { MixpanelEvent } from '../analytics/mixpanel.events.js';
+import { EmailService } from '../users/email.service.js';
 
 const DEFAULT_CURRENCY_ID = 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9';
 
@@ -16,7 +17,54 @@ export class ProviderCallbackService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly mixpanel: MixpanelService,
+    private readonly emailService: EmailService,
   ) {}
+
+  private notifyComplianceOfKycFailure(params: {
+    userId: string;
+    customerId: string;
+    currentTier?: string | number | null;
+    maskedNuban?: string | null;
+    correlationId?: string | null;
+    trackingId?: string | null;
+    providerMessage?: string | null;
+  }): void {
+    void this.sendKycFailureComplianceEmailSafe(params).catch((err) => {
+      this.logger.warn(
+        `KYC compliance email failed (user=${params.userId} reason=account_creation_failed): ${(err as Error)?.message ?? err}`,
+      );
+    });
+  }
+
+  private async sendKycFailureComplianceEmailSafe(params: {
+    userId: string;
+    customerId: string;
+    currentTier?: string | number | null;
+    maskedNuban?: string | null;
+    correlationId?: string | null;
+    trackingId?: string | null;
+    providerMessage?: string | null;
+  }): Promise<void> {
+    const user = await this.databaseService.user.findUnique({ where: { id: params.userId } });
+    await this.emailService.sendKycFailureComplianceEmail({
+      tier: 1,
+      reason: 'account_creation_failed',
+      user: {
+        id: params.userId,
+        email: user?.email,
+        username: user?.username,
+        firstName: user?.firstName,
+        lastName: user?.lastName,
+        phone: user?.phone,
+      },
+      customerId: params.customerId,
+      currentTier: params.currentTier,
+      maskedNuban: params.maskedNuban,
+      providerMessage: params.providerMessage,
+      correlationId: params.correlationId,
+      trackingId: params.trackingId,
+    });
+  }
 
   private mask(value: unknown, visibleTail = 4): string {
     const str = typeof value === 'string' ? value.trim() : value != null ? String(value).trim() : '';
@@ -183,6 +231,15 @@ export class ProviderCallbackService {
       this.mixpanel.track(customer.userId, MixpanelEvent.KycFailed, {
         tier: 1,
         reason: 'account_creation_failed',
+      });
+      this.notifyComplianceOfKycFailure({
+        userId: customer.userId,
+        customerId: customer.id,
+        currentTier: customer.tier,
+        maskedNuban: nuban ? this.mask(nuban) : null,
+        correlationId: customer.tier1CorrelationId,
+        trackingId: customer.tier1TrackingId,
+        providerMessage: rawNubanStatus != null ? String(rawNubanStatus) : null,
       });
     }
 
