@@ -4012,9 +4012,22 @@ export class AdminService {
       }
     }
 
-    // Convert to array and sort by total amount
+    // Sort by total amount; equal totals → who reached the score first keeps higher rank
     const leaderboard = Array.from(sprayerMap.values())
-      .sort((a, b) => b.totalAmount.comparedTo(a.totalAmount))
+      .sort((a, b) => {
+        const amountCmp = b.totalAmount.comparedTo(a.totalAmount);
+        if (amountCmp !== 0) return amountCmp;
+
+        const reachedA = a.lastSprayAt.getTime();
+        const reachedB = b.lastSprayAt.getTime();
+        if (reachedA !== reachedB) return reachedA - reachedB;
+
+        const firstA = a.firstSprayAt.getTime();
+        const firstB = b.firstSprayAt.getTime();
+        if (firstA !== firstB) return firstA - firstB;
+
+        return (a.user?.id || '').localeCompare(b.user?.id || '');
+      })
       .slice(0, limit)
       .map((entry, index) => {
         const isAnonymous = !(entry.user?.settings?.visibleAtEvents ?? true);

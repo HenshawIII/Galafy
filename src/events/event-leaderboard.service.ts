@@ -15,6 +15,7 @@ export class EventLeaderboardService {
 
   /**
    * Returns aggregated sprays per sprayer, sorted by total amount descending.
+   * Ties break by who reached that total first (earlier lastSprayAt), then firstSprayAt, then userId.
    * Cached for 30 seconds.
    */
   async getEventLeaderboard(eventId: string) {
@@ -141,7 +142,19 @@ export class EventLeaderboardService {
       .sort((a, b) => {
         const amountA = new Decimal(a.totalAmount);
         const amountB = new Decimal(b.totalAmount);
-        return amountB.comparedTo(amountA);
+        const amountCmp = amountB.comparedTo(amountA);
+        if (amountCmp !== 0) return amountCmp;
+
+        // Equal totals: who reached this score first keeps the higher rank.
+        const reachedA = new Date(a.lastSprayAt).getTime();
+        const reachedB = new Date(b.lastSprayAt).getTime();
+        if (reachedA !== reachedB) return reachedA - reachedB;
+
+        const firstA = new Date(a.firstSprayAt).getTime();
+        const firstB = new Date(b.firstSprayAt).getTime();
+        if (firstA !== firstB) return firstA - firstB;
+
+        return a.userId.localeCompare(b.userId);
       })
       .map((entry, index) => ({
         ...entry,

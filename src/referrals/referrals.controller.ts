@@ -40,9 +40,14 @@ export class ReferralsController {
 
   @Get()
   @ApiOperation({
-    summary: 'Get my referral code, who referred me, and users who used my code',
+    summary:
+      'Get my referral code, earned balance, who referred me, and users who used my code',
   })
-  @ApiResponse({ status: 200, description: 'Referral summary (generates code if missing)' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Referral summary (generates code if missing). referralBalance is a placeholder (0.00) until earnings are implemented.',
+  })
   async getMine(@Request() req: { user: { id: string } }) {
     return this.referralsService.getReferralSummary(req.user.id);
   }
@@ -77,5 +82,17 @@ export class ReferralsController {
       codeUsed: result.codeUsed,
       attributedAt: result.createdAt.toISOString(),
     };
+  }
+
+  @Post('claim')
+  @ApiOperation({
+    summary: 'Claim earned referral balance (not available yet)',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Referral balance claims are not available yet',
+  })
+  async claim(@Request() req: { user: { id: string } }) {
+    return this.referralsService.claimReferralBalance(req.user.id);
   }
 }

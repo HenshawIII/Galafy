@@ -16,6 +16,11 @@ import {
   getComplianceEmailTo,
   type KycFailureCompliancePayload,
 } from '../common/utils/kyc-failure-compliance-email.util.js';
+import {
+  buildRiskThresholdComplianceEmailHtml,
+  buildRiskThresholdComplianceEmailSubject,
+  type RiskThresholdCompliancePayload,
+} from '../common/utils/risk-threshold-compliance-email.util.js';
 config();
 
 export type { AccountRestrictionKind };
@@ -1237,6 +1242,28 @@ If you did not expect this invitation, please ignore this email.`,
       this.logger.log(`KYC failure compliance email sent to ${to} (user=${payload.user.id} reason=${payload.reason})`);
     } catch (error: any) {
       this.logger.error(`Error sending KYC failure compliance email to ${to}:`, error.message);
+      if (error.response) {
+        this.logger.error('SendGrid error details:', error.response.body);
+      }
+    }
+  }
+
+  async sendRiskThresholdComplianceEmail(payload: RiskThresholdCompliancePayload): Promise<void> {
+    const to = getComplianceEmailTo();
+    const msg = {
+      to,
+      from: getEmailFrom(),
+      subject: buildRiskThresholdComplianceEmailSubject(payload),
+      html: buildRiskThresholdComplianceEmailHtml(payload),
+    };
+
+    try {
+      await sgMail.send(msg);
+      this.logger.log(
+        `Risk threshold compliance email sent to ${to} (user=${payload.user.id} severity=${payload.severity} score=${payload.finalScore})`,
+      );
+    } catch (error: any) {
+      this.logger.error(`Error sending risk threshold compliance email to ${to}:`, error.message);
       if (error.response) {
         this.logger.error('SendGrid error details:', error.response.body);
       }

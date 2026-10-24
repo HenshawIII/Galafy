@@ -1,11 +1,14 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service.js';
 import { Decimal } from '@prisma/client/runtime/library';
-import { Prisma } from '@prisma/client';
 import { config } from 'dotenv';
 import { AmlLoggingService } from './aml-logging.service.js';
 import { ConfigService } from '../../config/config.service.js';
-import { AccountRestrictionNotifyService } from '../account-restriction/account-restriction-notify.service.js';
+import { EmailService } from '../../users/email.service.js';
+import {
+  buildAdminUserReviewUrl,
+  type RiskAlertSeverity,
+} from '../utils/risk-threshold-compliance-email.util.js';
 config();
 
 export type RiskStatus = 'NORMAL' | 'SOFT_FREEZE' | 'HARD_FREEZE';
@@ -17,6 +20,16 @@ export interface RiskScoreComponents {
   deviceRisk: number;
   finalScore: number;
 }
+
+type RiskMetadata = {
+  velocity?: number;
+  amountSize?: number;
+  frequency?: number;
+  deviceRisk?: number;
+  calculatedAt?: string;
+  timeWindowHours?: number;
+  alertSeverity?: RiskStatus;
+};
 
 @Injectable()
 export class WalletRiskService {
@@ -39,7 +52,7 @@ export class WalletRiskService {
     private readonly databaseService: DatabaseService,
     private readonly amlLoggingService: AmlLoggingService,
     private readonly configService: ConfigService,
-    private readonly accountRestrictionNotify: AccountRestrictionNotifyService,
+    private readonly emailService: EmailService,
   ) {
     // Config will be loaded lazily on first use
   }
@@ -206,7 +219,7 @@ export class WalletRiskService {
   }
 
   /**
-   * Determine freeze status based on risk score
+   * Determine alert severity based on risk score (no longer auto-applied as wallet freeze).
    */
   async checkFreezeStatus(riskScore: number): Promise<RiskStatus> {
     const config = await this.loadRiskConfig();
@@ -219,8 +232,29 @@ export class WalletRiskService {
     return 'NORMAL';
   }
 
+  private resolvePreviousAlertSeverity(
+    riskMetadata: unknown,
+    legacyRiskStatus: string | null | undefined,
+  ): RiskStatus {
+    const meta = (riskMetadata && typeof riskMetadata === 'object' ? riskMetadata : {}) as RiskMetadata;
+    if (meta.alertSeverity === 'SOFT_FREEZE' || meta.alertSeverity === 'HARD_FREEZE' || meta.alertSeverity === 'NORMAL') {
+      return meta.alertSeverity;
+    }
+    if (legacyRiskStatus === 'SOFT_FREEZE' || legacyRiskStatus === 'HARD_FREEZE') {
+      return legacyRiskStatus;
+    }
+    return 'NORMAL';
+  }
+
+  private shouldNotifyCompliance(previous: RiskStatus, next: RiskStatus): next is RiskAlertSeverity {
+    if (next === 'NORMAL') return false;
+    if (next === 'HARD_FREEZE') return previous !== 'HARD_FREEZE';
+    // SOFT: notify when newly entering soft (not already soft/hard)
+    return previous === 'NORMAL';
+  }
+
   /**
-   * Update wallet with new risk score and status
+   * Update wallet with new risk score. Does NOT auto-freeze; emails compliance on soft/hard alerts.
    */
   async updateWalletRiskScore(walletId: string): Promise<void> {
     try {
@@ -228,37 +262,59 @@ export class WalletRiskService {
 
       // Calculate risk score
       const components = await this.calculateRiskScore(walletId);
-      const riskStatus = await this.checkFreezeStatus(components.finalScore);
+      const alertSeverity = await this.checkFreezeStatus(components.finalScore);
+      const calculatedAt = new Date().toISOString();
 
-      // Get current wallet to check if status changed
+      // Get current wallet to check if alert severity changed
       const currentWallet = await this.databaseService.wallet.findUnique({
         where: { id: walletId },
-        select: { riskStatus: true, riskScore: true },
+        select: {
+          riskStatus: true,
+          riskScore: true,
+          riskMetadata: true,
+          customerId: true,
+          customer: {
+            select: {
+              id: true,
+              userId: true,
+              user: {
+                select: {
+                  id: true,
+                  email: true,
+                  username: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          },
+        },
       });
 
-      const previousStatus = currentWallet?.riskStatus || 'NORMAL';
-      const statusChanged = previousStatus !== riskStatus;
+      const previousAlertSeverity = this.resolvePreviousAlertSeverity(
+        currentWallet?.riskMetadata,
+        currentWallet?.riskStatus,
+      );
+      const alertChanged = previousAlertSeverity !== alertSeverity;
+      const notifyCompliance = this.shouldNotifyCompliance(previousAlertSeverity, alertSeverity);
 
-      // Get customer ID for AML logging
-      const wallet = await this.databaseService.wallet.findUnique({
-        where: { id: walletId },
-        select: { customerId: true },
-      });
-
-      // Update wallet with new risk score
+      // Persist score + alert metadata; never write SOFT/HARD onto riskStatus (no auto-freeze).
       await this.databaseService.wallet.update({
         where: { id: walletId },
         data: {
           riskScore: new Decimal(components.finalScore),
-          riskStatus,
+          riskStatus: 'NORMAL',
           riskScoreUpdatedAt: new Date(),
           riskMetadata: {
             velocity: components.velocity,
             amountSize: components.amountSize,
             frequency: components.frequency,
             deviceRisk: components.deviceRisk,
-            calculatedAt: new Date().toISOString(),
+            calculatedAt,
             timeWindowHours: this.RISK_TIME_WINDOW_HOURS,
+            alertSeverity,
+            softThreshold: config.RISK_SOFT_FREEZE_THRESHOLD,
+            hardThreshold: config.RISK_HARD_FREEZE_THRESHOLD,
           },
         },
       });
@@ -268,115 +324,120 @@ export class WalletRiskService {
         this.amlLoggingService.logRiskScoreCalculated(
           walletId,
           components.finalScore,
-          riskStatus,
+          alertSeverity,
           {
             velocity: components.velocity,
             amountSize: components.amountSize,
             frequency: components.frequency,
             deviceRisk: components.deviceRisk,
           },
-          wallet?.customerId,
+          currentWallet?.customerId,
           {
             previousRiskScore: currentWallet?.riskScore?.toNumber(),
             timeWindowHours: this.RISK_TIME_WINDOW_HOURS,
+            autoFreezeDisabled: true,
           },
         );
       } catch (logError) {
-        // Log the logging error but don't block risk score update
         this.logger.error(`AML logging failed for risk score calculation: ${logError.message}`);
       }
 
-      // Log status changes (non-blocking)
-      if (statusChanged) {
+      if (alertChanged) {
         try {
-          if (riskStatus === 'HARD_FREEZE') {
+          if (alertSeverity === 'HARD_FREEZE' || alertSeverity === 'SOFT_FREEZE') {
             this.amlLoggingService.logFreezeApplied(
               walletId,
-              'HARD_FREEZE',
+              alertSeverity,
               components.finalScore,
-              `Risk score ${components.finalScore.toFixed(2)} exceeds hard freeze threshold (${config.RISK_HARD_FREEZE_THRESHOLD})`,
-              wallet?.customerId,
+              `Risk score ${components.finalScore.toFixed(2)} exceeds ${alertSeverity === 'HARD_FREEZE' ? 'hard' : 'soft'} threshold (${alertSeverity === 'HARD_FREEZE' ? config.RISK_HARD_FREEZE_THRESHOLD : config.RISK_SOFT_FREEZE_THRESHOLD}). Auto-freeze disabled — compliance notified.`,
+              currentWallet?.customerId,
               {
                 velocity: components.velocity,
                 amountSize: components.amountSize,
                 frequency: components.frequency,
+                autoFreezeDisabled: true,
               },
             );
-          } else if (riskStatus === 'SOFT_FREEZE') {
-            this.amlLoggingService.logFreezeApplied(
-              walletId,
-              'SOFT_FREEZE',
-              components.finalScore,
-              `Risk score ${components.finalScore.toFixed(2)} exceeds soft freeze threshold (${config.RISK_SOFT_FREEZE_THRESHOLD})`,
-              wallet?.customerId,
-              {
-                velocity: components.velocity,
-                amountSize: components.amountSize,
-                frequency: components.frequency,
-              },
-            );
-          } else if (previousStatus !== 'NORMAL' && riskStatus === 'NORMAL') {
+          } else if (previousAlertSeverity !== 'NORMAL' && alertSeverity === 'NORMAL') {
             this.amlLoggingService.logFreezeReleased(
               walletId,
-              previousStatus as 'SOFT_FREEZE' | 'HARD_FREEZE',
+              previousAlertSeverity as 'SOFT_FREEZE' | 'HARD_FREEZE',
               components.finalScore,
-              wallet?.customerId,
+              currentWallet?.customerId,
               {
                 previousRiskScore: currentWallet?.riskScore?.toNumber(),
+                autoFreezeDisabled: true,
               },
             );
           }
 
-          // Log status change
           this.amlLoggingService.logRiskStatusChanged(
             walletId,
-            previousStatus,
-            riskStatus,
+            previousAlertSeverity,
+            alertSeverity,
             components.finalScore,
             currentWallet?.riskScore?.toNumber(),
-            wallet?.customerId,
+            currentWallet?.customerId,
             {
               velocity: components.velocity,
               amountSize: components.amountSize,
               frequency: components.frequency,
+              autoFreezeDisabled: true,
             },
           );
         } catch (logError) {
-          // Log the logging error but don't block risk status update
-          this.logger.error(`AML logging failed for risk status change: ${logError.message}`);
-        }
-
-        if (wallet?.customerId && riskStatus === 'HARD_FREEZE') {
-          const reason = `Risk score ${components.finalScore.toFixed(2)} exceeds hard freeze threshold (${config.RISK_HARD_FREEZE_THRESHOLD}). Outbound transfers and payouts are blocked.`;
-          void this.accountRestrictionNotify.notifyCustomerById(wallet.customerId, 'risk_hard', reason);
-        } else if (wallet?.customerId && riskStatus === 'SOFT_FREEZE') {
-          const reason = `Risk score ${components.finalScore.toFixed(2)} exceeds soft freeze threshold (${config.RISK_SOFT_FREEZE_THRESHOLD}). Payouts and outbound transfers are temporarily blocked.`;
-          void this.accountRestrictionNotify.notifyCustomerById(wallet.customerId, 'risk_soft', reason);
+          this.logger.error(`AML logging failed for risk alert change: ${logError.message}`);
         }
       }
 
-      // Keep existing logger for backward compatibility
-      if (riskStatus === 'HARD_FREEZE') {
-        if (statusChanged) {
+      if (notifyCompliance && currentWallet?.customer?.user) {
+        const user = currentWallet.customer.user;
+        void this.emailService.sendRiskThresholdComplianceEmail({
+          severity: alertSeverity,
+          walletId,
+          customerId: currentWallet.customerId,
+          user: {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            firstName: user.firstName,
+            lastName: user.lastName,
+          },
+          finalScore: components.finalScore,
+          softThreshold: config.RISK_SOFT_FREEZE_THRESHOLD,
+          hardThreshold: config.RISK_HARD_FREEZE_THRESHOLD,
+          velocity: components.velocity,
+          amountSize: components.amountSize,
+          frequency: components.frequency,
+          deviceRisk: components.deviceRisk,
+          timeWindowHours: this.RISK_TIME_WINDOW_HOURS,
+          calculatedAt,
+          reviewUrl: buildAdminUserReviewUrl(user.id),
+        });
+      }
+
+      if (alertSeverity === 'HARD_FREEZE') {
+        if (notifyCompliance) {
           this.logger.error(
-            `🚨 HARD FREEZE ALERT: Wallet ${walletId} has been frozen due to high risk score. ` +
+            `HARD RISK ALERT (no auto-freeze): Wallet ${walletId}. ` +
               `Score: ${components.finalScore.toFixed(2)} (Velocity: ${components.velocity.toFixed(2)}, ` +
               `Amount: ${components.amountSize.toFixed(2)}, Frequency: ${components.frequency.toFixed(2)})`,
           );
         } else {
           this.logger.warn(
-            `⚠️ HARD FREEZE: Wallet ${walletId} remains frozen. ` + `Score: ${components.finalScore.toFixed(2)}`,
+            `HARD RISK: Wallet ${walletId} remains above hard threshold. ` +
+              `Score: ${components.finalScore.toFixed(2)}`,
           );
         }
-      } else if (statusChanged && riskStatus === 'SOFT_FREEZE') {
+      } else if (notifyCompliance && alertSeverity === 'SOFT_FREEZE') {
         this.logger.warn(
-          `⚠️ SOFT FREEZE: Wallet ${walletId} has been soft frozen. ` +
-            `Score: ${components.finalScore.toFixed(2)}. Payouts will be blocked.`,
+          `SOFT RISK ALERT (no auto-freeze): Wallet ${walletId}. ` +
+            `Score: ${components.finalScore.toFixed(2)}. Compliance notified.`,
         );
-      } else if (statusChanged && riskStatus === 'NORMAL' && previousStatus !== 'NORMAL') {
+      } else if (alertChanged && alertSeverity === 'NORMAL' && previousAlertSeverity !== 'NORMAL') {
         this.logger.log(
-          `✅ Wallet ${walletId} risk status normalized. ` +
-            `Previous: ${previousStatus}, New Score: ${components.finalScore.toFixed(2)}`,
+          `Wallet ${walletId} risk alert normalized. ` +
+            `Previous alert: ${previousAlertSeverity}, New Score: ${components.finalScore.toFixed(2)}`,
         );
       }
     } catch (error) {
@@ -394,7 +455,6 @@ export class WalletRiskService {
           errorMessage: (error as Error).message,
         });
       } catch (logError) {
-        // Log the logging error but don't throw
         this.logger.error(`AML logging failed for risk score update failure: ${logError.message}`);
       }
 
@@ -404,7 +464,8 @@ export class WalletRiskService {
   }
 
   /**
-   * Check if wallet is frozen and throw error if transaction should be blocked
+   * Check if wallet is frozen and throw error if transaction should be blocked.
+   * Retained for any legacy SOFT/HARD rows until scoring/unrestrict clears them.
    * @param walletId - Wallet ID to check
    * @param blockAllTransactions - If true, block all transactions for hard freeze. If false, only block payouts for soft freeze.
    */

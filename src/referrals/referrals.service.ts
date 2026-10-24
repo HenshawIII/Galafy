@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { randomInt } from 'crypto';
 import { DatabaseService } from '../database/database.service.js';
 import {
+  REFERRAL_BALANCE_PLACEHOLDER,
   REFERRAL_CODE_ALPHABET,
   REFERRAL_CODE_LENGTH,
   REFERRAL_ERRORS,
@@ -223,6 +224,8 @@ export class ReferralsService {
 
     return {
       referralCode,
+      /** Earned referral balance; placeholder until earnings are implemented. */
+      referralBalance: REFERRAL_BALANCE_PLACEHOLDER,
       referredBy: received
         ? {
             id: received.referrer.id,
@@ -240,5 +243,13 @@ export class ReferralsService {
         createdAt: row.createdAt.toISOString(),
       })),
     };
+  }
+
+  /**
+   * Claim earned referral balance.
+   * Stub until earnings / payout flow is implemented.
+   */
+  async claimReferralBalance(_userId: string): Promise<never> {
+    throw new BadRequestException(REFERRAL_ERRORS.CLAIM_UNAVAILABLE);
   }
 }

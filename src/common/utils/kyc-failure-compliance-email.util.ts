@@ -1,8 +1,8 @@
 import { HttpException } from '@nestjs/common';
 import { buildBrandedEmailHtml } from './email-branding.util.js';
 
-/** Default inbox spelling as specified by compliance (env override: COMPLIANCE_EMAIL). */
-export const DEFAULT_COMPLIANCE_EMAIL = 'complaince@galafy.co';
+/** Default compliance inbox (env override: COMPLIANCE_EMAIL). */
+export const DEFAULT_COMPLIANCE_EMAIL = 'compliance@galafy.co';
 
 const FORBIDDEN_FIELD_KEYS = new Set([
   'bvn',

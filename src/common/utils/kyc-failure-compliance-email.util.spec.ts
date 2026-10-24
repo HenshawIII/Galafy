@@ -23,8 +23,9 @@ describe('kyc failure compliance email', () => {
     }
   });
 
-  it('defaults to complaince@galafy.co when COMPLIANCE_EMAIL is unset', () => {
+  it('defaults to compliance@galafy.co when COMPLIANCE_EMAIL is unset', () => {
     delete process.env.COMPLIANCE_EMAIL;
+    expect(getComplianceEmailTo()).toBe('compliance@galafy.co');
     expect(getComplianceEmailTo()).toBe(DEFAULT_COMPLIANCE_EMAIL);
   });
 
