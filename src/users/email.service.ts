@@ -21,6 +21,7 @@ import {
   buildRiskThresholdComplianceEmailSubject,
   type RiskThresholdCompliancePayload,
 } from '../common/utils/risk-threshold-compliance-email.util.js';
+import { getKycReminderTemplate } from '../common/utils/kyc-reminder-copy.util.js';
 config();
 
 export type { AccountRestrictionKind };
@@ -844,7 +845,7 @@ If you did not expect this invitation, please ignore this email.`,
       throw new Error('KYC verification URL is required to send reminder email');
     }
 
-    const template = this.getKycReminderTemplate(userData.scenario);
+    const template = getKycReminderTemplate(userData.scenario);
 
     const msg = {
       to: email,
@@ -968,94 +969,6 @@ If you did not expect this invitation, please ignore this email.`,
       }
       throw new Error(`Failed to send Tier 3 approved email: ${error.message}`);
     }
-  }
-
-  private getKycReminderTemplate(scenario: string): {
-    subject: string;
-    headline: string;
-    message: string;
-    benefits: string[];
-    cta: string;
-  } {
-    const templates: Record<
-      string,
-      { subject: string; headline: string; message: string; benefits: string[]; cta: string }
-    > = {
-      TIER0_START: {
-        subject: 'Start Your KYC Verification - Galafy',
-        headline: 'Ready to unlock your Galafy account?',
-        message:
-          'You have not started KYC verification yet. Complete Tier 1 verification to activate your wallet and start transacting securely.',
-        benefits: [
-          'Activate your wallet and virtual account',
-          'Start sending and receiving payments',
-          'Unlock basic withdrawal limits',
-        ],
-        cta: 'Start KYC Verification',
-      },
-      TIER1_COMPLETE: {
-        subject: 'Complete Your Tier 1 KYC - Galafy',
-        headline: 'Finish your Tier 1 verification',
-        message:
-          'Your Tier 1 KYC is incomplete. Complete your BVN and face verification to continue using your account without restrictions.',
-        benefits: [
-          'Complete identity verification',
-          'Maintain access to your wallet',
-          'Prepare for higher tier upgrades',
-        ],
-        cta: 'Complete Tier 1 KYC',
-      },
-      TIER1_UPGRADE: {
-        subject: 'Upgrade to Tier 2 - Galafy',
-        headline: 'You are ready for Tier 2',
-        message:
-          'You have completed Tier 1 verification. Upgrade to Tier 2 to enjoy higher limits and expanded account features.',
-        benefits: [
-          'Higher balance and withdrawal limits',
-          'Access to more platform features',
-          'Stronger account protection',
-        ],
-        cta: 'Upgrade to Tier 2',
-      },
-      TIER2_COMPLETE: {
-        subject: 'Complete Your Tier 2 KYC - Galafy',
-        headline: 'Finish your Tier 2 upgrade',
-        message:
-          'Your Tier 2 upgrade is incomplete. Complete NIN verification and live face verification to unlock Tier 2 benefits.',
-        benefits: [
-          'Higher transaction limits',
-          'Expanded wallet capabilities',
-          'Smoother payouts and transfers',
-        ],
-        cta: 'Complete Tier 2 KYC',
-      },
-      TIER2_UPGRADE: {
-        subject: 'Upgrade to Tier 3 - Galafy',
-        headline: 'You are ready for Tier 3',
-        message:
-          'You have completed Tier 2 verification. Upgrade to Tier 3 for unlimited balance and the highest account limits.',
-        benefits: [
-          'Unlimited account balance',
-          'Highest withdrawal limits',
-          'Full premium account access',
-        ],
-        cta: 'Upgrade to Tier 3',
-      },
-      TIER3_COMPLETE: {
-        subject: 'Complete Your Tier 3 KYC - Galafy',
-        headline: 'Finish your Tier 3 verification',
-        message:
-          'Your Tier 3 address verification is pending. Complete it to unlock unlimited balance and full premium account access.',
-        benefits: [
-          'Unlimited account balance',
-          'Highest withdrawal limits',
-          'Full access to all premium features',
-        ],
-        cta: 'Complete Tier 3 KYC',
-      },
-    };
-
-    return templates[scenario] ?? templates.TIER0_START;
   }
 
   private buildKycReminderHtml(

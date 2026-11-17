@@ -36,6 +36,12 @@ enum Tier3UpgradeStatus {
   COMPLETED
 }
 
+enum KycReminderCampaignStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 enum TransactionType {
   INFLOW
   SPRAY
@@ -833,6 +839,7 @@ model Admin {
   sentInvites AdminInvite[]
   approvedPayouts PayoutTransaction[] @relation("ApprovedPayouts")
   rejectedPayouts PayoutTransaction[] @relation("RejectedPayouts")
+  kycReminderCampaigns KycReminderCampaign[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -1001,6 +1008,40 @@ model AdminActionLog {
   @@index([actionType])
   @@index([targetType, targetId])
   @@index([createdAt])
+}
+
+model KycReminderCampaign {
+  id String @id @default(uuid())
+
+  adminId String
+  admin   Admin  @relation(fields: [adminId], references: [id])
+
+  targetTier     KycTier
+  messageKey     String
+  messageTitle   String
+  messageSnippet String
+
+  channelEmail Boolean
+  channelInApp Boolean
+
+  status KycReminderCampaignStatus @default(PROCESSING)
+
+  recipientCount Int @default(0)
+  emailSentCount Int @default(0)
+  inAppSentCount Int @default(0)
+  failedCount    Int @default(0)
+
+  errorMessage String?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([targetTier])
+  @@index([adminId])
 }
 
 // =====================

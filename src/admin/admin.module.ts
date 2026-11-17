@@ -12,6 +12,7 @@ import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 import { AccountRestrictionNotifyModule } from '../common/account-restriction/account-restriction-notify.module.js';
 import { WalletReconciliationModule } from '../common/wallet-reconciliation/wallet-reconciliation.module.js';
 import { ProviderModule } from '../provider/provider.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ProviderModule } from '../provider/provider.module.js';
     CustomerKycModule,
     WalletReconciliationModule,
     ProviderModule,
+    NotificationsModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

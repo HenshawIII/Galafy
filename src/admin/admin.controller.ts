@@ -57,6 +57,10 @@ import { GetEventsDto, GetSprayActivityDto, GetTopSprayersDto } from './dto/even
 import { GetTransactionsDto } from './dto/transactions-management.dto.js';
 import { GetWithdrawalsDto, RejectWithdrawalDto } from './dto/withdrawals-management.dto.js';
 import { GetNotificationsDto } from './dto/notifications-management.dto.js';
+import {
+  GetKycReminderHistoryDto,
+  SendBulkKycReminderDto,
+} from './dto/kyc-reminder-messages.dto.js';
 import { NormalizeArrayQueryPipe } from './pipes/normalize-array-query.pipe.js';
 import { ProviderTransactionHistoryQueryDto } from '../provider/dto/provider-account-maintenance.dto.js';
 
@@ -534,6 +538,47 @@ export class AdminController {
   async sendKycReminder(@Param('userId') userId: string, @Request() req: any) {
     const adminId = req.admin?.id;
     return this.adminService.sendKycReminder(userId, adminId);
+  }
+
+  @Get('messages/kyc-reminders')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE, AdminRole.SUPPORT)
+  @RequirePermission(PERMISSIONS.SEND_KYC_REMINDERS)
+  @ApiOperation({
+    summary: 'List KYC/tier reminder catalog with recipient counts',
+    description:
+      'Returns fixed Upgrade to Tier 1/2/3 reminder rows for Tier 0/1/2 with live recipient counts. Tier 3 is excluded.',
+  })
+  @ApiResponse({ status: 200, description: 'KYC reminder catalog' })
+  async getKycReminderCatalog() {
+    return this.adminService.getKycReminderCatalog();
+  }
+
+  @Post('messages/kyc-reminders/send')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE, AdminRole.SUPPORT)
+  @RequirePermission(PERMISSIONS.SEND_KYC_REMINDERS)
+  @ApiOperation({
+    summary: 'Start bulk KYC/tier reminder campaign',
+    description:
+      'Starts an async campaign to Email and/or In-App remind all users on the target tier. Per-recipient copy uses existing KYC scenario templates.',
+  })
+  @ApiBody({ type: SendBulkKycReminderDto })
+  @ApiResponse({ status: 200, description: 'Campaign started' })
+  @ApiResponse({ status: 400, description: 'Invalid channels or configuration' })
+  async sendBulkKycReminder(@Body(ValidationPipe) dto: SendBulkKycReminderDto, @Request() req: any) {
+    const adminId = req.admin?.id;
+    return this.adminService.startBulkKycReminder(adminId, dto);
+  }
+
+  @Get('messages/kyc-reminders/history')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPLIANCE, AdminRole.SUPPORT)
+  @RequirePermission(PERMISSIONS.SEND_KYC_REMINDERS)
+  @ApiOperation({
+    summary: 'Bulk KYC reminder campaign history',
+    description: 'Paginated history of bulk KYC/tier reminder campaigns with filters.',
+  })
+  @ApiResponse({ status: 200, description: 'Campaign history' })
+  async getKycReminderHistory(@Query(ValidationPipe) dto: GetKycReminderHistoryDto) {
+    return this.adminService.getKycReminderHistory(dto);
   }
 
   @Post('users/:userId/restrict')

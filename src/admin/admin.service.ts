@@ -41,6 +41,7 @@ import {
   KycTier,
   Tier3UpgradeStatus,
   SprayStatus,
+  KycReminderCampaignStatus,
 } from '../../generated/prisma/enums.js';
 import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
 import { hasTier3Benefits } from '../common/utils/kyc-tier.util.js';
@@ -53,6 +54,16 @@ import {
   getKycReminderScenario,
   isCustomerKycPending,
 } from '../common/utils/admin-kyc.util.js';
+import {
+  getKycReminderCatalogEntry,
+  getKycReminderTemplate,
+  KYC_REMINDER_CATALOG,
+} from '../common/utils/kyc-reminder-copy.util.js';
+import {
+  GetKycReminderHistoryDto,
+  SendBulkKycReminderDto,
+} from './dto/kyc-reminder-messages.dto.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import {
   buildEffectivePayoutStatusWhere,
   deriveEffectivePayoutStatus,
@@ -70,7 +81,7 @@ import { EmailService } from '../users/email.service.js';
 import { AccountRestrictionNotifyService } from '../common/account-restriction/account-restriction-notify.service.js';
 import { calculatePayoutFee } from '../common/utils/fee.util.js';
 import { normalizeToKobo } from '../common/utils/money.util.js';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '../../generated/prisma/client.js';
 import { InternalLedgerTransferService } from '../common/internal-ledger/internal-ledger-transfer.service.js';
 import { OrganizationWalletService } from '../common/services/organization-wallet.service.js';
 import { WalletReconciliationService } from '../common/wallet-reconciliation/wallet-reconciliation.service.js';
@@ -95,6 +106,7 @@ export class AdminService {
     private readonly customerKycService: CustomerKycService,
     private readonly walletReconciliationService: WalletReconciliationService,
     private readonly providerService: ProviderService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -1371,6 +1383,335 @@ export class AdminService {
       this.logger.error(`Failed to send KYC reminder email to user ${userId}:`, error.message);
       throw new BadRequestException(`Failed to send KYC reminder email: ${error.message}`);
     }
+  }
+
+  /**
+   * Catalog of fixed KYC/tier reminder rows with live recipient counts (Tier 0–2).
+   */
+  async getKycReminderCatalog() {
+    const tiers = KYC_REMINDER_CATALOG.map((entry) => entry.targetTier);
+    const grouped = await this.databaseService.customer.groupBy({
+      by: ['tier'],
+      where: { tier: { in: [...tiers] } },
+      _count: { _all: true },
+    });
+    const countByTier = new Map(grouped.map((row) => [row.tier, row._count._all]));
+
+    return {
+      reminders: KYC_REMINDER_CATALOG.map((entry) => ({
+        messageKey: entry.messageKey,
+        title: entry.title,
+        snippet: entry.snippet,
+        targetTier: entry.targetTier,
+        recipients: countByTier.get(entry.targetTier) ?? 0,
+      })),
+    };
+  }
+
+  /**
+   * Start an async bulk KYC reminder campaign for one target tier.
+   */
+  async startBulkKycReminder(adminId: string, dto: SendBulkKycReminderDto) {
+    const { targetTier, channels } = dto;
+    if (!channels.email && !channels.inApp) {
+      throw new BadRequestException('Select at least one channel (Email or In-App)');
+    }
+
+    const catalogEntry = getKycReminderCatalogEntry(targetTier);
+    if (!catalogEntry) {
+      throw new BadRequestException('Invalid target tier for bulk KYC reminders');
+    }
+
+    if (channels.email) {
+      const consumerBase =
+        process.env.CONSUMER_APP_URL || process.env.PUBLIC_URL || process.env.FRONTEND_URL;
+      if (!consumerBase) {
+        throw new BadRequestException(
+          'CONSUMER_APP_URL is not configured; cannot send KYC reminder emails with a valid verification link',
+        );
+      }
+    }
+
+    const recipientCount = await this.databaseService.customer.count({
+      where: { tier: targetTier },
+    });
+
+    const campaign = await this.databaseService.kycReminderCampaign.create({
+      data: {
+        adminId,
+        targetTier,
+        messageKey: catalogEntry.messageKey,
+        messageTitle: catalogEntry.title,
+        messageSnippet: catalogEntry.snippet,
+        channelEmail: channels.email,
+        channelInApp: channels.inApp,
+        status: KycReminderCampaignStatus.PROCESSING,
+        recipientCount,
+        startedAt: new Date(),
+      },
+    });
+
+    await this.logAdminAction(adminId, 'KYC_REMINDER_CAMPAIGN_STARTED', 'KYC_REMINDER_CAMPAIGN', campaign.id, {
+      campaignId: campaign.id,
+      targetTier,
+      channelEmail: channels.email,
+      channelInApp: channels.inApp,
+      recipientCount,
+      messageKey: catalogEntry.messageKey,
+    });
+
+    void this.processBulkKycReminderCampaign(campaign.id).catch((err: Error) => {
+      this.logger.error(`Bulk KYC reminder campaign ${campaign.id} crashed: ${err.message}`);
+    });
+
+    return {
+      success: true,
+      message: 'KYC reminder campaign started',
+      campaignId: campaign.id,
+      status: campaign.status,
+      recipientCount,
+    };
+  }
+
+  private async processBulkKycReminderCampaign(campaignId: string) {
+    const campaign = await this.databaseService.kycReminderCampaign.findUnique({
+      where: { id: campaignId },
+    });
+    if (!campaign || campaign.status !== KycReminderCampaignStatus.PROCESSING) {
+      return;
+    }
+
+    const consumerBase =
+      process.env.CONSUMER_APP_URL || process.env.PUBLIC_URL || process.env.FRONTEND_URL;
+    const kycUrl = consumerBase ? consumerBase.replace(/\/$/, '') : null;
+    const batchSize = 75;
+    let cursor: string | undefined;
+    let emailSentCount = 0;
+    let inAppSentCount = 0;
+    let failedCount = 0;
+
+    try {
+      for (;;) {
+        const customers = await this.databaseService.customer.findMany({
+          where: { tier: campaign.targetTier },
+          take: batchSize,
+          ...(cursor
+            ? {
+                skip: 1,
+                cursor: { id: cursor },
+              }
+            : {}),
+          orderBy: { id: 'asc' },
+          select: {
+            id: true,
+            tier: true,
+            tier1FaceStatus: true,
+            tier1AccountStatus: true,
+            tier2UpgradeStatus: true,
+            tier3UpgradeStatus: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                username: true,
+                isVerified: true,
+              },
+            },
+          },
+        });
+
+        if (customers.length === 0) break;
+        cursor = customers[customers.length - 1]?.id;
+
+        for (const customer of customers) {
+          const user = customer.user;
+          if (!user || !canReceiveKycReminder(customer)) {
+            continue;
+          }
+
+          const scenario = getKycReminderScenario(customer);
+          const template = getKycReminderTemplate(scenario);
+          let recipientFailed = false;
+
+          if (campaign.channelEmail) {
+            if (!user.isVerified || !kycUrl) {
+              recipientFailed = true;
+            } else {
+              try {
+                await this.emailService.sendKycReminderEmail(user.email, {
+                  firstName: user.firstName,
+                  lastName: user.lastName,
+                  username: user.username,
+                  kycUrl,
+                  scenario,
+                });
+                emailSentCount += 1;
+              } catch (err: any) {
+                recipientFailed = true;
+                this.logger.warn(
+                  `Bulk KYC email failed campaign=${campaignId} user=${user.id}: ${err?.message}`,
+                );
+              }
+            }
+          }
+
+          if (campaign.channelInApp) {
+            try {
+              await this.notificationsService.sendNotificationIfEnabled(user.id, {
+                data: {
+                  type: 'KYC_REMINDER',
+                  scenario,
+                  ...(kycUrl ? { kycUrl } : {}),
+                },
+                notification: {
+                  title: template.headline,
+                  body: template.message,
+                },
+              });
+              inAppSentCount += 1;
+            } catch (err: any) {
+              recipientFailed = true;
+              this.logger.warn(
+                `Bulk KYC in-app failed campaign=${campaignId} user=${user.id}: ${err?.message}`,
+              );
+            }
+          }
+
+          if (recipientFailed) {
+            failedCount += 1;
+          }
+        }
+
+        await this.databaseService.kycReminderCampaign.update({
+          where: { id: campaignId },
+          data: { emailSentCount, inAppSentCount, failedCount },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+
+      await this.databaseService.kycReminderCampaign.update({
+        where: { id: campaignId },
+        data: {
+          status: KycReminderCampaignStatus.COMPLETED,
+          emailSentCount,
+          inAppSentCount,
+          failedCount,
+          completedAt: new Date(),
+        },
+      });
+      this.logger.log(
+        `Bulk KYC reminder campaign completed id=${campaignId} email=${emailSentCount} inApp=${inAppSentCount} failed=${failedCount}`,
+      );
+    } catch (error: any) {
+      await this.databaseService.kycReminderCampaign.update({
+        where: { id: campaignId },
+        data: {
+          status: KycReminderCampaignStatus.FAILED,
+          emailSentCount,
+          inAppSentCount,
+          failedCount,
+          errorMessage: error?.message || 'Campaign processing failed',
+          completedAt: new Date(),
+        },
+      });
+      this.logger.error(`Bulk KYC reminder campaign failed id=${campaignId}: ${error?.message}`);
+    }
+  }
+
+  /**
+   * Paginated history of bulk KYC reminder campaigns.
+   */
+  async getKycReminderHistory(dto: GetKycReminderHistoryDto) {
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.KycReminderCampaignWhereInput = {};
+
+    if (dto.search?.trim()) {
+      const q = dto.search.trim();
+      where.OR = [
+        { messageTitle: { contains: q, mode: 'insensitive' } },
+        { messageSnippet: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+    if (dto.targetTier) {
+      where.targetTier = dto.targetTier;
+    }
+    if (dto.status) {
+      where.status = dto.status;
+    }
+    if (dto.channel === 'email') {
+      where.channelEmail = true;
+      where.channelInApp = false;
+    } else if (dto.channel === 'inApp') {
+      where.channelEmail = false;
+      where.channelInApp = true;
+    } else if (dto.channel === 'both') {
+      where.channelEmail = true;
+      where.channelInApp = true;
+    }
+    if (dto.startDate || dto.endDate) {
+      where.createdAt = {};
+      if (dto.startDate) where.createdAt.gte = new Date(dto.startDate);
+      if (dto.endDate) where.createdAt.lte = new Date(dto.endDate);
+    }
+
+    const [total, campaigns] = await Promise.all([
+      this.databaseService.kycReminderCampaign.count({ where }),
+      this.databaseService.kycReminderCampaign.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          messageTitle: true,
+          messageSnippet: true,
+          targetTier: true,
+          channelEmail: true,
+          channelInApp: true,
+          recipientCount: true,
+          emailSentCount: true,
+          inAppSentCount: true,
+          failedCount: true,
+          status: true,
+          errorMessage: true,
+          createdAt: true,
+          completedAt: true,
+        },
+      }),
+    ]);
+
+    return {
+      campaigns: campaigns.map((c) => ({
+        id: c.id,
+        messageTitle: c.messageTitle,
+        messageSnippet: c.messageSnippet,
+        targetTier: c.targetTier,
+        channels: {
+          email: c.channelEmail,
+          inApp: c.channelInApp,
+        },
+        recipients: c.recipientCount,
+        emailSentCount: c.emailSentCount,
+        inAppSentCount: c.inAppSentCount,
+        failedCount: c.failedCount,
+        status: c.status,
+        errorMessage: c.errorMessage,
+        dateSent: c.createdAt.toISOString(),
+        completedAt: c.completedAt?.toISOString() ?? null,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
   }
 
   /**
