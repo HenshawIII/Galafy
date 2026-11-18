@@ -1,10 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { KycTier } from '../users/dto/create-user-dto.js';
-import { Tier1FaceStatus } from '../../generated/prisma/enums.js';
+import { Tier1FaceStatus, WebhookProcessingStatus } from '../../generated/prisma/enums.js';
 import { MixpanelService } from '../analytics/mixpanel.service.js';
 import { MixpanelEvent } from '../analytics/mixpanel.events.js';
 import { EmailService } from '../users/email.service.js';
+import { CustomerKycService } from '../customer-kyc/customer-kyc.service.js';
+import {
+  classifyAccountUpgradeOutcome,
+  extractAccountUpgradeCallbackFields,
+} from '../common/utils/account-upgrade-callback.util.js';
 
 const DEFAULT_CURRENCY_ID = 'fd5e474d-bb42-4db1-ab74-e8d2a01047e9';
 
@@ -18,6 +23,8 @@ export class ProviderCallbackService {
     private readonly databaseService: DatabaseService,
     private readonly mixpanel: MixpanelService,
     private readonly emailService: EmailService,
+    @Inject(forwardRef(() => CustomerKycService))
+    private readonly customerKycService: CustomerKycService,
   ) {}
 
   private notifyComplianceOfKycFailure(params: {
@@ -306,6 +313,107 @@ export class ProviderCallbackService {
     this.mixpanel.identify(customer.userId, { has_wallet: true });
 
     return { received: true };
+  }
+
+  /**
+   * Provider account-upgrade / address-verification webhook (Tier 3).
+   * Always acknowledges with `{ received: true }` and persists every payload.
+   */
+  async handleAccountUpgradeCallback(raw: unknown): Promise<{ received: true }> {
+    const fields = extractAccountUpgradeCallbackFields(raw);
+    const outcome = classifyAccountUpgradeOutcome(fields.title, fields.message);
+
+    const webhookEvent = await this.databaseService.providerWebhookEvent.create({
+      data: {
+        event: 'account-upgrade',
+        paymentReference: fields.nuban ? `upgrade-${fields.nuban}` : undefined,
+        payload: (raw ?? {}) as object,
+        processingStatus: WebhookProcessingStatus.PENDING,
+      },
+    });
+
+    this.logger.log(
+      `Account upgrade callback entry: eventId=${webhookEvent.id} nuban=${this.mask(fields.nuban)} email=${this.mask(fields.email)} requestType=${fields.requestType ?? 'n/a'} outcome=${outcome} title=${fields.title ?? 'n/a'}`,
+    );
+
+    try {
+      if (!fields.nuban) {
+        await this.finalizeWebhookEvent(webhookEvent.id, WebhookProcessingStatus.FAILED, 'Missing data.nuban');
+        return { received: true };
+      }
+
+      const customerId = await this.resolveCustomerIdByNuban(fields.nuban);
+      if (!customerId) {
+        await this.finalizeWebhookEvent(
+          webhookEvent.id,
+          WebhookProcessingStatus.FAILED,
+          `No customer found for nuban=${this.mask(fields.nuban)}`,
+        );
+        return { received: true };
+      }
+
+      if (outcome === 'success') {
+        await this.customerKycService.completeTier3FromProviderWebhook(customerId, {
+          webhookEventId: webhookEvent.id,
+          nuban: fields.nuban,
+        });
+        await this.finalizeWebhookEvent(webhookEvent.id, WebhookProcessingStatus.PROCESSED);
+        return { received: true };
+      }
+
+      if (outcome === 'failure') {
+        await this.customerKycService.markTier3AddressVerificationFailedFromProviderWebhook(customerId, {
+          webhookEventId: webhookEvent.id,
+          nuban: fields.nuban,
+        });
+        await this.finalizeWebhookEvent(webhookEvent.id, WebhookProcessingStatus.PROCESSED);
+        return { received: true };
+      }
+
+      await this.finalizeWebhookEvent(
+        webhookEvent.id,
+        WebhookProcessingStatus.PROCESSED,
+        `Unknown outcome title/message; no KYC mutation. title=${fields.title ?? 'n/a'}`,
+      );
+      this.logger.warn(
+        `Account upgrade callback unknown outcome eventId=${webhookEvent.id} customerId=${customerId} title=${fields.title ?? 'n/a'}`,
+      );
+      return { received: true };
+    } catch (error: any) {
+      const message = error?.message || 'Account upgrade callback processing failed';
+      this.logger.error(`Account upgrade callback failed eventId=${webhookEvent.id}: ${message}`);
+      await this.finalizeWebhookEvent(webhookEvent.id, WebhookProcessingStatus.FAILED, message);
+      return { received: true };
+    }
+  }
+
+  private async resolveCustomerIdByNuban(nuban: string): Promise<string | null> {
+    const byTier1 = await this.databaseService.customer.findFirst({
+      where: { tier1Nuban: nuban },
+      select: { id: true },
+    });
+    if (byTier1?.id) return byTier1.id;
+
+    const wallet = await this.databaseService.wallet.findFirst({
+      where: { virtualAccountNumber: nuban },
+      select: { customerId: true },
+    });
+    return wallet?.customerId ?? null;
+  }
+
+  private async finalizeWebhookEvent(
+    eventId: string,
+    processingStatus: WebhookProcessingStatus,
+    errorMessage?: string,
+  ): Promise<void> {
+    await this.databaseService.providerWebhookEvent.update({
+      where: { id: eventId },
+      data: {
+        processingStatus,
+        errorMessage: errorMessage ?? null,
+        processedAt: new Date(),
+      },
+    });
   }
 }
 

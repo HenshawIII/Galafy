@@ -14,6 +14,7 @@ import { AmlLoggingService } from '../common/services/aml-logging.service.js';
 import { ProviderNotificationModule } from '../common/provider-notification/provider-notification.module.js';
 import { AccountRestrictionNotifyModule } from '../common/account-restriction/account-restriction-notify.module.js';
 import { LiveModule } from '../live/live.module.js';
+import { CustomerKycModule } from '../customer-kyc/customer-kyc.module.js';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { LiveModule } from '../live/live.module.js';
     ProviderNotificationModule,
     AccountRestrictionNotifyModule,
     LiveModule,
+    forwardRef(() => CustomerKycModule),
   ],
   controllers: [ProviderCallbackController, ProviderTxnCallbackController],
   providers: [

@@ -56,4 +56,28 @@ export class ProviderCallbackController {
     );
     return result;
   }
+
+  /**
+   * Provider webhook for Tier 3 account upgrade / address verification results.
+   * Public — provider systems do not send our auth JWT.
+   * URL: POST /api/provider/account-upgrade-callback
+   */
+  @Public()
+  @Post('account-upgrade-callback')
+  @HttpCode(HttpStatus.OK)
+  async accountUpgradeCallback(@Body() raw: unknown) {
+    const data = this.pick(raw, 'data');
+    const email = this.pick(data, 'email');
+    const nuban = this.pick(data, 'nuban');
+    const title = this.pick(raw, 'title');
+    const requestType = this.pick(raw, 'requestType');
+    this.logger.log(
+      `Provider callback entry: account-upgrade-callback email=${this.mask(email)} nuban=${this.mask(nuban)} requestType=${this.mask(requestType)} title=${typeof title === 'string' ? title : 'n/a'}`,
+    );
+    const result = await this.providerCallbackService.handleAccountUpgradeCallback(raw);
+    this.logger.log(
+      `Provider callback exit: account-upgrade-callback email=${this.mask(email)} nuban=${this.mask(nuban)} received=${result.received}`,
+    );
+    return result;
+  }
 }

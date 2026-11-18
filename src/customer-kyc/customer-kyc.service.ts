@@ -15,6 +15,7 @@ import { MixpanelService } from '../analytics/mixpanel.service.js';
 import { MixpanelEvent } from '../analytics/mixpanel.events.js';
 import { kycTierNumber } from '../analytics/mixpanel.kyc.js';
 import { EmailService } from '../users/email.service.js';
+import { CacheService } from '../cache/cache.service.js';
 import {
   describeCaughtProviderError,
   type KycFailureReason,
@@ -31,6 +32,7 @@ export class CustomerKycService {
     private readonly adminNotificationService: AdminNotificationService,
     private readonly mixpanel: MixpanelService,
     private readonly emailService: EmailService,
+    private readonly cacheService: CacheService,
   ) {}
 
   /**
@@ -1050,5 +1052,189 @@ export class CustomerKycService {
       this.logger.warn(`Could not fetch partner account KYC status: ${(error as Error).message}`);
       return base;
     }
+  }
+
+  /**
+   * Complete Tier 3 after provider address-verification success webhook.
+   * Idempotent: already COMPLETED skips email and returns current state.
+   */
+  async completeTier3FromProviderWebhook(
+    customerId: string,
+    meta?: { webhookEventId?: string; nuban?: string | null },
+  ) {
+    const existing = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+      select: {
+        id: true,
+        userId: true,
+        tier: true,
+        tier3UpgradeStatus: true,
+        user: {
+          select: {
+            email: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+          },
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (existing.tier3UpgradeStatus === Tier3UpgradeStatus.COMPLETED && existing.tier === KycTier.Tier_3) {
+      this.logger.log(
+        `Tier 3 already COMPLETED customerId=${customerId} webhookEventId=${meta?.webhookEventId ?? 'n/a'} nuban=${meta?.nuban ?? 'n/a'}`,
+      );
+      return {
+        customerId,
+        tier: existing.tier,
+        tier3UpgradeStatus: existing.tier3UpgradeStatus,
+        alreadyCompleted: true,
+        hasTier3Benefits: true,
+      };
+    }
+
+    const now = new Date();
+    const updated = await this.databaseService.customer.update({
+      where: { id: customerId },
+      data: {
+        tier: KycTier.Tier_3,
+        providerTierCode: 3,
+        tier3UpgradeStatus: Tier3UpgradeStatus.COMPLETED,
+        tier2AddressVerificationStatus: 'COMPLETED',
+        isBalanceRestricted: false,
+        balanceRestrictionReason: null,
+        balanceRestrictedAt: null,
+      },
+    });
+
+    await this.databaseService.addressVerification.upsert({
+      where: { customerId },
+      create: {
+        customerId,
+        verified: true,
+        verifiedAt: now,
+        providerStatus: 'COMPLETED',
+      },
+      update: {
+        verified: true,
+        verifiedAt: now,
+        providerStatus: 'COMPLETED',
+      },
+    });
+
+    if (existing.userId) {
+      await this.cacheService.invalidateUserCache(existing.userId);
+    }
+
+    if (existing.user?.email) {
+      const consumerBase =
+        process.env.CONSUMER_APP_URL || process.env.PUBLIC_URL || process.env.FRONTEND_URL;
+      const appUrl = consumerBase ? consumerBase.replace(/\/$/, '') : null;
+      if (!appUrl) {
+        this.logger.warn(
+          'CONSUMER_APP_URL is not configured; sending Tier 3 approved email without a CTA link',
+        );
+      }
+
+      try {
+        await this.emailService.sendTier3ApprovedEmail(existing.user.email, {
+          firstName: existing.user.firstName,
+          lastName: existing.user.lastName,
+          username: existing.user.username,
+          appUrl,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Tier 3 approved email failed for customerId=${customerId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    this.mixpanel.identify(existing.userId, { kyc_tier: 3 });
+    this.logger.log(
+      `Tier 3 COMPLETED via provider webhook customerId=${customerId} webhookEventId=${meta?.webhookEventId ?? 'n/a'} nuban=${meta?.nuban ?? 'n/a'}`,
+    );
+
+    return {
+      customerId,
+      tier: updated.tier,
+      tier3UpgradeStatus: updated.tier3UpgradeStatus,
+      alreadyCompleted: false,
+      hasTier3Benefits: hasTier3Benefits(updated),
+    };
+  }
+
+  /**
+   * Mark address verification failed after provider failure webhook.
+   * Does not unlock Tier 3 benefits and does not downgrade an already COMPLETED Tier 3.
+   */
+  async markTier3AddressVerificationFailedFromProviderWebhook(
+    customerId: string,
+    meta?: { webhookEventId?: string; nuban?: string | null },
+  ) {
+    const existing = await this.databaseService.customer.findUnique({
+      where: { id: customerId },
+      select: {
+        id: true,
+        userId: true,
+        tier: true,
+        tier3UpgradeStatus: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (existing.tier3UpgradeStatus === Tier3UpgradeStatus.COMPLETED) {
+      this.logger.warn(
+        `Ignoring address-verification failure webhook for already COMPLETED Tier 3 customerId=${customerId} webhookEventId=${meta?.webhookEventId ?? 'n/a'}`,
+      );
+      return {
+        customerId,
+        ignored: true,
+        reason: 'already_completed',
+        tier3UpgradeStatus: existing.tier3UpgradeStatus,
+      };
+    }
+
+    await this.databaseService.customer.update({
+      where: { id: customerId },
+      data: {
+        tier2AddressVerificationStatus: 'FAILED',
+      },
+    });
+
+    await this.databaseService.addressVerification.upsert({
+      where: { customerId },
+      create: {
+        customerId,
+        verified: false,
+        providerStatus: 'FAILED',
+      },
+      update: {
+        verified: false,
+        providerStatus: 'FAILED',
+      },
+    });
+
+    if (existing.userId) {
+      await this.cacheService.invalidateUserCache(existing.userId);
+    }
+
+    this.logger.log(
+      `Tier 3 address verification FAILED via provider webhook customerId=${customerId} webhookEventId=${meta?.webhookEventId ?? 'n/a'} nuban=${meta?.nuban ?? 'n/a'}`,
+    );
+
+    return {
+      customerId,
+      ignored: false,
+      tier3UpgradeStatus: existing.tier3UpgradeStatus,
+      providerStatus: 'FAILED',
+    };
   }
 }
